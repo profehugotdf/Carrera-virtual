@@ -1,0 +1,1868 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Correr</title>
+<style>
+  :root{
+    --bg:#0A0D10;
+    --panel:#12161B;
+    --panel2:#171C22;
+    --borde:#1F262D;
+    --texto:#EDEFF2;
+    --muted:#818B95;
+    --ritmo:#4FD8C4;
+    --pulso:#FF6B57;
+    --pendiente:#E8B84B;
+    --z1:#4FD8C4; --z2:#6FDD8E; --z3:#E8D24B; --z4:#F08B3C; --z5:#FF5A5F;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  html,body{margin:0;padding:0;background:var(--bg);color:var(--texto);font-family:var(--sans);
+    height:100%; overflow-x:hidden;}
+  body{padding-bottom:78px;}
+  button{font-family:inherit; cursor:pointer;}
+  input{font-family:inherit;}
+
+  header{position:sticky; top:0; z-index:20; display:flex; align-items:center; justify-content:space-between;
+    padding:14px 16px; background:rgba(10,13,16,0.92); backdrop-filter:blur(6px); border-bottom:1px solid var(--borde);}
+  header h1{font-size:19px; margin:0; letter-spacing:0.5px; font-weight:800;}
+  header .ver{font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--borde);
+    border-radius:20px; padding:2px 9px; margin-left:8px;}
+  header .titulowrap{display:flex; align-items:baseline;}
+
+  nav.tabs{position:fixed; bottom:0; left:0; right:0; z-index:30; display:flex; background:var(--panel);
+    border-top:1px solid var(--borde); padding-bottom:env(safe-area-inset-bottom);}
+  nav.tabs button{flex:1; background:none; border:none; color:var(--muted); font-size:11px; padding:10px 4px 8px;
+    display:flex; flex-direction:column; align-items:center; gap:3px; font-weight:600; letter-spacing:0.3px;}
+  nav.tabs button.activo{color:var(--ritmo);}
+  nav.tabs .ico{font-size:18px;}
+
+  main{padding:14px 14px 24px;}
+  .view{display:none;}
+  .view.activa{display:block;}
+
+  .card{background:var(--panel); border:1px solid var(--borde); border-radius:14px; padding:14px; margin-bottom:12px;}
+  .card h2{font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:0 0 10px;}
+  .fila{display:flex; gap:10px;}
+  .fila > *{flex:1;}
+
+  /* ---- selector de modo ---- */
+  .modo-btns{display:flex; gap:8px; margin-bottom:10px;}
+  .modo-btns button{flex:1; padding:10px; border-radius:10px; border:1px solid var(--borde); background:var(--panel2);
+    color:var(--texto); font-weight:700; font-size:13px;}
+  .modo-btns button.sel{border-color:var(--ritmo); color:var(--ritmo); background:#12201E;}
+  .estado-conexion{font-size:12px; color:var(--muted); margin-top:6px; font-family:var(--mono);}
+  .estado-conexion.ok{color:var(--z2);}
+  .estado-conexion.err{color:var(--pulso);}
+  .btn{display:block; width:100%; padding:12px; border-radius:10px; border:1px solid var(--borde);
+    background:var(--panel2); color:var(--texto); font-weight:700; font-size:14px; margin-top:8px;}
+  .btn.primario{background:var(--ritmo); color:#04211D; border-color:var(--ritmo);}
+  .btn.peligro{background:var(--pulso); color:#2A0B06; border-color:var(--pulso);}
+  .btn.chico{padding:8px; font-size:12px;}
+  .btn:disabled{opacity:0.4;}
+
+  /* ---- HUD ---- */
+  .cinta-ritmo{position:relative; height:14px; border-radius:8px; overflow:hidden; margin:6px 0 16px;
+    background:linear-gradient(90deg, var(--z1) 0 20%, var(--z2) 20% 40%, var(--z3) 40% 60%, var(--z4) 60% 80%, var(--z5) 80% 100%);}
+  .cinta-marker{position:absolute; top:-4px; width:3px; height:22px; background:#fff; border-radius:2px;
+    box-shadow:0 0 6px rgba(255,255,255,0.8); transition:left 0.4s ease;}
+  .hud-grid{display:grid; grid-template-columns:1fr 1fr; gap:10px;}
+  .hud-item{background:var(--panel2); border:1px solid var(--borde); border-radius:12px; padding:12px; text-align:center;}
+  .hud-item .val{font-family:var(--mono); font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.1;}
+  .hud-item .lbl{font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin-top:4px;}
+  .hud-item.ritmo .val{color:var(--ritmo);}
+  .hud-item.pulso .val{color:var(--pulso);}
+  .hud-item.pendiente .val{color:var(--pendiente);}
+  .hud-item.grande{grid-column:1/-1;}
+  .hud-item.grande .val{font-size:44px;}
+
+  .pendiente-ctrl{display:flex; align-items:center; justify-content:center; gap:14px; margin-top:6px;}
+  .pendiente-ctrl button{width:44px; height:44px; border-radius:50%; border:1px solid var(--borde);
+    background:var(--panel); color:var(--pendiente); font-size:20px; font-weight:800;}
+  .pendiente-ctrl .val{font-family:var(--mono); font-size:26px; color:var(--pendiente); min-width:70px; text-align:center;}
+
+  .zona-actual{text-align:center; margin-top:10px; font-size:13px; color:var(--muted);}
+  .zona-actual b{color:var(--texto);}
+
+  textarea{width:100%; background:var(--panel2); border:1px solid var(--borde); color:var(--texto);
+    border-radius:10px; padding:10px; font-family:inherit; font-size:13px; resize:vertical; min-height:50px;}
+  label{font-size:12px; color:var(--muted); display:block; margin-bottom:4px;}
+  input[type=number], input[type=text]{width:100%; background:var(--panel2); border:1px solid var(--borde);
+    color:var(--texto); border-radius:8px; padding:9px; font-size:14px;}
+  select{width:100%; background:var(--panel2); border:1px solid var(--borde); color:var(--texto);
+    border-radius:8px; padding:9px; font-size:14px; font-family:inherit;}
+  .hud-item.fantasma .val.adelante{color:var(--z2);}
+  .hud-item.fantasma .val.atras{color:var(--pulso);}
+
+  #canvasEscena{width:100%; height:320px; display:block; border-radius:12px; background:#0d1a12;}
+
+  /* ---- historial ---- */
+  .sesion-item{background:var(--panel); border:1px solid var(--borde); border-radius:12px; padding:12px 14px;
+    margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;}
+  .sesion-item .izq .f{font-size:13px; font-weight:700;}
+  .sesion-item .izq .d{font-size:11px; color:var(--muted); margin-top:2px;}
+  .sesion-item .der{text-align:right; font-family:var(--mono);}
+  .sesion-item .der .tss{color:var(--ritmo); font-weight:700;}
+  .vacio{color:var(--muted); text-align:center; padding:30px 10px; font-size:13px;}
+
+  table.tabla-zonas{width:100%; border-collapse:collapse; font-size:12.5px;}
+  table.tabla-zonas th, table.tabla-zonas td{padding:7px 4px; text-align:center; border-bottom:1px solid var(--borde);}
+  table.tabla-zonas th{color:var(--muted); font-weight:600; font-size:10.5px; text-transform:uppercase;}
+  .chip-z{display:inline-block; width:10px; height:10px; border-radius:3px; margin-right:5px; vertical-align:middle;}
+
+  canvas{width:100%; display:block; touch-action:none;}
+  .scrub-info{font-family:var(--mono); font-size:12px; text-align:center; color:var(--muted); margin-top:6px; min-height:16px;}
+
+  .overlay{position:fixed; inset:0; background:var(--bg); z-index:50; overflow-y:auto; padding:14px; display:none;}
+  .overlay.activa{display:block;}
+  .overlay .cerrar{background:var(--panel2); border:1px solid var(--borde); color:var(--texto); border-radius:10px;
+    padding:8px 14px; font-size:13px; margin-bottom:12px;}
+
+  .toast{position:fixed; bottom:90px; left:50%; transform:translateX(-50%); background:var(--panel2);
+    border:1px solid var(--borde); color:var(--texto); padding:10px 16px; border-radius:10px; font-size:13px;
+    z-index:60; opacity:0; pointer-events:none; transition:opacity 0.25s;}
+  .toast.show{opacity:1;}
+
+  .file-drop{border:1.5px dashed var(--borde); border-radius:12px; padding:22px 14px; text-align:center; color:var(--muted); font-size:13px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v7</span></div>
+  <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
+</header>
+
+<main>
+
+  <!-- ===================== VISTA: VIVO ===================== -->
+  <section class="view activa" id="view-vivo">
+
+    <div class="card" id="cardModo">
+      <h2>Fuente de datos</h2>
+      <div class="modo-btns">
+        <button id="btnModoBLE" onclick="seleccionarModo('ble')">Sensor BLE</button>
+        <button id="btnModoManual" onclick="seleccionarModo('manual')">Manual</button>
+        <button id="btnModoAireLibre" onclick="seleccionarModo('aire_libre')">Aire libre</button>
+      </div>
+
+      <div id="panelBLE" style="display:none;">
+        <button class="btn" id="btnConectarReloj" onclick="conectarRelojBLE()">Conectar sensor (reloj Virtual Run o banda HRM-Pro Plus)</button>
+        <button class="btn chico" id="btnConectarBandaAparte" onclick="conectarBandaHR()">+ Conectar banda de pulso aparte</button>
+        <div class="estado-conexion" id="estadoBLE">Sin conectar.</div>
+        <div class="estado-conexion" style="margin-top:6px;">La HRM-Pro Plus transmite ritmo y distancia por acelerómetro (sin GPS), ideal para gimnasio bajo techo sin cinta. Aparece en la búsqueda igual que el reloj — elegí la banda directamente, no hace falta emparejarla primero con el reloj.</div>
+      </div>
+
+      <div id="panelManual" style="display:none;">
+        <div class="fila">
+          <div>
+            <label>Ritmo (min:seg / km)</label>
+            <input type="text" id="manualRitmo" placeholder="5:30" inputmode="numeric" onchange="actualizarManual()">
+          </div>
+          <div>
+            <label>Cadencia (pasos/min)</label>
+            <input type="number" id="manualCadencia" placeholder="170" onchange="actualizarManual()">
+          </div>
+        </div>
+        <button class="btn chico" id="btnConectarBandaManual" onclick="conectarBandaHR()">Conectar banda de pulso (BLE)</button>
+        <div class="estado-conexion" id="estadoBandaManual">Pulso: sin banda conectada.</div>
+      </div>
+
+      <div id="panelAireLibre" style="display:none;">
+        <button class="btn" id="btnActivarGPS" onclick="iniciarGPS()">Activar GPS</button>
+        <button class="btn chico" id="btnConectarBandaGPS" onclick="conectarBandaHR()">+ Conectar banda de pulso (BLE)</button>
+        <div class="estado-conexion" id="estadoGPS">GPS sin activar.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Fantasma (opcional)</h2>
+      <label>Corré contra una sesión anterior</label>
+      <select id="selectFantasma">
+        <option value="">Sin fantasma</option>
+      </select>
+      <div class="estado-conexion" style="margin-top:6px;">Compara a la misma distancia recorrida — funciona igual si el fantasma o la sesión de hoy son de cinta o de aire libre.</div>
+
+      <label style="margin-top:12px;">Escenario visual</label>
+      <select id="selectEscenario" onchange="cambiarEscenario()">
+        <option value="ninguno">Ninguno (solo HUD numérico)</option>
+        <option value="pista">Pista 400 m</option>
+        <option value="sendero">Sendero / vereda</option>
+      </select>
+
+      <div id="wrapEscena" style="display:none; margin-top:12px;">
+        <div id="lineaVueltaEscena" class="estado-conexion" style="text-align:center; margin-bottom:6px;"></div>
+        <div style="position:relative;">
+          <canvas id="canvasEscena" height="320"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Sesión en vivo</h2>
+      <div class="cinta-ritmo"><div class="cinta-marker" id="cintaMarker" style="left:50%;"></div></div>
+
+      <div class="hud-grid">
+        <div class="hud-item grande ritmo">
+          <div class="val" id="hudRitmo">--:--</div>
+          <div class="lbl">Ritmo /km</div>
+        </div>
+        <div class="hud-item pulso">
+          <div class="val" id="hudPulso">--</div>
+          <div class="lbl">Pulso bpm</div>
+        </div>
+        <div class="hud-item">
+          <div class="val" id="hudCadencia">--</div>
+          <div class="lbl">Cadencia spm</div>
+        </div>
+        <div class="hud-item">
+          <div class="val" id="hudDistancia">0.00</div>
+          <div class="lbl">Distancia km</div>
+        </div>
+        <div class="hud-item">
+          <div class="val" id="hudTiempo">00:00</div>
+          <div class="lbl">Tiempo</div>
+        </div>
+        <div class="hud-item grande fantasma" id="tileFantasma" style="display:none;">
+          <div class="val" id="hudFantasma">--</div>
+          <div class="lbl" id="lblFantasma">vs Fantasma</div>
+        </div>
+        <div class="hud-item" id="tileVAM">
+          <div class="val" id="hudVAM">0</div>
+          <div class="lbl">Desnivel/hora m/h</div>
+        </div>
+        <div class="hud-item" id="tileVAMprom">
+          <div class="val" id="hudVAMprom">0</div>
+          <div class="lbl">Desnivel/hora prom. sesión</div>
+        </div>
+        <div class="hud-item grande" id="tileDesnivel" style="display:none;">
+          <div class="val" id="hudDesnivel">0</div>
+          <div class="lbl">Desnivel+ (GPS, aprox.) m</div>
+        </div>
+      </div>
+
+      <div class="hud-item pendiente" id="cardPendiente" style="margin-top:10px;">
+        <div class="lbl" style="margin-bottom:2px;">Pendiente cinta</div>
+        <div class="pendiente-ctrl">
+          <button onclick="ajustarPendiente(-0.5)">−</button>
+          <div class="val" id="hudPendiente">0.0%</div>
+          <button onclick="ajustarPendiente(0.5)">+</button>
+        </div>
+      </div>
+
+      <div class="zona-actual">Zona actual: <b id="zonaActualTxt">--</b></div>
+
+      <div class="fila" style="margin-top:14px;">
+        <button class="btn primario" id="btnIniciar" onclick="iniciarSesion()">Iniciar</button>
+        <button class="btn" id="btnPausar" onclick="pausarSesion()" disabled>Pausar</button>
+      </div>
+      <button class="btn peligro" id="btnFinalizar" onclick="finalizarSesion()" disabled style="margin-top:8px;">Finalizar y guardar</button>
+    </div>
+
+    <div class="card" id="cardNotas" style="display:none;">
+      <h2>Notas de la sesión</h2>
+      <textarea id="notasSesion" placeholder="Sensaciones, cinta usada, etc."></textarea>
+    </div>
+  </section>
+
+  <!-- ===================== VISTA: HISTORIAL ===================== -->
+  <section class="view" id="view-historial">
+    <div class="card">
+      <h2>Forma (CTL / ATL / TSB)</h2>
+      <canvas id="chartForma" height="140"></canvas>
+      <div class="fila" style="margin-top:8px; text-align:center; font-family:var(--mono); font-size:12px;">
+        <div>CTL<br><b id="formaCTL" style="color:var(--ritmo);font-size:16px;">0</b></div>
+        <div>ATL<br><b id="formaATL" style="color:var(--pulso);font-size:16px;">0</b></div>
+        <div>TSB<br><b id="formaTSB" style="font-size:16px;">0</b></div>
+      </div>
+    </div>
+    <div class="card">
+      <h2>Sesiones</h2>
+      <div id="listaSesiones"></div>
+    </div>
+  </section>
+
+  <!-- ===================== VISTA: ZONAS ===================== -->
+  <section class="view" id="view-zonas">
+    <div class="card">
+      <h2>Umbral estimado</h2>
+      <div class="fila">
+        <div>
+          <label>Ritmo umbral (min:seg/km)</label>
+          <input type="text" id="umbralRitmoInput" placeholder="5:00">
+        </div>
+        <div>
+          <label>Pulso umbral (bpm)</label>
+          <input type="number" id="umbralPulsoInput" placeholder="170">
+        </div>
+      </div>
+      <button class="btn primario" onclick="guardarUmbralManual()">Guardar umbral manual</button>
+      <div class="estado-conexion" id="estadoUmbral" style="margin-top:8px;"></div>
+    </div>
+
+    <div class="card">
+      <h2>Zonas de ritmo</h2>
+      <table class="tabla-zonas" id="tablaZonasRitmo"></table>
+    </div>
+    <div class="card">
+      <h2>Zonas de pulso</h2>
+      <table class="tabla-zonas" id="tablaZonasPulso"></table>
+    </div>
+
+    <div class="card">
+      <h2>Mejores esfuerzos (90 días)</h2>
+      <table class="tabla-zonas" id="tablaMejores"></table>
+    </div>
+
+    <div class="card">
+      <h2>Velocidad Aeróbica Máxima</h2>
+      <div class="estado-conexion" id="resumenVMA" style="margin-bottom:8px;"></div>
+      <table class="tabla-zonas" id="tablaVMA"></table>
+      <div class="estado-conexion" style="margin-top:6px;">Para prescribir ritmos de series (no reemplaza las 5 zonas de arriba, que son para fondo/umbral). Estimada de tu mejor esfuerzo de 5min (o 8min si no hay), no de un test incremental específico.</div>
+    </div>
+
+    <div class="card">
+      <h2>Previsión de carrera</h2>
+      <table class="tabla-zonas" id="tablaPrevision"></table>
+      <div class="estado-conexion" style="margin-top:6px;">1k–10k: modelo velocidad crítica. Media/maratón: extrapolación de Riegel desde el 10k. Estimaciones, mejoran con más sesiones.</div>
+    </div>
+  </section>
+
+  <!-- ===================== VISTA: IMPORTAR ===================== -->
+  <section class="view" id="view-importar">
+    <div class="card">
+      <h2>Importar TCX (Garmin Connect / TrainingPeaks)</h2>
+      <div class="file-drop">
+        <input type="file" id="inputTCX" accept=".tcx,application/xml,text/xml" onchange="manejarArchivoTCX(event)">
+      </div>
+      <div id="previewTCX" style="margin-top:12px;"></div>
+    </div>
+  </section>
+
+  <!-- ===================== OVERLAY: DETALLE DE SESIÓN ===================== -->
+  <div class="overlay" id="overlayDetalle">
+    <button class="cerrar" onclick="cerrarDetalle()">← Volver</button>
+    <div class="card">
+      <h2 id="detalleTitulo">Sesión</h2>
+      <div id="detalleResumen" style="font-family:var(--mono); font-size:13px; line-height:1.9;"></div>
+    </div>
+    <div class="card">
+      <h2>Ritmo / Pulso / Cadencia</h2>
+      <canvas id="chartSesion" height="180"></canvas>
+      <div class="scrub-info" id="scrubInfo">Tocá o arrastrá sobre el gráfico</div>
+    </div>
+    <div class="card">
+      <label>Notas</label>
+      <textarea id="detalleNotas" onchange="guardarNotasDetalle()"></textarea>
+    </div>
+  </div>
+
+</main>
+
+<nav class="tabs">
+  <button class="activo" onclick="cambiarTab('vivo')" id="tabVivo"><span class="ico">🏃</span>Vivo</button>
+  <button onclick="cambiarTab('historial')" id="tabHistorial"><span class="ico">📈</span>Historial</button>
+  <button onclick="cambiarTab('zonas')" id="tabZonas"><span class="ico">🎯</span>Zonas</button>
+  <button onclick="cambiarTab('importar')" id="tabImportar"><span class="ico">⬇️</span>Importar</button>
+</nav>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* ============================================================
+   CORRER v6 — app de entrenamiento de carrera (cinta + aire libre).
+   Single-file, sin dependencias, localStorage.
+   Prof. Hugo Corbalán — Ushuaia.
+   v2: modo Aire libre con GPS (Geolocation API + haversine), desnivel
+       aproximado por altitud GPS, y almacenamiento comprimido de los
+       puntos de sesión (downsample a 5s + arrays columnares) tanto para
+       sesiones en vivo como para las importadas por TCX.
+   v3: modo Fantasma — corré contra una sesión anterior (cinta o aire
+       libre, da igual), comparando tiempo a la misma distancia mediante
+       interpolación sobre la curva distancia/tiempo del fantasma.
+   v4→v5: escenario visual (pista 400m / sendero). v5 reemplaza el motor
+       de dibujo propio de v4 por roadBands() PORTADO de Bici Indoor
+       (perspectiva 3D con banking en curvas, elevación, montañas,
+       decorado lateral — Hugo pasó el código fuente real), más línea
+       de meta con bandera de cuadros en el límite real de la vuelta.
+       La figura de corredor (drawRunnerRear) es nueva, ya que la de
+       Bici Indoor es un ciclista con bici.
+   v6: aclarado que "Sensor BLE" (ex "Reloj BLE") sirve igual con la
+       banda Garmin HRM-Pro Plus conectada directamente — transmite
+       RSC 0x1814 + HR 0x180D por su propio acelerómetro, sin reloj,
+       sin GPS y sin cinta (ideal gimnasio bajo techo). Mismo código
+       de conexión de siempre, solo se aclaró el texto de la UI.
+   v7: el "VAM" del HUD de cinta (desnivel ganado por hora) se renombró
+       a "Desnivel/hora" — chocaba con la Velocidad Aeróbica Máxima real
+       (velocidad al VO2máx), que ahora se agrega aparte en Zonas,
+       estimada del mejor esfuerzo de 5min (u 8min de reserva), con
+       tabla de ritmos por %VMA para series.
+   ============================================================ */
+
+/* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
+const LS_PREFIX = 'correr_';
+const K_SESIONES = LS_PREFIX + 'sesiones';
+const K_ZONAS = LS_PREFIX + 'zonas';
+const K_MEJORES = LS_PREFIX + 'mejores_esfuerzos';
+// Clave compartida entre apps (Bici Indoor / Correr / Natación) para el panel de forma combinada futuro.
+// OJO Hugo: confirmar que este nombre coincide con el que ya usa (o va a usar) Bici Indoor, sino
+// el panel combinado no va a poder juntar los registros de las dos apps. Fácil de renombrar acá abajo.
+const K_FORMA_COMPARTIDA = 'entrenamiento_forma_registro';
+
+/* ---------------- CONSTANTES DE CÁLCULO ---------------- */
+const DURACIONES_REF = [180, 300, 480, 720, 1200, 1800, 3600]; // 3,5,8,12,20,30,60 min
+const VENTANA_MEJORES_DIAS = 90;
+
+const PACE_ZONAS = [
+  { z: 1, label: 'Recuperación', min: 1.29, max: Infinity },
+  { z: 2, label: 'Aeróbico',     min: 1.14, max: 1.29 },
+  { z: 3, label: 'Tempo',        min: 1.06, max: 1.14 },
+  { z: 4, label: 'Umbral',       min: 1.00, max: 1.06 },
+  { z: 5, label: 'Anaeróbico',   min: 0,    max: 1.00 },
+];
+const HR_ZONAS = [
+  { z: 1, label: 'Recuperación', min: 0,    max: 0.85 },
+  { z: 2, label: 'Aeróbico',     min: 0.85, max: 0.89 },
+  { z: 3, label: 'Tempo',        min: 0.89, max: 0.94 },
+  { z: 4, label: 'Umbral',       min: 0.94, max: 0.99 },
+  { z: 5, label: 'Anaeróbico',   min: 0.99, max: Infinity },
+];
+const COLOR_ZONA = { 1: 'var(--z1)', 2: 'var(--z2)', 3: 'var(--z3)', 4: 'var(--z4)', 5: 'var(--z5)' };
+
+/* ---------------- UTILIDADES ---------------- */
+function lsGet(key, def) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : def; }
+  catch (e) { return def; }
+}
+function lsSet(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+
+function segAMMSS(seg) {
+  if (seg == null || !isFinite(seg) || seg < 0) return '--:--';
+  seg = Math.round(seg);
+  const m = Math.floor(seg / 60), s = seg % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+function segAHMS(seg) {
+  seg = Math.round(seg);
+  const h = Math.floor(seg / 3600), m = Math.floor((seg % 3600) / 60), s = seg % 60;
+  return h > 0 ? (h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0'))
+               : (String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0'));
+}
+function formatearDelta(seg) {
+  const signo = seg < 0 ? '-' : '+'; // negativo = vas adelante del fantasma
+  return signo + segAHMS(Math.abs(seg));
+}
+function parseMMSS(txt) {
+  if (!txt) return null;
+  const m = txt.trim().match(/^(\d+):(\d{1,2})$/);
+  if (!m) return null;
+  return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+function toast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toast._h);
+  toast._h = setTimeout(() => t.classList.remove('show'), 2600);
+}
+function promedio(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0; }
+
+/* ============================================================
+   CÁLCULOS PRINCIPALES (validados en test-logica.js aparte)
+   ============================================================ */
+function calcularTSS(duracionSeg, ritmoPromedioSegKm, umbralRitmoSegKm) {
+  if (!umbralRitmoSegKm || !ritmoPromedioSegKm || duracionSeg <= 0) return 0;
+  const ifactor = umbralRitmoSegKm / ritmoPromedioSegKm;
+  const horas = duracionSeg / 3600;
+  return Math.round(100 * horas * ifactor * ifactor);
+}
+function pasoEWMA(ctlPrev, atlPrev, tssHoy) {
+  const ctl = ctlPrev + (tssHoy - ctlPrev) / 42;
+  const atl = atlPrev + (tssHoy - atlPrev) / 7;
+  const tsb = ctlPrev - atlPrev;
+  return { ctl, atl, tsb };
+}
+function zonaPorRitmo(ritmoSegKm, umbralRitmoSegKm) {
+  if (!umbralRitmoSegKm || !ritmoSegKm) return null;
+  const ratio = ritmoSegKm / umbralRitmoSegKm;
+  for (const zdef of PACE_ZONAS) if (ratio >= zdef.min && ratio < zdef.max) return zdef.z;
+  return 3;
+}
+function zonaPorPulso(pulso, umbralPulso) {
+  if (!umbralPulso || !pulso) return null;
+  const ratio = pulso / umbralPulso;
+  for (const zdef of HR_ZONAS) if (ratio >= zdef.min && ratio < zdef.max) return zdef.z;
+  return 3;
+}
+function ajustarModeloCV(mejores) {
+  const ordenado = [...mejores].sort((a, b) => b.duracionSeg - a.duracionSeg);
+  if (ordenado.length < 2) return null;
+  const largo = ordenado[0];
+  const corto = ordenado.find(p => largo.duracionSeg - p.duracionSeg >= 180) || ordenado[ordenado.length - 1];
+  if (corto === largo) return null;
+  const cv = (largo.distM - corto.distM) / (largo.duracionSeg - corto.duracionSeg);
+  let dprime = corto.distM - cv * corto.duracionSeg;
+  if (dprime < 0) dprime = 0;
+  if (cv <= 0) return null;
+  return { cv, dprime };
+}
+function predecirTiempoCV(distM, cv, dprime) {
+  if (cv <= 0) return null;
+  const t = (distM - dprime) / cv;
+  return t > 0 ? t : null;
+}
+function riegel(t1, d1, d2) { return t1 * Math.pow(d2 / d1, 1.06); }
+// Velocidad Aeróbica Máxima (VAM/VMA real, la del VO2máx) — se aproxima con el mejor esfuerzo
+// sostenido de 5min (estándar habitual) o, si no hay, el de 8min como reserva. Distinta del
+// "desnivel/hora" de la cinta, que antes también llamábamos VAM por error.
+function estimarVMA(mejores) {
+  const m5 = mejores.find(m => m.duracionSeg === 300);
+  const m8 = mejores.find(m => m.duracionSeg === 480);
+  const usar = m5 || m8;
+  if (!usar) return null;
+  const velocidadMS = usar.distM / usar.duracionSeg;
+  return { velocidadKmh: velocidadMS * 3.6, ritmoSegKm: 1000 / velocidadMS, duracionUsadaMin: usar.duracionSeg / 60 };
+}
+const PCT_VMA = [130, 120, 115, 110, 105, 100, 95, 90, 85, 80, 75, 70];
+function zonasPorcentajeVMA(ritmoSegKmVMA) {
+  return PCT_VMA.map(pct => ({ pct, ritmoSegKm: ritmoSegKmVMA * 100 / pct }));
+}
+function vamInstantaneo(velocidadMS, pendientePct) {
+  if (pendientePct <= 0) return 0;
+  const angulo = Math.atan(pendientePct / 100);
+  return velocidadMS * Math.sin(angulo) * 3600;
+}
+function calcularDesacople(puntos) {
+  if (puntos.length < 4) return null;
+  const midT = puntos[0].t + (puntos[puntos.length - 1].t - puntos[0].t) / 2;
+  const p1 = puntos.filter(p => p.t < midT && p.velocidad > 0 && p.pulso > 0);
+  const p2 = puntos.filter(p => p.t >= midT && p.velocidad > 0 && p.pulso > 0);
+  if (!p1.length || !p2.length) return null;
+  const ratio1 = promedio(p1.map(p => p.velocidad)) / promedio(p1.map(p => p.pulso));
+  const ratio2 = promedio(p2.map(p => p.velocidad)) / promedio(p2.map(p => p.pulso));
+  if (!ratio1) return null;
+  return ((ratio1 - ratio2) / ratio1) * 100;
+}
+// mejor promedio de velocidad sostenida durante `duracionSeg`, sobre una serie {t, distAcum}
+function mejorEsfuerzoVentana(puntos, duracionSeg) {
+  if (!puntos.length) return null;
+  let mejorDist = 0;
+  let i = 0;
+  for (let j = 0; j < puntos.length; j++) {
+    while (puntos[j].t - puntos[i].t > duracionSeg) i++;
+    if (puntos[j].t - puntos[i].t >= duracionSeg * 0.95) {
+      const d = puntos[j].distAcum - puntos[i].distAcum;
+      if (d > mejorDist) mejorDist = d;
+    }
+  }
+  return mejorDist > 0 ? mejorDist : null;
+}
+
+/* ---------------- FANTASMA: interpolación sobre la curva distancia/tiempo ---------------- */
+// puntosFantasma: [{t, distAcum}, ...] ordenados por t ascendente (distAcum monótona no decreciente)
+function interpolarDistanciaEnT(puntosFantasma, t) {
+  if (!puntosFantasma || !puntosFantasma.length) return null;
+  if (t <= puntosFantasma[0].t) return puntosFantasma[0].distAcum;
+  const ultimo = puntosFantasma[puntosFantasma.length - 1];
+  if (t >= ultimo.t) return ultimo.distAcum; // el fantasma ya terminó, se queda quieto ahí
+  for (let i = 1; i < puntosFantasma.length; i++) {
+    if (puntosFantasma[i].t >= t) {
+      const p0 = puntosFantasma[i - 1], p1 = puntosFantasma[i];
+      const dt = p1.t - p0.t;
+      const frac = dt > 0 ? (t - p0.t) / dt : 0;
+      return p0.distAcum + frac * (p1.distAcum - p0.distAcum);
+    }
+  }
+  return ultimo.distAcum;
+}
+function interpolarTiempoEnDistancia(puntosFantasma, d) {
+  if (!puntosFantasma || !puntosFantasma.length) return null;
+  if (d <= puntosFantasma[0].distAcum) return puntosFantasma[0].t;
+  const ultimo = puntosFantasma[puntosFantasma.length - 1];
+  if (d > ultimo.distAcum) return null; // el fantasma nunca llegó tan lejos
+  for (let i = 1; i < puntosFantasma.length; i++) {
+    if (puntosFantasma[i].distAcum >= d) {
+      const p0 = puntosFantasma[i - 1], p1 = puntosFantasma[i];
+      const dd = p1.distAcum - p0.distAcum;
+      const frac = dd > 0 ? (d - p0.distAcum) / dd : 0;
+      return p0.t + frac * (p1.t - p0.t);
+    }
+  }
+  return ultimo.t;
+}
+// diferencia de tiempo a la MISMA distancia recorrida: negativo = vas adelante del fantasma
+function deltaFantasmaSeg(puntosFantasma, tiempoActual, distanciaActual) {
+  const tiempoFantasmaEnEsaDistancia = interpolarTiempoEnDistancia(puntosFantasma, distanciaActual);
+  if (tiempoFantasmaEnEsaDistancia == null) return null; // superaste la distancia total del fantasma
+  return tiempoActual - tiempoFantasmaEnEsaDistancia;
+}
+
+/* ============================================================
+   ESTADO GLOBAL
+   ============================================================ */
+let modo = null; // 'ble' | 'manual' | 'aire_libre'
+let sesionActiva = false;
+let sesionPausada = false;
+let cronometro = { inicio: 0, acumulado: 0 };
+let intervaloMuestreo = null;
+let distanciaAcumM = 0;
+let vamAcumWh = 0; // suma de (vam*dt) para promedio ponderado por tiempo en subida
+let tiempoSubidaSeg = 0;
+let puntosSesion = []; // {t, ritmo, pulso, cadencia, pendiente, velocidad, distAcum}
+let pendienteActual = 0.0;
+
+let actual = { velocidad: 0, pulso: 0, cadencia: 0 }; // último dato crudo (BLE, manual o GPS)
+
+let dispositivoReloj = null, dispositivoBanda = null;
+
+// ---- GPS (modo Aire libre) ----
+let watchIdGPS = null;
+let gpsUltimo = null; // {lat, lon, t, alt}
+let elevGanadaAcumM = 0;
+
+// ---- Fantasma ----
+let puntosFantasma = null; // [{t, distAcum}] de la sesión elegida, o null si no hay
+let fantasmaId = null;
+let fantasmaSuperado = false; // true cuando ya recorriste más distancia de la que el fantasma llegó a hacer
+let deltaFantasmaUltimo = null;
+
+// ---- Escenario visual ----
+let escenarioActual = 'ninguno'; // 'ninguno' | 'pista' | 'sendero'
+let roadCtxEscena = null, roadRAFEscena = null, roadLastEscena = 0;
+let runnerPhase = 0, ghostRunnerPhase = 0;
+
+let zonas = lsGet(K_ZONAS, { umbralRitmoSegKm: null, umbralPulso: null });
+
+/* ============================================================
+   NAVEGACIÓN
+   ============================================================ */
+function cambiarTab(nombre) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('activa'));
+  document.getElementById('view-' + nombre).classList.add('activa');
+  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('activo'));
+  document.getElementById('tab' + nombre.charAt(0).toUpperCase() + nombre.slice(1)).classList.add('activo');
+  if (nombre === 'historial') renderHistorial();
+  if (nombre === 'zonas') renderZonas();
+  if (nombre === 'vivo' && escenarioActual !== 'ninguno') iniciarBucleEscena();
+  else pararBucleEscena();
+}
+function cerrarDetalle() { document.getElementById('overlayDetalle').classList.remove('activa'); }
+
+function renderSelectorFantasma() {
+  const sel = document.getElementById('selectFantasma');
+  const valorPrevio = sel.value;
+  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 40);
+  let html = '<option value="">Sin fantasma</option>';
+  sesiones.forEach(s => {
+    const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+    const km = (s.distanciaM / 1000).toFixed(2);
+    const origen = s.modo === 'aire_libre' ? 'aire libre' : (s.modo === 'import_tcx' ? 'TCX' : 'cinta');
+    html += '<option value="' + s.id + '">' + fecha + ' · ' + km + ' km · ' + segAHMS(s.duracionSeg) + ' · ' + origen + '</option>';
+  });
+  sel.innerHTML = html;
+  if ([...sel.options].some(o => o.value === valorPrevio)) sel.value = valorPrevio;
+}
+
+/* ============================================================
+   SELECCIÓN DE MODO
+   ============================================================ */
+function seleccionarModo(m) {
+  modo = m;
+  document.getElementById('btnModoBLE').classList.toggle('sel', m === 'ble');
+  document.getElementById('btnModoManual').classList.toggle('sel', m === 'manual');
+  document.getElementById('btnModoAireLibre').classList.toggle('sel', m === 'aire_libre');
+  document.getElementById('panelBLE').style.display = m === 'ble' ? 'block' : 'none';
+  document.getElementById('panelManual').style.display = m === 'manual' ? 'block' : 'none';
+  document.getElementById('panelAireLibre').style.display = m === 'aire_libre' ? 'block' : 'none';
+  // en aire libre no hay pendiente controlable ni desnivel/hora de cinta; en cambio mostramos desnivel GPS
+  document.getElementById('cardPendiente').style.display = m === 'aire_libre' ? 'none' : 'block';
+  document.getElementById('tileVAM').style.display = m === 'aire_libre' ? 'none' : 'block';
+  document.getElementById('tileVAMprom').style.display = m === 'aire_libre' ? 'none' : 'block';
+  document.getElementById('tileDesnivel').style.display = m === 'aire_libre' ? 'block' : 'none';
+  pendienteActual = 0;
+}
+
+/* ============================================================
+   BLUETOOTH — reloj (Carrera Virtual) o banda HRM-Pro Plus: mismo estándar RSC 0x1814 + HR 0x180D,
+   así que la conexión es idéntica sea cual sea el dispositivo elegido en la búsqueda.
+   ============================================================ */
+async function conectarRelojBLE() {
+  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+  try {
+    const estadoEl = document.getElementById('estadoBLE');
+    estadoEl.textContent = 'Buscando sensor (reloj con Carrera Virtual activada, o banda HRM-Pro Plus)...';
+    estadoEl.className = 'estado-conexion';
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: ['running_speed_and_cadence'] }],
+      optionalServices: ['heart_rate']
+    });
+    dispositivoReloj = device;
+    device.addEventListener('gattserverdisconnected', () => {
+      document.getElementById('estadoBLE').textContent = 'Reloj desconectado.';
+      document.getElementById('estadoBLE').className = 'estado-conexion err';
+    });
+    const server = await device.gatt.connect();
+
+    const rscService = await server.getPrimaryService('running_speed_and_cadence');
+    const rscChar = await rscService.getCharacteristic('rsc_measurement');
+    rscChar.addEventListener('characteristicvaluechanged', handleRSC);
+    await rscChar.startNotifications();
+
+    let hrOk = false;
+    try {
+      const hrService = await server.getPrimaryService('heart_rate');
+      const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
+      hrChar.addEventListener('characteristicvaluechanged', handleHR);
+      await hrChar.startNotifications();
+      hrOk = true;
+    } catch (e) {
+      // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado) — se puede
+      // conectar la banda aparte con el botón de abajo.
+    }
+    estadoEl.textContent = 'Sensor conectado (' + device.name + ')' + (hrOk ? ' — HR incluido' : ' — sin HR, conectá la banda aparte');
+    estadoEl.className = 'estado-conexion ok';
+  } catch (e) {
+    document.getElementById('estadoBLE').textContent = 'No se pudo conectar: ' + e.message;
+    document.getElementById('estadoBLE').className = 'estado-conexion err';
+  }
+}
+function handleRSC(event) {
+  const v = event.target.value;
+  const flags = v.getUint8(0);
+  let idx = 1;
+  const speedRaw = v.getUint16(idx, true); idx += 2;
+  const speed = speedRaw / 256; // m/s
+  const cadence = v.getUint8(idx); idx += 1; // spm, tal cual lo reporta el dispositivo
+  actual.velocidad = speed;
+  actual.cadencia = cadence;
+}
+async function conectarBandaHR() {
+  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+  const estadoEl = modo === 'manual' ? document.getElementById('estadoBandaManual') : document.getElementById('estadoBLE');
+  try {
+    estadoEl.textContent = 'Buscando banda de pulso...';
+    estadoEl.className = 'estado-conexion';
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: ['heart_rate'] }]
+    });
+    dispositivoBanda = device;
+    device.addEventListener('gattserverdisconnected', () => {
+      estadoEl.textContent = 'Banda desconectada.';
+      estadoEl.className = 'estado-conexion err';
+    });
+    const server = await device.gatt.connect();
+    const hrService = await server.getPrimaryService('heart_rate');
+    const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
+    hrChar.addEventListener('characteristicvaluechanged', handleHR);
+    await hrChar.startNotifications();
+    estadoEl.textContent = 'Banda conectada (' + device.name + ')';
+    estadoEl.className = 'estado-conexion ok';
+  } catch (e) {
+    estadoEl.textContent = 'No se pudo conectar: ' + e.message;
+    estadoEl.className = 'estado-conexion err';
+  }
+}
+function handleHR(event) {
+  const v = event.target.value;
+  const flags = v.getUint8(0);
+  let hr;
+  if (flags & 0x01) hr = v.getUint16(1, true);
+  else hr = v.getUint8(1);
+  actual.pulso = hr;
+}
+
+/* ============================================================
+   GPS — modo Aire libre
+   ============================================================ */
+function distanciaHaversine(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = d => d * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function iniciarGPS() {
+  if (!navigator.geolocation) { toast('Este navegador no soporta geolocalización'); return; }
+  const estadoEl = document.getElementById('estadoGPS');
+  estadoEl.textContent = 'Buscando señal GPS...';
+  estadoEl.className = 'estado-conexion';
+  gpsUltimo = null;
+  watchIdGPS = navigator.geolocation.watchPosition(procesarPosicionGPS, errorGPS, {
+    enableHighAccuracy: true, maximumAge: 1000, timeout: 10000
+  });
+}
+function detenerGPS() {
+  if (watchIdGPS != null) { navigator.geolocation.clearWatch(watchIdGPS); watchIdGPS = null; }
+}
+function errorGPS(err) {
+  document.getElementById('estadoGPS').textContent = 'Error de GPS: ' + err.message;
+  document.getElementById('estadoGPS').className = 'estado-conexion err';
+}
+function procesarPosicionGPS(pos) {
+  const { latitude, longitude, accuracy, altitude } = pos.coords;
+  const t = pos.timestamp / 1000;
+  const estadoEl = document.getElementById('estadoGPS');
+  if (accuracy && accuracy > 25) {
+    estadoEl.textContent = 'Señal débil (±' + Math.round(accuracy) + 'm), esperando...';
+    estadoEl.className = 'estado-conexion';
+    return; // no piso gpsUltimo con un fix malo
+  }
+  estadoEl.textContent = 'GPS activo (±' + Math.round(accuracy) + 'm)';
+  estadoEl.className = 'estado-conexion ok';
+
+  if (gpsUltimo) {
+    const dt = t - gpsUltimo.t;
+    if (dt > 0) {
+      const d = distanciaHaversine(gpsUltimo.lat, gpsUltimo.lon, latitude, longitude);
+      const v = d / dt; // m/s
+      // filtro de ruido: descarto microsaltos (deriva GPS parado) y saltos imposibles (>8 m/s ~ 2:05/km)
+      if (d >= 1.5 && v < 8 && sesionActiva && !sesionPausada) {
+        actual.velocidad = v;
+        distanciaAcumM += d;
+        if (altitude != null && gpsUltimo.alt != null) {
+          const deltaAlt = altitude - gpsUltimo.alt;
+          if (deltaAlt > 1) elevGanadaAcumM += deltaAlt; // ignoro ruido menor a 1m
+        }
+      } else if (!sesionActiva) {
+        actual.velocidad = 0;
+      }
+    }
+  }
+  gpsUltimo = { lat: latitude, lon: longitude, t, alt: altitude };
+}
+
+/* ---------------- Modo manual ---------------- */
+function actualizarManual() {
+  const ritmoTxt = document.getElementById('manualRitmo').value;
+  const ritmoSeg = parseMMSS(ritmoTxt);
+  if (ritmoSeg && ritmoSeg > 0) actual.velocidad = 1000 / ritmoSeg;
+  const cad = parseInt(document.getElementById('manualCadencia').value, 10);
+  if (!isNaN(cad)) actual.cadencia = cad;
+}
+
+/* ============================================================
+   PENDIENTE
+   ============================================================ */
+function ajustarPendiente(delta) {
+  pendienteActual = Math.round((pendienteActual + delta) * 10) / 10;
+  if (pendienteActual < 0) pendienteActual = 0;
+  if (pendienteActual > 25) pendienteActual = 25;
+  document.getElementById('hudPendiente').textContent = pendienteActual.toFixed(1) + '%';
+}
+
+/* ============================================================
+   ESCENARIO VISUAL (pista 400m / sendero)
+   Portado de Bici Indoor: roadBands() es el motor de perspectiva 3D
+   (banking en curvas, elevación, montañas, decorado lateral) tal cual
+   está en esa app — mismas funciones, mismo ajuste fino. Lo único
+   nuevo acá es drawRunnerRear() (un ciclista con bici no sirve para
+   Correr) y cómo se alimenta bFn/eFn para pista y sendero.
+   ============================================================ */
+function fitEscena() {
+  const cv = document.getElementById('canvasEscena');
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight || 320;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  roadCtxEscena = { ctx, w, h };
+}
+function shadeHex(hex, f) {
+  const n = parseInt(hex.slice(1), 16); let r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  r = Math.min(255, r * f) | 0; g = Math.min(255, g * f) | 0; b = Math.min(255, b * f) | 0;
+  return 'rgb(' + r + ',' + g + ',' + b + ')';
+}
+function hexRgba(hex, a) {
+  const n = parseInt(hex.slice(1), 16);
+  return 'rgba(' + ((n >> 16) & 255) + ',' + ((n >> 8) & 255) + ',' + (n & 255) + ',' + a + ')';
+}
+const SCENES = {
+  rural: { label: 'Rural', sky: ['#5bb0e6', '#bfe6f5'], ground: '#213524', asphalt: '#4c5661', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 1, decor: 'trees' },
+  velodromo_open: { label: 'Pista al aire libre', sky: ['#5bb0e6', '#bfe6f5'], ground: '#3a6b3d', asphalt: '#b8956a', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 0.5, decor: 'stands' },
+  velodromo: { label: 'Pista cubierta', sky: ['#171b22', '#2a323d'], ground: '#2e4a2f', asphalt: '#c9a768', mtnCol: ['#333a44', '#242931'], mtnAmp: 0.6, decor: 'stands' },
+};
+function drawMountains(ctx, w, horizon, camB, sc) {
+  const layers = [{ amp: 0.10, freq: 0.9, pan: 55, col: sc.mtnCol[0] }, { amp: 0.17, freq: 1.5, pan: 100, col: sc.mtnCol[1] }];
+  for (const L of layers) {
+    const base = horizon, amp = L.amp * sc.mtnAmp * horizon, phase = camB * L.pan;
+    ctx.fillStyle = L.col; ctx.beginPath(); ctx.moveTo(0, base);
+    for (let px = 0; px <= w; px += 6) {
+      const t = (px / w) * 6.2832 * L.freq + phase;
+      const yy = base - amp * (0.55 + 0.45 * Math.sin(t) + 0.28 * Math.sin(t * 2.3 + 1));
+      ctx.lineTo(px, yy);
+    }
+    ctx.lineTo(w, base); ctx.closePath(); ctx.fill();
+  }
+}
+function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
+  if (decor === 'stands') {
+    const sw = th * 0.7, sh = th * (1.0 + 0.3 * Math.abs(seed)), tiers = 4;
+    ctx.fillStyle = '#3a4048';
+    ctx.fillRect(tx - sw / 2, ty - sh, sw, sh);
+    for (let tI = 0; tI < tiers; tI++) {
+      const yy = ty - sh + (tI / tiers) * sh;
+      ctx.fillStyle = (Math.sin(seed * 17 + tI * 4) > 0) ? '#c94b4b' : '#e6edf3';
+      ctx.globalAlpha = 0.75;
+      for (let c = 0; c < 3; c++) { if (Math.sin(seed * 23 + tI * 5 + c * 9) > -0.2) ctx.fillRect(tx - sw / 2 + c * (sw / 3) + sw * 0.05, yy + sh * 0.03, sw / 3 * 0.7, sh / tiers * 0.5); }
+      ctx.globalAlpha = 1;
+    }
+  } else { // trees
+    ctx.fillStyle = '#5a4634'; ctx.fillRect(tx - th * 0.05, ty - th * 0.32, th * 0.1, th * 0.32);
+    ctx.fillStyle = (seed > 0) ? '#2f6b39' : '#367a3f';
+    ctx.beginPath(); ctx.ellipse(tx, ty - th * 0.5, th * 0.28, th * 0.5, 0, 0, 7); ctx.fill();
+  }
+}
+// motor de perspectiva 3D (idéntico al de Bici Indoor): banking en curvas, elevación, decorado lateral.
+// routeName/sceneOverride: acá siempre paso sceneOverride, así que routeName no se usa (no hay rutas GPX en Correr).
+function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
+  const N = (geom && geom.N) || 130, NEAR = (geom && geom.NEAR) != null ? geom.NEAR : 2.0, GROW = (geom && geom.GROW) != null ? geom.GROW : 0.045,
+    f = w * 0.95, wRoad = (geom && geom.wRoad) || 5.2, camEyeH = 1.4, latK = 0.9, bandLen = 6, horizonK = 5;
+  const camB = bFn(d0), camE = eFn(d0);
+  const gAhead = (eFn(d0 + 50) - camE) / 50 * 100;
+  let horizon = Math.round(h * 0.44 - gAhead * horizonK);
+  horizon = Math.max(Math.round(h * 0.18), Math.min(Math.round(h * 0.74), horizon));
+  const sc = sceneOverride;
+  const sky = ctx.createLinearGradient(0, 0, 0, horizon);
+  sky.addColorStop(0, sc.sky[0]); sky.addColorStop(1, sc.sky[1]);
+  ctx.fillStyle = sky; ctx.fillRect(0, 0, w, horizon);
+  drawMountains(ctx, w, horizon, camB, sc);
+  const fogH = Math.round(h * 0.10);
+  const fog = ctx.createLinearGradient(0, horizon - fogH * 0.5, 0, horizon + fogH);
+  fog.addColorStop(0, hexRgba(sc.sky[1], 0)); fog.addColorStop(0.5, hexRgba(sc.sky[1], .75)); fog.addColorStop(1, hexRgba(sc.sky[1], 0));
+  ctx.fillStyle = fog; ctx.fillRect(0, horizon - fogH * 0.5, w, fogH * 1.5);
+  ctx.fillStyle = sc.ground; ctx.fillRect(0, horizon, w, h - horizon);
+  const gShade = Math.max(0.72, Math.min(1.15, 1 - gAhead * 0.02));
+  const asphaltL = shadeHex(sc.asphalt, gShade * 1.1), asphaltD = shadeHex(sc.asphalt, gShade * 0.96);
+  const BANK_K = 0.5;
+  const S = []; let x = 0, prevSeg = 0, cum = 0;
+  for (let i = 0; i <= N; i++) {
+    const dd = d0 + cum; let rel = bFn(dd) - camB; rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    if (i > 0) x += Math.sin(rel) * prevSeg * latK;
+    const Z = cum + 0.5, sc2 = f / Z, e = eFn(dd);
+    S.push({ cx: w / 2 + x * sc2, y: horizon - (e - camE - camEyeH) * sc2, hw: wRoad * sc2, d: dd, bank: Math.max(-0.6, Math.min(0.6, rel)) });
+    const seg = NEAR + i * GROW; prevSeg = seg; cum += seg;
+  }
+  for (let i = N - 1; i >= 0; i--) {
+    const a = S[i + 1], b = S[i], light = (Math.floor(b.d / bandLen) % 2 === 0);
+    const bo = b.bank * b.hw * BANK_K, ao = a.bank * a.hw * BANK_K;
+    const bLY = b.y - bo, bRY = b.y + bo, aLY = a.y - ao, aRY = a.y + ao;
+    const rb = Math.max(1.5, b.hw * 0.26), ra = Math.max(1, a.hw * 0.26);
+    ctx.fillStyle = light ? '#eeeeee' : '#d8452f';
+    ctx.beginPath(); ctx.moveTo(b.cx - b.hw - rb, bLY); ctx.lineTo(b.cx - b.hw, bLY); ctx.lineTo(a.cx - a.hw, aLY); ctx.lineTo(a.cx - a.hw - ra, aLY); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(b.cx + b.hw + rb, bRY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx + a.hw + ra, aRY); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = light ? asphaltL : asphaltD;
+    ctx.beginPath(); ctx.moveTo(b.cx - b.hw, bLY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx - a.hw, aLY); ctx.closePath(); ctx.fill();
+    if (light) {
+      const cb = Math.max(1, b.hw * 0.06), ca = Math.max(0.7, a.hw * 0.06);
+      ctx.fillStyle = '#efe7c8';
+      ctx.beginPath(); ctx.moveTo(b.cx - cb, b.y); ctx.lineTo(b.cx + cb, b.y); ctx.lineTo(a.cx + ca, a.y); ctx.lineTo(a.cx - ca, a.y); ctx.closePath(); ctx.fill();
+    }
+    const decorSpacing = 30;
+    if (Math.floor(b.d / decorSpacing) !== Math.floor(a.d / decorSpacing) && b.hw > 6) {
+      for (const side of [-1, 1]) {
+        const seed = Math.sin(Math.floor(b.d / decorSpacing) * 7.3 + side * 2.1);
+        if (sc.decor === 'stands' && side === -1) continue; // sin tribunas en el interior de la pista
+        const off = b.hw * (0.45 + 0.5 * Math.abs(seed));
+        const tx = b.cx + side * (b.hw + off), ty = b.y, th = b.hw * (0.45 + 0.3 * Math.abs(seed));
+        drawSideDecor(ctx, sc.decor, tx, ty, th, seed, side);
+      }
+    }
+  }
+  return S;
+}
+function roadPointAt(S, d) {
+  if (d <= S[0].d || d >= S[S.length - 1].d) return null;
+  let i = 0; while (i < S.length - 1 && S[i + 1].d < d) i++;
+  const t = (d - S[i].d) / ((S[i + 1].d - S[i].d) || 1);
+  return { cx: S[i].cx + (S[i + 1].cx - S[i].cx) * t, y: S[i].y + (S[i + 1].y - S[i].y) * t, hw: S[i].hw + (S[i + 1].hw - S[i].hw) * t };
+}
+// óvalo cerrado sintético para la pista (forma estadio: 2 rectas + 2 curvas semicirculares) — idéntico a Bici Indoor
+function velodromeGeom(trackLen) {
+  const R = Math.max(8, trackLen * 0.0845), curveLen = Math.PI * R, straight = Math.max(5, (trackLen - 2 * curveLen) / 2);
+  return { R, curveLen, straight, total: 2 * straight + 2 * curveLen };
+}
+function velodromeBearingAt(d, trackLen) {
+  const g = velodromeGeom(trackLen); d = ((d % g.total) + g.total) % g.total;
+  const { R, curveLen, straight } = g;
+  if (d < straight) return 0;
+  if (d < straight + curveLen) return -(d - straight) / R;
+  if (d < 2 * straight + curveLen) return -Math.PI;
+  return -Math.PI - (d - (2 * straight + curveLen)) / R;
+}
+function velodromeEleAt() { return 0; }
+const VELO_GEOM = { N: 100, NEAR: 0.8, GROW: 0.012, wRoad: 4.2 };
+const LARGO_PISTA_M = 400;
+
+// figura de corredor de espaldas (no de ciclista — Correr no anda en bici). `fase` en radianes,
+// un ciclo completo (2π) = una zancada completa (pierna izq + der); ver actualización en loopEscena().
+function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha) {
+  ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+  const skin = '#c98d5e', shorts = '#1e2c4a', zapatilla = '#20242b';
+  const hipY = gy - 1.35 * s, shY = gy - 2.35 * s, headY = gy - 2.66 * s, lean = s * 0.05;
+
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
+  ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
+
+  const strideAmp = s * 0.55, liftAmp = s * 0.5;
+  const leg = (side, ph) => {
+    const swing = Math.sin(ph), lift = Math.max(0, Math.cos(ph));
+    const hipX = cx + side * s * 0.13;
+    const footX = hipX + swing * strideAmp * 0.5, footY = gy - lift * liftAmp * 0.32;
+    const kneeX = hipX + swing * strideAmp * 0.2, kneeY = hipY + (footY - hipY) * 0.5 - lift * s * 0.16;
+    ctx.strokeStyle = skin; ctx.lineWidth = s * 0.19;
+    ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
+    ctx.lineWidth = s * 0.15;
+    ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(footX, footY); ctx.stroke();
+    ctx.fillStyle = zapatilla;
+    ctx.beginPath(); ctx.ellipse(footX, footY + s * 0.04, s * 0.13, s * 0.07, 0, 0, 7); ctx.fill();
+  };
+  const lPh = fase, rPh = fase + Math.PI;
+  if (Math.cos(lPh) > Math.cos(rPh)) { leg(1, rPh); leg(-1, lPh); } else { leg(-1, lPh); leg(1, rPh); }
+
+  ctx.fillStyle = shorts;
+  ctx.beginPath(); ctx.moveTo(cx - s * 0.26, hipY - s * 0.1); ctx.lineTo(cx + s * 0.26, hipY - s * 0.1);
+  ctx.lineTo(cx + s * 0.20, hipY + s * 0.28); ctx.lineTo(cx - s * 0.20, hipY + s * 0.28); ctx.closePath(); ctx.fill();
+
+  ctx.fillStyle = jersey;
+  ctx.beginPath();
+  ctx.moveTo(cx - s * 0.25, hipY - s * 0.05); ctx.lineTo(cx + s * 0.25, hipY - s * 0.05);
+  ctx.lineTo(cx + s * 0.29 + lean, shY); ctx.lineTo(cx - s * 0.21 + lean, shY);
+  ctx.closePath(); ctx.fill();
+
+  const arm = (side, ph) => {
+    const swing = Math.sin(ph);
+    const shX = cx + side * s * 0.23 + lean, elX = shX + swing * s * 0.28, elY = shY + s * 0.32;
+    const wrX = elX - swing * s * 0.05, wrY = elY + s * 0.26;
+    ctx.strokeStyle = jersey; ctx.lineWidth = s * 0.13;
+    ctx.beginPath(); ctx.moveTo(shX, shY + s * 0.02); ctx.lineTo(elX, elY); ctx.stroke();
+    ctx.strokeStyle = skin; ctx.lineWidth = s * 0.11;
+    ctx.beginPath(); ctx.moveTo(elX, elY); ctx.lineTo(wrX, wrY); ctx.stroke();
+  };
+  arm(-1, rPh); arm(1, lPh); // brazo opuesto a la pierna del mismo lado
+
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.19, s * 0.21, 0, 0, 7); ctx.fill();
+  ctx.restore();
+}
+
+function formatearGapMetros(gapM) {
+  const abs = Math.round(Math.abs(gapM));
+  return (gapM >= 0 ? '+' : '-') + abs + ' m ' + (gapM >= 0 ? 'adelante' : 'atrás');
+}
+function calcularVueltaGap(gapM, largoVuelta) { return Math.trunc(gapM / largoVuelta); }
+
+function cambiarEscenario() {
+  escenarioActual = document.getElementById('selectEscenario').value;
+  document.getElementById('wrapEscena').style.display = escenarioActual === 'ninguno' ? 'none' : 'block';
+  if (escenarioActual === 'ninguno') pararBucleEscena();
+  else iniciarBucleEscena();
+}
+function escenaVisible() {
+  return escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa') && !document.hidden;
+}
+function iniciarBucleEscena() {
+  fitEscena();
+  roadLastEscena = 0;
+  if (!roadRAFEscena) roadRAFEscena = requestAnimationFrame(loopEscena);
+}
+function pararBucleEscena() {
+  if (roadRAFEscena) { cancelAnimationFrame(roadRAFEscena); roadRAFEscena = null; }
+}
+function loopEscena(ts) {
+  if (!escenaVisible()) { roadRAFEscena = null; return; }
+  const dt = roadLastEscena ? Math.min(0.1, (ts - roadLastEscena) / 1000) : 0;
+  roadLastEscena = ts;
+  const cadHz = ((actual.cadencia || 168) / 60 / 2); // ciclos de zancada/seg (168spm de base si no hay dato real)
+  if (sesionActiva && !sesionPausada) { runnerPhase += 2 * Math.PI * cadHz * dt; ghostRunnerPhase += 2 * Math.PI * cadHz * dt; }
+  renderEscena();
+  roadRAFEscena = requestAnimationFrame(loopEscena);
+}
+function renderEscena() {
+  if (!roadCtxEscena || roadCtxEscena.w < 10) fitEscena();
+  if (!roadCtxEscena || roadCtxEscena.w < 10) return;
+  const { ctx, w, h } = roadCtxEscena;
+  if (escenarioActual === 'pista') dibujarEscenaPista(ctx, w, h);
+  else dibujarEscenaSendero(ctx, w, h);
+  actualizarLineaVuelta();
+}
+function dibujarEscenaSendero(ctx, w, h) {
+  const bFn = () => 0; // sendero recto (sin ruta GPX real que trazar)
+  const eFn = d => d * (pendienteActual / 100); // usa la pendiente en vivo como si fuera una subida constante
+  const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.rural, null);
+  const youS = Math.max(20, h * 0.135);
+  let gapM = null, deltaSeg = null;
+  if (puntosFantasma) {
+    const t = tiempoTranscurridoSeg();
+    const distFant = interpolarDistanciaEnT(puntosFantasma, t);
+    gapM = distanciaAcumM - distFant;
+    deltaSeg = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
+    const p = roadPointAt(S, distFant);
+    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45); }
+  }
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#2f6f9c', 1);
+  dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
+}
+function dibujarLineaMeta(ctx, S) {
+  // el límite de vuelta (d=0 / d=LARGO_PISTA_M en el espacio local de S) cae justo donde termina
+  // la segunda curva del óvalo y arranca la recta — ver velodromeBearingAt: d=0 es el inicio de esa recta.
+  const p = roadPointAt(S, LARGO_PISTA_M);
+  if (!p) return; // fuera del rango visible por ahora (recién la vas a ver al acercarte)
+  const cellW = Math.max(2, p.hw * 0.16), stripeH = Math.max(2, p.hw * 0.16);
+  const nCells = Math.max(4, Math.round((p.hw * 2) / cellW));
+  for (let i = 0; i < nCells; i++) {
+    ctx.fillStyle = (i % 2 === 0) ? '#111318' : '#f4f4f4';
+    ctx.fillRect(p.cx - p.hw + i * cellW, p.y - stripeH / 2, cellW + 0.5, stripeH);
+  }
+}
+function dibujarEscenaPista(ctx, w, h) {
+  const d0 = ((distanciaAcumM % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
+  const bFn = d => velodromeBearingAt(d, LARGO_PISTA_M);
+  const S = roadBands(ctx, w, h, d0, bFn, velodromeEleAt, null, SCENES.velodromo_open, VELO_GEOM);
+  dibujarLineaMeta(ctx, S);
+  const youS = Math.max(20, h * 0.135);
+  let gapM = null, deltaSeg = null, lapDiff = null;
+  if (puntosFantasma) {
+    const t = tiempoTranscurridoSeg();
+    const gNow = interpolarDistanciaEnT(puntosFantasma, t);
+    gapM = distanciaAcumM - gNow;
+    deltaSeg = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
+    lapDiff = calcularVueltaGap(gapM, LARGO_PISTA_M);
+    const gd0 = ((gNow % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
+    const relAhead = ((gd0 - d0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
+    const p = roadPointAt(S, d0 + relAhead);
+    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45); }
+  }
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#2f6f9c', 1);
+  dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff);
+}
+function dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff) {
+  if (gapM == null) return;
+  const ahead = gapM >= 0;
+  let lbl = formatearGapMetros(gapM);
+  if (lapDiff) lbl += '  (' + (lapDiff > 0 ? '+' : '') + lapDiff + ' vta)';
+  const lbl2 = deltaSeg != null ? formatearDelta(deltaSeg) : '';
+  ctx.font = '700 15px system-ui'; ctx.textAlign = 'center';
+  const tw = ctx.measureText(lbl).width;
+  ctx.font = '600 12px system-ui';
+  const tw2 = ctx.measureText(lbl2).width;
+  const boxW = Math.max(tw, tw2) + 14;
+  ctx.fillStyle = 'rgba(4,7,10,.72)';
+  ctx.fillRect(w / 2 - boxW / 2, 8, boxW, lbl2 ? 40 : 24);
+  ctx.font = '700 15px system-ui';
+  ctx.fillStyle = ahead ? '#3fb950' : '#ff6b6b';
+  ctx.fillText(lbl, w / 2, 25);
+  if (lbl2) { ctx.font = '600 12px system-ui'; ctx.fillStyle = '#9aa5ad'; ctx.fillText(lbl2, w / 2, 42); }
+  ctx.textAlign = 'start';
+}
+function actualizarLineaVuelta() {
+  const el = document.getElementById('lineaVueltaEscena');
+  if (escenarioActual === 'pista') {
+    const vuelta = Math.floor(distanciaAcumM / LARGO_PISTA_M) + 1;
+    el.textContent = 'Vuelta ' + vuelta + ' · pista ' + LARGO_PISTA_M + ' m';
+  } else if (escenarioActual === 'sendero') {
+    el.textContent = 'Sendero · ' + (distanciaAcumM / 1000).toFixed(2) + ' km recorridos';
+  }
+}
+
+/* ============================================================
+   CICLO DE SESIÓN
+   ============================================================ */
+function iniciarSesion() {
+  if (!modo) { toast('Elegí primero el modo (Sensor BLE, Manual o Aire libre)'); return; }
+  sesionActiva = true;
+  sesionPausada = false;
+  cronometro.inicio = Date.now();
+  cronometro.acumulado = 0;
+  distanciaAcumM = 0;
+  vamAcumWh = 0;
+  tiempoSubidaSeg = 0;
+  elevGanadaAcumM = 0;
+  puntosSesion = [];
+
+  fantasmaId = document.getElementById('selectFantasma').value || null;
+  puntosFantasma = null;
+  fantasmaSuperado = false;
+  deltaFantasmaUltimo = null;
+  if (fantasmaId) {
+    const sesiones = lsGet(K_SESIONES, []);
+    const sFantasma = sesiones.find(s => s.id === fantasmaId);
+    if (sFantasma) {
+      puntosFantasma = puntosDeSesion(sFantasma).map(p => ({ t: p.t, distAcum: p.distAcum }));
+      document.getElementById('tileFantasma').style.display = 'block';
+    }
+  } else {
+    document.getElementById('tileFantasma').style.display = 'none';
+  }
+  document.getElementById('selectFantasma').disabled = true;
+
+  document.getElementById('btnIniciar').disabled = true;
+  document.getElementById('btnPausar').disabled = false;
+  document.getElementById('btnFinalizar').disabled = false;
+  document.getElementById('cardNotas').style.display = 'block';
+  document.getElementById('cardModo').style.display = 'none';
+  intervaloMuestreo = setInterval(tick, 1000);
+  toast('Sesión iniciada');
+}
+function pausarSesion() {
+  sesionPausada = !sesionPausada;
+  document.getElementById('btnPausar').textContent = sesionPausada ? 'Reanudar' : 'Pausar';
+  if (sesionPausada) {
+    cronometro.acumulado += Date.now() - cronometro.inicio;
+  } else {
+    cronometro.inicio = Date.now();
+  }
+}
+function tiempoTranscurridoSeg() {
+  const extra = sesionPausada ? 0 : (Date.now() - cronometro.inicio);
+  return (cronometro.acumulado + extra) / 1000;
+}
+function tick() {
+  if (!sesionActiva || sesionPausada) return;
+  const t = tiempoTranscurridoSeg();
+  const velocidad = actual.velocidad || 0; // m/s
+  const ritmoSegKm = velocidad > 0.1 ? (1000 / velocidad) : null;
+  const pulso = actual.pulso || 0;
+  const cadencia = actual.cadencia || 0;
+
+  if (modo !== 'aire_libre') {
+    distanciaAcumM += velocidad * 1; // 1s de muestreo, dead-reckoning (BLE/manual)
+  } // en aire_libre la distancia ya se acumula evento a evento en procesarPosicionGPS
+  const vamInst = vamInstantaneo(velocidad, pendienteActual);
+  if (pendienteActual > 0) { vamAcumWh += vamInst * 1; tiempoSubidaSeg += 1; }
+
+  puntosSesion.push({ t, ritmo: ritmoSegKm, pulso, cadencia, pendiente: pendienteActual, velocidad, distAcum: distanciaAcumM });
+
+  // HUD
+  document.getElementById('hudRitmo').textContent = ritmoSegKm ? segAMMSS(ritmoSegKm) : '--:--';
+  document.getElementById('hudPulso').textContent = pulso || '--';
+  document.getElementById('hudCadencia').textContent = cadencia || '--';
+  document.getElementById('hudDistancia').textContent = (distanciaAcumM / 1000).toFixed(2);
+  document.getElementById('hudTiempo').textContent = segAHMS(t);
+  if (modo === 'aire_libre') {
+    document.getElementById('hudDesnivel').textContent = Math.round(elevGanadaAcumM);
+  } else {
+    document.getElementById('hudVAM').textContent = Math.round(vamInst);
+    document.getElementById('hudVAMprom').textContent = tiempoSubidaSeg > 0 ? Math.round(vamAcumWh / tiempoSubidaSeg) : 0;
+  }
+
+  if (puntosFantasma && distanciaAcumM > 0) {
+    const delta = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
+    const elFant = document.getElementById('hudFantasma');
+    const elLbl = document.getElementById('lblFantasma');
+    if (delta == null) {
+      // ya recorriste más distancia de la que el fantasma llegó a hacer en toda su sesión
+      fantasmaSuperado = true;
+      elFant.textContent = deltaFantasmaUltimo != null ? formatearDelta(deltaFantasmaUltimo) : '🏁';
+      elLbl.textContent = 'Superaste la distancia del fantasma';
+    } else {
+      deltaFantasmaUltimo = delta;
+      elFant.textContent = formatearDelta(delta);
+      elLbl.textContent = 'vs Fantasma (a esta distancia)';
+      elFant.classList.toggle('adelante', delta < 0);
+      elFant.classList.toggle('atras', delta > 0);
+    }
+  }
+
+  // zona actual (prioriza pulso si hay umbral, sino ritmo)
+  let zonaActual = null;
+  if (zonas.umbralPulso && pulso) zonaActual = zonaPorPulso(pulso, zonas.umbralPulso);
+  else if (zonas.umbralRitmoSegKm && ritmoSegKm) zonaActual = zonaPorRitmo(ritmoSegKm, zonas.umbralRitmoSegKm);
+  if (zonaActual) {
+    document.getElementById('zonaActualTxt').textContent = 'Z' + zonaActual + ' — ' + PACE_ZONAS.find(p => p.z === zonaActual).label;
+    document.getElementById('cintaMarker').style.left = (zonaActual - 1) * 20 + 10 + '%';
+  } else {
+    document.getElementById('zonaActualTxt').textContent = 'Cargá un umbral en "Zonas" para verla';
+  }
+}
+/* ============================================================
+   ALMACENAMIENTO LIVIANO DE PUNTOS
+   Bajamos la resolución a un punto cada INTERVALO_GUARDADO_SEG (promediando
+   ritmo/pulso/cadencia en cada ventana) y lo guardamos en arrays columnares
+   en vez de un array de objetos, para que cada sesión pese mucho menos en
+   localStorage (clave compartida con Bici Indoor y Natación en el mismo dominio).
+   El cálculo de mejores esfuerzos / TSS / desacople siempre se hace ANTES,
+   sobre los puntos a resolución completa — acá solo comprimimos lo que se guarda.
+   ============================================================ */
+const INTERVALO_GUARDADO_SEG = 5;
+
+function reducirResolucion(puntos, intervaloSeg) {
+  if (!puntos.length) return [];
+  const salida = [];
+  let bucket = [];
+  let proximoCorte = puntos[0].t + intervaloSeg;
+  for (const p of puntos) {
+    bucket.push(p);
+    if (p.t >= proximoCorte) {
+      salida.push(promediarBucket(bucket));
+      bucket = [];
+      proximoCorte += intervaloSeg;
+    }
+  }
+  if (bucket.length) salida.push(promediarBucket(bucket));
+  return salida;
+}
+function promediarBucket(bucket) {
+  const ultimo = bucket[bucket.length - 1];
+  const ritmos = bucket.filter(p => p.ritmo).map(p => p.ritmo);
+  const pulsos = bucket.filter(p => p.pulso).map(p => p.pulso);
+  const cadencias = bucket.filter(p => p.cadencia).map(p => p.cadencia);
+  return {
+    t: ultimo.t,
+    ritmo: ritmos.length ? promedio(ritmos) : null,
+    pulso: pulsos.length ? promedio(pulsos) : null,
+    cadencia: cadencias.length ? promedio(cadencias) : null,
+    pendiente: ultimo.pendiente || 0,
+    distAcum: ultimo.distAcum // acumulado real, no se promedia
+  };
+}
+function compactarPuntos(puntos) {
+  const t = [], ritmo = [], pulso = [], cadencia = [], pendiente = [], distAcum = [];
+  puntos.forEach(p => {
+    t.push(Math.round(p.t));
+    ritmo.push(p.ritmo ? Math.round(p.ritmo) : 0);
+    pulso.push(p.pulso ? Math.round(p.pulso) : 0);
+    cadencia.push(p.cadencia ? Math.round(p.cadencia) : 0);
+    pendiente.push(p.pendiente ? Math.round(p.pendiente * 10) : 0);
+    distAcum.push(Math.round(p.distAcum));
+  });
+  return { t, ritmo, pulso, cadencia, pendiente, distAcum };
+}
+function descomprimirPuntos(c) {
+  if (!c || !c.t) return [];
+  const out = [];
+  for (let i = 0; i < c.t.length; i++) {
+    const distAcum = c.distAcum[i];
+    const distPrev = i > 0 ? c.distAcum[i - 1] : 0;
+    const dt = i > 0 ? (c.t[i] - c.t[i - 1]) : c.t[i];
+    const velocidad = dt > 0 ? (distAcum - distPrev) / dt : 0;
+    out.push({
+      t: c.t[i],
+      ritmo: c.ritmo[i] || null,
+      pulso: c.pulso[i] || null,
+      cadencia: c.cadencia[i] || null,
+      pendiente: c.pendiente[i] / 10,
+      velocidad,
+      distAcum
+    });
+  }
+  return out;
+}
+// Devuelve siempre un array de objetos {t,ritmo,pulso,cadencia,pendiente,velocidad,distAcum},
+// sea que la sesión haya quedado guardada en el formato viejo (array plano) o en el compacto nuevo.
+function puntosDeSesion(sesion) {
+  if (!sesion.puntos) return [];
+  return Array.isArray(sesion.puntos) ? sesion.puntos : descomprimirPuntos(sesion.puntos);
+}
+
+function finalizarSesion() {
+  if (!confirm('¿Finalizar y guardar la sesión?')) return;
+  clearInterval(intervaloMuestreo);
+  detenerGPS();
+  sesionActiva = false;
+  const duracionSeg = tiempoTranscurridoSeg();
+  if (duracionSeg < 30 || puntosSesion.length < 5) {
+    toast('Sesión muy corta, no se guardó');
+    resetearHUD();
+    return;
+  }
+  const ritmosValidos = puntosSesion.filter(p => p.ritmo).map(p => p.ritmo);
+  const ritmoPromedioSegKm = ritmosValidos.length ? promedio(ritmosValidos) : null;
+  const pulsosValidos = puntosSesion.filter(p => p.pulso).map(p => p.pulso);
+  const pulsoPromedio = pulsosValidos.length ? Math.round(promedio(pulsosValidos)) : null;
+  const cadenciasValidas = puntosSesion.filter(p => p.cadencia).map(p => p.cadencia);
+  const cadenciaPromedio = cadenciasValidas.length ? Math.round(promedio(cadenciasValidas)) : null;
+
+  const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
+  const desacople = calcularDesacople(puntosSesion.filter(p => p.velocidad > 0 && p.pulso > 0));
+  const efAerobica = (ritmoPromedioSegKm && pulsoPromedio) ? ((1000 / ritmoPromedioSegKm) * 60 / pulsoPromedio) : null; // m/min por bpm
+
+  const sesion = {
+    id: 'run_' + Date.now(),
+    fecha: new Date().toISOString(),
+    modo,
+    duracionSeg: Math.round(duracionSeg),
+    distanciaM: Math.round(distanciaAcumM),
+    ritmoPromedioSegKm,
+    pulsoPromedio,
+    cadenciaPromedio,
+    vamPromedio: tiempoSubidaSeg > 0 ? Math.round(vamAcumWh / tiempoSubidaSeg) : 0,
+    elevGanadaM: modo === 'aire_libre' ? Math.round(elevGanadaAcumM) : null,
+    tss,
+    desacoplePct: desacople,
+    efAerobica,
+    fantasmaId: fantasmaId || null,
+    fantasmaDeltaFinalSeg: fantasmaId ? deltaFantasmaUltimo : null,
+    puntos: compactarPuntos(reducirResolucion(puntosSesion, INTERVALO_GUARDADO_SEG)),
+    notas: document.getElementById('notasSesion').value || ''
+  };
+
+  const sesiones = lsGet(K_SESIONES, []);
+  sesiones.push(sesion);
+  lsSet(K_SESIONES, sesiones);
+
+  // mejores esfuerzos con la serie a resolución completa (puntosSesion, no la "sesion.puntos" ya comprimida).
+  // Se llama DESPUÉS de guardar la sesión para que recalcularZonasDesdeMejores() pueda encontrarla al buscar el pulso.
+  actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos: puntosSesion });
+  actualizarFormaCompartida(sesion);
+
+  toast('Sesión guardada · TSS ' + tss);
+  resetearHUD();
+  renderZonas();
+}
+function resetearHUD() {
+  document.getElementById('btnIniciar').disabled = false;
+  document.getElementById('btnPausar').disabled = true;
+  document.getElementById('btnPausar').textContent = 'Pausar';
+  document.getElementById('btnFinalizar').disabled = true;
+  document.getElementById('cardNotas').style.display = 'none';
+  document.getElementById('cardModo').style.display = 'block';
+  document.getElementById('notasSesion').value = '';
+  document.getElementById('hudRitmo').textContent = '--:--';
+  document.getElementById('hudPulso').textContent = '--';
+  document.getElementById('hudCadencia').textContent = '--';
+  document.getElementById('hudDistancia').textContent = '0.00';
+  document.getElementById('hudTiempo').textContent = '00:00';
+  document.getElementById('hudVAM').textContent = '0';
+  document.getElementById('hudVAMprom').textContent = '0';
+  document.getElementById('hudDesnivel').textContent = '0';
+  document.getElementById('zonaActualTxt').textContent = '--';
+  document.getElementById('selectFantasma').disabled = false;
+  document.getElementById('tileFantasma').style.display = 'none';
+  document.getElementById('hudFantasma').classList.remove('adelante', 'atras');
+  puntosFantasma = null;
+  renderSelectorFantasma();
+}
+
+/* ============================================================
+   MEJORES ESFUERZOS + ZONAS AUTO
+   ============================================================ */
+function actualizarMejoresEsfuerzos(sesion) {
+  const puntosDist = sesion.puntos.filter(p => p.velocidad >= 0).map(p => ({ t: p.t, distAcum: p.distAcum }));
+  if (puntosDist.length < 5) return;
+  let mejores = lsGet(K_MEJORES, []);
+  const ahora = Date.now();
+  // purgo registros viejos (> 90 días)
+  mejores = mejores.filter(m => (ahora - new Date(m.fecha).getTime()) / 86400000 <= VENTANA_MEJORES_DIAS);
+
+  for (const dur of DURACIONES_REF) {
+    if (sesion.duracionSeg < dur * 0.95) continue;
+    const dist = mejorEsfuerzoVentana(puntosDist, dur);
+    if (!dist) continue;
+    const existente = mejores.filter(m => m.duracionSeg === dur).sort((a, b) => b.distM - a.distM)[0];
+    if (!existente || dist > existente.distM) {
+      mejores = mejores.filter(m => m.duracionSeg !== dur);
+      mejores.push({ duracionSeg: dur, distM: dist, fecha: sesion.fecha, sesionId: sesion.id });
+    }
+  }
+  lsSet(K_MEJORES, mejores);
+  recalcularZonasDesdeMejores();
+}
+function recalcularZonasDesdeMejores() {
+  const mejores = lsGet(K_MEJORES, []);
+  const modelo = ajustarModeloCV(mejores);
+  if (!modelo) return; // no hay suficientes datos todavía, no toco zonas
+  // ritmo umbral aproximado: uso el punto de duración más larga disponible como referencia de "esfuerzo sostenible"
+  const masLargo = [...mejores].sort((a, b) => b.duracionSeg - a.duracionSeg)[0];
+  const velocidadEnEseEsfuerzo = masLargo.distM / masLargo.duracionSeg;
+  const ritmoUmbralSegKm = 1000 / velocidadEnEseEsfuerzo;
+
+  // pulso umbral: promedio de pulso durante ese mismo esfuerzo, si la sesión de origen sigue guardada
+  const sesiones = lsGet(K_SESIONES, []);
+  const sesionOrigen = sesiones.find(s => s.id === masLargo.sesionId);
+  let pulsoUmbral = zonas.umbralPulso; // conservo el que había si no puedo recalcularlo
+  if (sesionOrigen && sesionOrigen.pulsoPromedio) pulsoUmbral = sesionOrigen.pulsoPromedio;
+
+  zonas = { umbralRitmoSegKm: ritmoUmbralSegKm, umbralPulso: pulsoUmbral, cv: modelo.cv, dprime: modelo.dprime, autoDesde: masLargo.fecha };
+  lsSet(K_ZONAS, zonas);
+}
+function guardarUmbralManual() {
+  const ritmoSeg = parseMMSS(document.getElementById('umbralRitmoInput').value);
+  const pulso = parseInt(document.getElementById('umbralPulsoInput').value, 10);
+  if (!ritmoSeg && !pulso) { toast('Cargá al menos un valor'); return; }
+  if (ritmoSeg) zonas.umbralRitmoSegKm = ritmoSeg;
+  if (!isNaN(pulso) && pulso > 0) zonas.umbralPulso = pulso;
+  zonas.manual = true;
+  lsSet(K_ZONAS, zonas);
+  document.getElementById('estadoUmbral').textContent = 'Umbral guardado manualmente.';
+  document.getElementById('estadoUmbral').className = 'estado-conexion ok';
+  renderZonas();
+}
+
+/* ============================================================
+   FORMA COMPARTIDA ENTRE APPS (CTL/ATL/TSB)
+   ============================================================ */
+function actualizarFormaCompartida(sesion) {
+  const registro = lsGet(K_FORMA_COMPARTIDA, []);
+  registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss });
+  lsSet(K_FORMA_COMPARTIDA, registro);
+}
+function calcularSerieForma() {
+  // Uso únicamente las sesiones de esta app (correr) para el gráfico local de "Historial".
+  // El panel combinado (cuando se arme) va a leer K_FORMA_COMPARTIDA y sumar todos los deportes.
+  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  if (!sesiones.length) return { serie: [], ctl: 0, atl: 0, tsb: 0 };
+  const porDia = {};
+  sesiones.forEach(s => {
+    const dia = s.fecha.slice(0, 10);
+    porDia[dia] = (porDia[dia] || 0) + (s.tss || 0);
+  });
+  const dias = Object.keys(porDia).sort();
+  const inicio = new Date(dias[0]);
+  const fin = new Date();
+  let ctl = 0, atl = 0;
+  const serie = [];
+  for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    const tssHoy = porDia[key] || 0;
+    const r = pasoEWMA(ctl, atl, tssHoy);
+    ctl = r.ctl; atl = r.atl;
+    serie.push({ fecha: key, ctl, atl, tsb: r.tsb });
+  }
+  const ultimo = serie[serie.length - 1];
+  return { serie, ctl: ultimo.ctl, atl: ultimo.atl, tsb: ultimo.tsb };
+}
+
+/* ============================================================
+   RENDER: ZONAS
+   ============================================================ */
+function renderZonas() {
+  document.getElementById('umbralRitmoInput').value = zonas.umbralRitmoSegKm ? segAMMSS(zonas.umbralRitmoSegKm) : '';
+  document.getElementById('umbralPulsoInput').value = zonas.umbralPulso || '';
+  document.getElementById('estadoUmbral').textContent = zonas.autoDesde
+    ? ('Auto-actualizado a partir de la sesión del ' + new Date(zonas.autoDesde).toLocaleDateString('es-AR'))
+    : (zonas.manual ? 'Cargado manualmente.' : 'Todavía sin datos suficientes — cargá un umbral manual o importá un TCX.');
+
+  const tRitmo = document.getElementById('tablaZonasRitmo');
+  if (!zonas.umbralRitmoSegKm) {
+    tRitmo.innerHTML = '<tr><td class="vacio">Sin umbral de ritmo todavía</td></tr>';
+  } else {
+    let html = '<tr><th>Zona</th><th>Ritmo /km</th></tr>';
+    PACE_ZONAS.forEach(zd => {
+      const rMax = zd.max === Infinity ? null : zonas.umbralRitmoSegKm * zd.max;
+      const rMin = zonas.umbralRitmoSegKm * zd.min;
+      const txt = zd.max === Infinity ? ('más lento que ' + segAMMSS(rMin)) : (segAMMSS(rMax) + ' – ' + segAMMSS(rMin));
+      html += '<tr><td><span class="chip-z" style="background:' + COLOR_ZONA[zd.z] + '"></span>Z' + zd.z + ' ' + zd.label + '</td><td>' + txt + '</td></tr>';
+    });
+    tRitmo.innerHTML = html;
+  }
+
+  const tPulso = document.getElementById('tablaZonasPulso');
+  if (!zonas.umbralPulso) {
+    tPulso.innerHTML = '<tr><td class="vacio">Sin umbral de pulso todavía</td></tr>';
+  } else {
+    let html = '<tr><th>Zona</th><th>bpm</th></tr>';
+    HR_ZONAS.forEach(zd => {
+      const hMin = Math.round(zonas.umbralPulso * zd.min);
+      const hMax = zd.max === Infinity ? null : Math.round(zonas.umbralPulso * zd.max);
+      const txt = zd.max === Infinity ? (hMin + '+') : (hMin + ' – ' + hMax);
+      html += '<tr><td><span class="chip-z" style="background:' + COLOR_ZONA[zd.z] + '"></span>Z' + zd.z + ' ' + zd.label + '</td><td>' + txt + '</td></tr>';
+    });
+    tPulso.innerHTML = html;
+  }
+
+  const mejores = lsGet(K_MEJORES, []).sort((a, b) => a.duracionSeg - b.duracionSeg);
+  const tMejores = document.getElementById('tablaMejores');
+  if (!mejores.length) {
+    tMejores.innerHTML = '<tr><td class="vacio">Todavía no hay registros</td></tr>';
+  } else {
+    let html = '<tr><th>Duración</th><th>Distancia</th><th>Ritmo</th></tr>';
+    mejores.forEach(m => {
+      const ritmo = 1000 / (m.distM / m.duracionSeg);
+      html += '<tr><td>' + Math.round(m.duracionSeg / 60) + " min</td><td>" + (m.distM / 1000).toFixed(2) + ' km</td><td>' + segAMMSS(ritmo) + '/km</td></tr>';
+    });
+    tMejores.innerHTML = html;
+  }
+
+  const resumenVMAEl = document.getElementById('resumenVMA');
+  const tVMA = document.getElementById('tablaVMA');
+  const vma = estimarVMA(mejores);
+  if (!vma) {
+    resumenVMAEl.textContent = 'Necesitás un esfuerzo de 5 u 8 min registrado (viene de "Mejores esfuerzos" arriba) para estimarla.';
+    tVMA.innerHTML = '';
+  } else {
+    resumenVMAEl.textContent = 'VMA estimada: ' + vma.velocidadKmh.toFixed(1) + ' km/h (' + segAMMSS(vma.ritmoSegKm) + '/km) — de tu mejor esfuerzo de ' + vma.duracionUsadaMin + ' min.';
+    let html = '<tr><th>% VMA</th><th>Ritmo</th></tr>';
+    zonasPorcentajeVMA(vma.ritmoSegKm).forEach(z => {
+      html += '<tr><td>' + z.pct + '%</td><td>' + segAMMSS(z.ritmoSegKm) + '/km</td></tr>';
+    });
+    tVMA.innerHTML = html;
+  }
+
+  const tPrev = document.getElementById('tablaPrevision');
+  const modelo = ajustarModeloCV(mejores);
+  if (!modelo) {
+    tPrev.innerHTML = '<tr><td class="vacio">Faltan al menos 2 mejores esfuerzos de distinta duración</td></tr>';
+  } else {
+    const t1k = predecirTiempoCV(1000, modelo.cv, modelo.dprime);
+    const t5k = predecirTiempoCV(5000, modelo.cv, modelo.dprime);
+    const t10k = predecirTiempoCV(10000, modelo.cv, modelo.dprime);
+    const baseParaRiegel = t10k || (mejores.length ? (mejores[mejores.length - 1].duracionSeg) : null);
+    const tMedia = t10k ? riegel(t10k, 10000, 21097.5) : null;
+    const tMaraton = t10k ? riegel(t10k, 10000, 42195) : null;
+    let html = '<tr><th>Distancia</th><th>Tiempo</th><th>Ritmo</th></tr>';
+    const fila = (nombre, dist, t) => t ? ('<tr><td>' + nombre + '</td><td>' + segAHMS(t) + '</td><td>' + segAMMSS(t / (dist / 1000)) + '/km</td></tr>') : '';
+    html += fila('1 km', 1000, t1k);
+    html += fila('5 km', 5000, t5k);
+    html += fila('10 km', 10000, t10k);
+    html += fila('Media maratón', 21097.5, tMedia);
+    html += fila('Maratón', 42195, tMaraton);
+    tPrev.innerHTML = html;
+  }
+}
+
+/* ============================================================
+   RENDER: HISTORIAL
+   ============================================================ */
+function renderHistorial() {
+  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  const cont = document.getElementById('listaSesiones');
+  if (!sesiones.length) {
+    cont.innerHTML = '<div class="vacio">Todavía no guardaste ninguna sesión</div>';
+  } else {
+    cont.innerHTML = sesiones.map(s => {
+      const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+      const km = (s.distanciaM / 1000).toFixed(2);
+      return '<div class="sesion-item" onclick="abrirDetalle(\'' + s.id + '\')">' +
+        '<div class="izq"><div class="f">' + fecha + ' · ' + km + ' km</div>' +
+        '<div class="d">' + segAHMS(s.duracionSeg) + (s.ritmoPromedioSegKm ? (' · ' + segAMMSS(s.ritmoPromedioSegKm) + '/km') : '') + (s.pulsoPromedio ? (' · ' + s.pulsoPromedio + ' bpm') : '') + '</div></div>' +
+        '<div class="der"><div class="tss">' + (s.tss || 0) + ' TSS</div>' + (s.desacoplePct != null ? ('<div style="font-size:11px;color:var(--muted)">Desac. ' + s.desacoplePct.toFixed(1) + '%</div>') : '') + '</div></div>';
+    }).join('');
+  }
+  const forma = calcularSerieForma();
+  document.getElementById('formaCTL').textContent = forma.ctl.toFixed(1);
+  document.getElementById('formaATL').textContent = forma.atl.toFixed(1);
+  document.getElementById('formaTSB').textContent = forma.tsb.toFixed(1);
+  dibujarChartForma(forma.serie);
+}
+
+function dibujarChartForma(serie) {
+  const canvas = document.getElementById('chartForma');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.clientWidth, h = canvas.clientHeight || 140;
+  canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (!serie.length) { return; }
+  const maxVal = Math.max(10, ...serie.map(p => Math.max(p.ctl, p.atl)));
+  const minTsb = Math.min(0, ...serie.map(p => p.tsb));
+  const escalaY = v => h - 10 - ((v - minTsb) / (maxVal - minTsb)) * (h - 20);
+  const escalaX = i => (i / Math.max(1, serie.length - 1)) * (w - 10) + 5;
+
+  function linea(color, key) {
+    ctx.beginPath();
+    serie.forEach((p, i) => {
+      const x = escalaX(i), y = escalaY(p[key]);
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+  }
+  linea('#4FD8C4', 'ctl');
+  linea('#FF6B57', 'atl');
+  linea('#818B95', 'tsb');
+}
+
+/* ============================================================
+   DETALLE DE SESIÓN + GRÁFICO CON SCRUB
+   ============================================================ */
+let sesionDetalleActual = null;
+function abrirDetalle(id) {
+  const sesiones = lsGet(K_SESIONES, []);
+  const s = sesiones.find(x => x.id === id);
+  if (!s) return;
+  sesionDetalleActual = s;
+  document.getElementById('detalleTitulo').textContent = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'long', year: 'numeric' });
+  document.getElementById('detalleResumen').innerHTML =
+    'Distancia: ' + (s.distanciaM / 1000).toFixed(2) + ' km<br>' +
+    'Duración: ' + segAHMS(s.duracionSeg) + '<br>' +
+    'Ritmo promedio: ' + (s.ritmoPromedioSegKm ? segAMMSS(s.ritmoPromedioSegKm) + '/km' : '--') + '<br>' +
+    'Pulso promedio: ' + (s.pulsoPromedio || '--') + ' bpm<br>' +
+    'Cadencia promedio: ' + (s.cadenciaPromedio || '--') + ' spm<br>' +
+    (s.elevGanadaM != null ? ('Desnivel+ (GPS, aprox.): ' + s.elevGanadaM + ' m<br>') : ('Desnivel/hora promedio (subidas): ' + (s.vamPromedio || 0) + ' m/h<br>')) +
+    'TSS: ' + (s.tss || 0) + '<br>' +
+    'Desacople ritmo:pulso: ' + (s.desacoplePct != null ? s.desacoplePct.toFixed(1) + '%' : '--') + '<br>' +
+    'Eficiencia aeróbica: ' + (s.efAerobica ? s.efAerobica.toFixed(2) + ' (m/min)/bpm' : '--') +
+    (s.fantasmaId ? ('<br>vs Fantasma (final): ' + (s.fantasmaDeltaFinalSeg != null ? formatearDelta(s.fantasmaDeltaFinalSeg) : '--')) : '');
+  document.getElementById('detalleNotas').value = s.notas || '';
+  document.getElementById('overlayDetalle').classList.add('activa');
+  requestAnimationFrame(() => dibujarChartSesion(s));
+}
+function guardarNotasDetalle() {
+  if (!sesionDetalleActual) return;
+  const sesiones = lsGet(K_SESIONES, []);
+  const idx = sesiones.findIndex(x => x.id === sesionDetalleActual.id);
+  if (idx >= 0) {
+    sesiones[idx].notas = document.getElementById('detalleNotas').value;
+    lsSet(K_SESIONES, sesiones);
+  }
+}
+function dibujarChartSesion(s) {
+  const canvas = document.getElementById('chartSesion');
+  const ctx = canvas.getContext('2d');
+  const w = canvas.clientWidth, h = canvas.clientHeight || 180;
+  canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const puntos = puntosDeSesion(s).filter(p => p.ritmo || p.pulso);
+  if (!puntos.length) return;
+  const tMax = puntos[puntos.length - 1].t || 1;
+  const ritmos = puntos.filter(p => p.ritmo).map(p => p.ritmo);
+  const rMin = Math.min(...ritmos), rMax = Math.max(...ritmos);
+  const pulsos = puntos.filter(p => p.pulso).map(p => p.pulso);
+  const hMin = Math.min(...pulsos, 40), hMax = Math.max(...pulsos, 100);
+
+  const escalaX = t => (t / tMax) * (w - 10) + 5;
+  const escalaRitmo = r => h - 10 - ((rMax - r) / Math.max(1, (rMax - rMin))) * (h - 20); // invertido: ritmo bajo = arriba
+  const escalaPulso = p => h - 10 - ((p - hMin) / Math.max(1, (hMax - hMin))) * (h - 20);
+
+  function linea(color, key, escala) {
+    ctx.beginPath();
+    let first = true;
+    puntos.forEach(p => {
+      if (!p[key]) { first = true; return; }
+      const x = escalaX(p.t), y = escala(p[key]);
+      if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+    });
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+  }
+  linea('#4FD8C4', 'ritmo', escalaRitmo);
+  linea('#FF6B57', 'pulso', escalaPulso);
+
+  // ---- scrub táctil ----
+  const info = document.getElementById('scrubInfo');
+  function manejarScrub(clientX) {
+    const rect = canvas.getBoundingClientRect();
+    const x = clientX - rect.left;
+    const t = (x / rect.width) * tMax;
+    let cercano = puntos[0];
+    puntos.forEach(p => { if (Math.abs(p.t - t) < Math.abs(cercano.t - t)) cercano = p; });
+    info.textContent = segAHMS(cercano.t) + ' · ' + (cercano.ritmo ? segAMMSS(cercano.ritmo) + '/km' : '--') +
+      ' · ' + (cercano.pulso || '--') + ' bpm' + (cercano.cadencia ? (' · ' + cercano.cadencia + ' spm') : '');
+  }
+  canvas.onpointerdown = e => { canvas.setPointerCapture(e.pointerId); manejarScrub(e.clientX); };
+  canvas.onpointermove = e => { if (e.pressure > 0 || e.buttons > 0) manejarScrub(e.clientX); };
+}
+
+/* ============================================================
+   IMPORTAR TCX
+   ============================================================ */
+function manejarArchivoTCX(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      procesarTCX(reader.result, file.name);
+    } catch (e) {
+      document.getElementById('previewTCX').innerHTML = '<div class="estado-conexion err">Error leyendo el archivo: ' + e.message + '</div>';
+    }
+  };
+  reader.readAsText(file);
+}
+function procesarTCX(xmlTexto, nombreArchivo) {
+  const xml = new DOMParser().parseFromString(xmlTexto, 'application/xml');
+  if (xml.querySelector('parsererror')) throw new Error('XML inválido');
+  const trackpoints = Array.from(xml.getElementsByTagName('Trackpoint'));
+  if (!trackpoints.length) throw new Error('No se encontraron Trackpoints en el TCX');
+
+  const puntos = [];
+  let t0 = null;
+  trackpoints.forEach(tp => {
+    const timeEl = tp.getElementsByTagName('Time')[0];
+    const distEl = tp.getElementsByTagName('DistanceMeters')[0];
+    if (!timeEl || !distEl) return;
+    const tiempo = new Date(timeEl.textContent).getTime();
+    if (t0 === null) t0 = tiempo;
+    const hrEl = tp.getElementsByTagName('HeartRateBpm')[0];
+    const hrVal = hrEl ? parseInt(hrEl.getElementsByTagName('Value')[0].textContent, 10) : null;
+    puntos.push({
+      t: (tiempo - t0) / 1000,
+      distAcum: parseFloat(distEl.textContent),
+      pulso: hrVal,
+      velocidad: null // se completa abajo por derivación
+    });
+  });
+  if (puntos.length < 5) throw new Error('Muy pocos puntos válidos en el TCX');
+
+  // El TCX trae distancia acumulada pero no ritmo/velocidad puntual — los derivo con una
+  // ventana de 8s (en vez de punto a punto) para no quedar a merced del ruido de GPS del reloj.
+  const VENTANA_DERIVADA_SEG = 8;
+  let j = 0;
+  for (let i = 0; i < puntos.length; i++) {
+    while (j < i && puntos[i].t - puntos[j].t > VENTANA_DERIVADA_SEG) j++;
+    const dt = puntos[i].t - puntos[j].t;
+    const dd = puntos[i].distAcum - puntos[j].distAcum;
+    puntos[i].velocidad = dt > 0 ? dd / dt : 0;
+    puntos[i].ritmo = puntos[i].velocidad > 0.1 ? 1000 / puntos[i].velocidad : null;
+    puntos[i].cadencia = null;
+    puntos[i].pendiente = 0;
+  }
+
+  const duracionSeg = puntos[puntos.length - 1].t;
+  const distanciaM = puntos[puntos.length - 1].distAcum;
+  const pulsosValidos = puntos.filter(p => p.pulso).map(p => p.pulso);
+  const pulsoPromedio = pulsosValidos.length ? Math.round(promedio(pulsosValidos)) : null;
+  const ritmoPromedioSegKm = distanciaM > 0 ? duracionSeg / (distanciaM / 1000) : null;
+
+  document.getElementById('previewTCX').innerHTML =
+    '<div class="card" style="margin:0;">' +
+    '<div style="font-size:13px; line-height:1.8;">' +
+    'Archivo: ' + nombreArchivo + '<br>' +
+    'Duración: ' + segAHMS(duracionSeg) + '<br>' +
+    'Distancia: ' + (distanciaM / 1000).toFixed(2) + ' km<br>' +
+    'Ritmo promedio: ' + (ritmoPromedioSegKm ? segAMMSS(ritmoPromedioSegKm) + '/km' : '--') + '<br>' +
+    'Pulso promedio: ' + (pulsoPromedio || '--') + ' bpm' +
+    '</div>' +
+    '<button class="btn primario" id="btnUsarTCX">Usar para sembrar zonas (mejores esfuerzos)</button>' +
+    '<button class="btn" id="btnGuardarTCX">Guardar también como sesión en el historial</button>' +
+    '</div>';
+
+  document.getElementById('btnUsarTCX').onclick = () => {
+    const seudoSesion = { id: 'tcx_' + Date.now(), fecha: new Date(t0).toISOString(), duracionSeg, puntos };
+    actualizarMejoresEsfuerzos(seudoSesion);
+    toast('Mejores esfuerzos actualizados desde el TCX');
+  };
+  document.getElementById('btnGuardarTCX').onclick = () => {
+    const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
+    const sesion = {
+      id: 'tcx_' + Date.now(),
+      fecha: new Date(t0).toISOString(),
+      modo: 'import_tcx',
+      duracionSeg: Math.round(duracionSeg),
+      distanciaM: Math.round(distanciaM),
+      ritmoPromedioSegKm,
+      pulsoPromedio,
+      cadenciaPromedio: null,
+      vamPromedio: 0,
+      elevGanadaM: null,
+      tss,
+      desacoplePct: calcularDesacople(puntos.filter(p => p.velocidad > 0 && p.pulso > 0)),
+      efAerobica: (ritmoPromedioSegKm && pulsoPromedio) ? ((1000 / ritmoPromedioSegKm) * 60 / pulsoPromedio) : null,
+      puntos: compactarPuntos(reducirResolucion(puntos, INTERVALO_GUARDADO_SEG)),
+      notas: 'Importado de ' + nombreArchivo
+    };
+    const sesiones = lsGet(K_SESIONES, []);
+    sesiones.push(sesion);
+    lsSet(K_SESIONES, sesiones);
+    actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos });
+    actualizarFormaCompartida(sesion);
+    toast('Sesión importada y guardada · TSS ' + tss);
+  };
+}
+
+/* ============================================================
+   INICIALIZACIÓN
+   ============================================================ */
+document.getElementById('hdrFecha').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: 'short' });
+seleccionarModo('ble');
+document.getElementById('hudPendiente').textContent = '0.0%';
+renderSelectorFantasma();
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) pararBucleEscena();
+  else if (escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa')) iniciarBucleEscena();
+});
+</script>
+</body>
+</html>
