@@ -133,7 +133,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v15</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v17</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -517,6 +517,31 @@
        antes de integrarla. drawRunnerRear() ahora recibe un parámetro
        `caminando`, calculado a partir de la velocidad real en cada
        lugar donde se dibuja (vos, fantasma, corredores del replay).
+   v16: primera vez que Hugo pudo mandar una captura real del render.
+       Los brazos quedaban pisando el trapecio del torso (el punto de
+       inserción del hombro estaba adentro del ancho del torso, no en
+       el borde). Corregido separando el hombro (0.24->0.43 de escala)
+       y reduciendo el pliegue hacia el centro del antebrazo. Validado
+       con un test de punto-en-polígono contra el trapecio real del
+       torso: ningún punto de hombro/codo/muñeca (ni las esquinas del
+       trazo con ancho) cae adentro, en 2 lados × 2 modos × 7 fases.
+   v17: análisis técnico de Gemini sobre la v16 (screenshot real + specs
+       numéricas de carrera). Reescrita drawRunnerRear con ángulos REALES
+       de articulación en vez de solo posición — el enfoque de "columna
+       fija" de v14 evitaba cruces pero dejaba la pierna siempre a 180°
+       (sin flexión real). Ahora: rodilla 170°→65° en carrera (talón al
+       75% del largo de la pierna), 175°→135° en caminata; codo a 90°
+       constante en carrera con braceo ±35° respecto a la vertical;
+       ventana de contacto angosta en carrera para que exista fase de
+       vuelo real (ninguna pierna tocando el piso a la vez) vs ventana
+       ancha en caminata (siempre un pie apoyado); hombros más anchos
+       que la cadera (1.275:1 carrera, 1.175:1 caminata); rebote vertical
+       del centro de masa en carrera (6.5% de la altura, mínimo en apoyo
+       máximo en vuelo). Todo verificado con tests contra el código real:
+       ángulos exactos en los extremos, altura de talón, sin fase de
+       vuelo en caminata / con fase de vuelo obligatoria en carrera,
+       brazos siempre afuera del torso real (ensanchado) y piernas sin
+       cruce, barridos en 28 fases × 2 modos.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1152,27 +1177,45 @@ function segmentoGrueso(ctx, x1, y1, x2, y2, w1, w2, color) {
 function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
   ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
   const skin = '#e8934c', zapatilla = '#20242b';
-  const shorts = shadeHex(jersey, 0.42); // short bien oscuro, tono derivado de la camiseta (como el navy sobre celeste de la referencia)
-  const hipY = gy - 1.35 * s, shY = gy - 2.35 * s, headY = gy - 2.66 * s, lean = s * 0.05;
+  const shorts = shadeHex(jersey, 0.42);
+  const D2R = Math.PI / 180;
+
+  // Oscilación vertical del centro de masa (solo carrera, según Gemini: 5-8% de la altura total,
+  // mínima en el apoyo — ph=0/π — y máxima en la fase de vuelo — ph=π/2, 3π/2).
+  const alturaTotal = s * 2.87;
+  const comBounce = caminando ? 0 : (alturaTotal * 0.065) * (1 - Math.cos(2 * fase)) / 2;
+  const gyEfectivo = gy - comBounce;
+  const hipY = gyEfectivo - 1.35 * s, shY = gyEfectivo - 2.35 * s, headY = gyEfectivo - 2.66 * s, lean = s * 0.05;
 
   ctx.fillStyle = 'rgba(0,0,0,.28)';
   ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
 
-  // piernas: apoyo con la de adelante casi estirada, la de atrás con el talón bien pegado al glúteo
-  // en el despegue (referencia: fotos "Strike R" y la de rodilla flexionada atrás). En caminata
-  // (<5km/h, criterio geométrico de Gemini): sin fase de vuelo real, elevación de pie mínima.
+  // Ventana de contacto: el pie queda en el piso (vuelo=0) mientras la fase está dentro de
+  // ±medioAncho de la posición de apoyo. En carrera esa ventana es angosta (~27% del ciclo por
+  // pierna), así que con las dos piernas a fase opuesta queda un momento en que NINGUNA toca el
+  // piso — la fase de vuelo obligatoria que pedía Gemini. En caminata la ventana es bien ancha
+  // (~54%), así que siempre hay al menos un pie apoyado (cero fase de vuelo).
+  const medioAnchoContacto = caminando ? 1.7 : 0.85;
+  const T = -Math.cos(medioAnchoContacto);
+  const vueloDe = ph => Math.max(0, (-Math.cos(ph) - T) / (1 - T));
+
+  // piernas: ángulo de rodilla REAL (no solo posición) — casi recta en apoyo/impulso, bien
+  // flexionada en el punto más alto del swing. Valores exactos de Gemini: carrera 170°→65°
+  // (talón al ~75% del largo de la pierna), caminata 175°→135°.
+  const rodillaExtendida = caminando ? 175 : 170, rodillaFlexion = caminando ? 135 : 65;
+  const thighLen = s * 0.675, shinLen = s * 0.675;
   const leg = (side, ph) => {
-    // Mismo criterio que el pedaleo del ciclista de Bici Indoor: la pierna vive en una columna
-    // vertical FIJA por lado (nunca se desplaza de costado, así es imposible que "crucen"), y la
-    // rodilla es simplemente el punto medio entre cadera y pie — el pie es lo único que se mueve,
-    // subiendo en la recogida y bajando hasta el piso en el apoyo.
-    const legX = cx + side * s * 0.16;
-    const vuelo = Math.max(0, -Math.cos(ph)); // 0 en apoyo (pie en el piso), 1 en el punto más alto del paso
-    const footY = caminando ? gy - vuelo * s * 0.14 : gy - vuelo * s * 0.92;
-    const kneeY = (hipY + footY) / 2 + s * (caminando ? 0.06 : 0.10);
-    segmentoGrueso(ctx, legX, hipY, legX, kneeY, s * 0.30, s * 0.22, skin);
-    segmentoGrueso(ctx, legX, kneeY, legX, footY, s * 0.22, s * 0.14, skin);
-    ctx.save(); ctx.translate(legX, footY + s * 0.05);
+    const vuelo = vueloDe(ph);
+    const anguloRodilla = rodillaExtendida - vuelo * (rodillaExtendida - rodillaFlexion);
+    const pliegue = 180 - anguloRodilla; // cuánto se dobla la pantorrilla respecto al muslo
+    const anguloMuslo = side * 5; // apenas una inclinación fija, casi vertical (vista estrictamente posterior)
+    const anguloPantorrilla = anguloMuslo + side * pliegue;
+    const hipX = cx + side * s * 0.16;
+    const kneeX = hipX + Math.sin(anguloMuslo * D2R) * thighLen, kneeY = hipY + Math.cos(anguloMuslo * D2R) * thighLen;
+    const footX = kneeX + Math.sin(anguloPantorrilla * D2R) * shinLen, footY = kneeY + Math.cos(anguloPantorrilla * D2R) * shinLen;
+    segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, s * 0.22, skin);
+    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, s * 0.22, s * 0.14, skin);
+    ctx.save(); ctx.translate(footX, footY + s * 0.05);
     ctx.fillStyle = zapatilla;
     ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17, s * 0.095, 0, 0, 7); ctx.fill();
     ctx.restore();
@@ -1184,34 +1227,30 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
   ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
   ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
 
+  // torso: hombros más anchos que la cadera (Gemini: 1.25-1.3:1 en carrera, 1.15-1.2:1 en
+  // caminata — antes salía ~1:1, por eso el brazo terminaba pisando la camiseta).
+  const hipHW = s * 0.26, shHW = hipHW * (caminando ? 1.175 : 1.275);
   ctx.fillStyle = jersey;
   ctx.beginPath();
-  ctx.moveTo(cx - s * 0.26, hipY - s * 0.05); ctx.lineTo(cx + s * 0.26, hipY - s * 0.05);
-  ctx.lineTo(cx + s * 0.30 + lean, shY); ctx.lineTo(cx - s * 0.22 + lean, shY);
+  ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
+  ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
   ctx.closePath(); ctx.fill();
 
-  // brazos: codo bien flexionado, el antebrazo cruza notoriamente hacia el centro del cuerpo
-  // (no un simple palo recto como antes) — así se ve en las 3 fotos nuevas de referencia.
-  // En caminata: casi rectos (~180° de codo, sin flexión), vaivén péndular chico, según la
-  // especificación biomecánica que pasó Hugo.
+  // brazos: codo a 90° CONSTANTE en carrera (Gemini), braceo ±30-40° respecto a la vertical.
+  // En caminata: casi recto (~177°), vaivén chico. El hombro se separa bastante del centro
+  // porque, con el brazo extendido swingueando hacia adentro, si no hay margen de sobra el
+  // codo termina pisando el torso otra vez (ya lo medí: hace falta según el largo del brazo).
+  const upperLen = s * 0.36, foreLen = s * 0.32;
   const arm = (side, ph) => {
-    // Mismo criterio que la pierna: nada de arco de rotación grande (eso era el "aleteo") — el
-    // brazo vive en una columna casi fija, y lo único que se anima es un vaivén vertical chico,
-    // sincronizado con la recogida de la pierna del lado opuesto.
-    const shX = cx + side * s * 0.24 + lean, shYp = shY + s * 0.02;
-    if (caminando) {
-      const bal = Math.sin(ph) * s * 0.10; // codo y muñeca se desplazan lo mismo -> brazo recto (~180°)
-      const elX = shX + bal * 0.5, elY = shYp + s * 0.32;
-      const wrX = shX + bal, wrY = shYp + s * 0.62;
-      segmentoGrueso(ctx, shX, shYp, elX, elY, s * 0.18, s * 0.14, jersey);
-      segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.14, s * 0.11, skin);
-      return;
-    }
-    const adelante = Math.max(0, Math.sin(ph));
-    const elX = shX - side * s * 0.02, elY = shYp + s * 0.32 - adelante * s * 0.08;
-    const wrX = elX - side * s * 0.09, wrY = elY + s * 0.28 - adelante * s * 0.10;
-    segmentoGrueso(ctx, shX, shYp, elX, elY, s * 0.20, s * 0.15, jersey);
-    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
+    const shX = cx + side * s * 0.66 + lean, shYp = shY + s * 0.02;
+    let anguloBrazo, pliegue;
+    if (caminando) { anguloBrazo = side * 4 + Math.sin(ph) * 12; pliegue = 3; }
+    else { anguloBrazo = Math.sin(ph) * 35; pliegue = 90; }
+    const anguloAntebrazo = anguloBrazo + side * pliegue;
+    const elX = shX + Math.sin(anguloBrazo * D2R) * upperLen, elY = shYp + Math.cos(anguloBrazo * D2R) * upperLen;
+    const wrX = elX + Math.sin(anguloAntebrazo * D2R) * foreLen, wrY = elY + Math.cos(anguloAntebrazo * D2R) * foreLen;
+    segmentoGrueso(ctx, shX, shYp, elX, elY, s * (caminando ? 0.18 : 0.20), s * (caminando ? 0.14 : 0.15), jersey);
+    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * (caminando ? 0.14 : 0.15), s * (caminando ? 0.11 : 0.11), skin);
   };
   arm(-1, rPh); arm(1, lPh); // brazo opuesto a la pierna del mismo lado
 
