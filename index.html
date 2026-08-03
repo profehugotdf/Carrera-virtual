@@ -93,6 +93,13 @@
   #canvasEscena{width:100%; height:320px; display:block; border-radius:12px; background:#0d1a12;}
 
   .rep-pick-row{display:flex; align-items:center; gap:10px; padding:8px 2px; border-bottom:1px solid var(--borde); font-size:13px;}
+
+  .editor-modo-btn, .editor-kf-btn{flex:1; padding:9px 4px; border-radius:9px; border:1px solid var(--borde);
+    background:var(--panel2); color:var(--texto); font-weight:700; font-size:12px;}
+  .editor-modo-btn.sel, .editor-kf-btn.sel{border-color:var(--ritmo); color:var(--ritmo); background:#12201E;}
+  #overlayEditor input[type=range]{width:100%; margin:2px 0 12px;}
+  #overlayEditor label{display:flex; justify-content:space-between; margin-top:2px;}
+  .editor-val{font-family:var(--mono); color:var(--ritmo); font-size:12px;}
   .rep-pick-row input[type=checkbox]{width:20px; height:20px; flex:none;}
   .rep-pick-row .txt{flex:1;}
   .rep-pick-row .txt .d{font-size:11px; color:var(--muted); margin-top:2px;}
@@ -133,7 +140,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v19</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v20</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -274,6 +281,7 @@
       <button class="btn" onclick="cambiarTab('zonas')" style="margin-top:8px;">🎯 Zonas y VMA</button>
       <button class="btn" onclick="cambiarTab('importar')" style="margin-top:8px;">⬇️ Importar TCX</button>
       <button class="btn" onclick="abrirReplay()" style="margin-top:8px;">🏁 Carrera virtual (replay)</button>
+      <button class="btn" onclick="abrirEditor()" style="margin-top:8px;">🛠️ Editor de animación</button>
     </div>
   </section>
 
@@ -422,6 +430,67 @@
       <h2>Sesión terminada</h2>
       <div id="resumenPostContenido"></div>
       <button class="btn primario" onclick="cerrarResumenPost()" style="margin-top:14px;">Listo</button>
+    </div>
+  </div>
+
+  <!-- ===================== OVERLAY: EDITOR DE ANIMACIÓN ===================== -->
+  <div class="overlay" id="overlayEditor">
+    <button class="cerrar" onclick="cerrarEditor()">← Volver</button>
+
+    <div class="card">
+      <h2>Editor de animación</h2>
+      <div class="modo-btns">
+        <button class="editor-modo-btn" data-modo="carrera" onclick="cambiarEditorModo('carrera')">Carrera</button>
+        <button class="editor-modo-btn" data-modo="caminata" onclick="cambiarEditorModo('caminata')">Caminata</button>
+      </div>
+      <div class="fila" style="margin-top:8px; gap:6px;">
+        <button class="btn chico editor-kf-btn" data-kf="contacto" onclick="cambiarEditorKF('contacto')">Contacto</button>
+        <button class="btn chico editor-kf-btn" data-kf="apoyoMedio" onclick="cambiarEditorKF('apoyoMedio')">Apoyo medio</button>
+        <button class="btn chico editor-kf-btn" data-kf="despegue" onclick="cambiarEditorKF('despegue')">Despegue</button>
+        <button class="btn chico editor-kf-btn" data-kf="vuelo" onclick="cambiarEditorKF('vuelo')">Vuelo</button>
+      </div>
+      <canvas id="canvasEditor" height="320" style="margin-top:10px; border-radius:12px; background:#0d1a12; width:100%; display:block;"></canvas>
+      <button class="btn chico" onclick="reiniciarEditorKF()" style="margin-top:8px;">↺ Reiniciar esta pose a los valores por defecto</button>
+    </div>
+
+    <div class="card">
+      <h2>Pierna (relativo a la cadera)</h2>
+      <label>Rodilla X <span id="lblRodillaX" class="editor-val"></span></label>
+      <input type="range" id="ed_kneeX" min="-400" max="700" oninput="actualizarEditor('kneeX', this.value)">
+      <label>Rodilla Y <span id="lblRodillaY" class="editor-val"></span></label>
+      <input type="range" id="ed_kneeY" min="-600" max="1600" oninput="actualizarEditor('kneeY', this.value)">
+      <label>Ancho de rodilla <span id="lblAnchoRodilla" class="editor-val"></span></label>
+      <input type="range" id="ed_anchoRodilla" min="50" max="500" oninput="actualizarEditor('anchoRodilla', this.value)">
+      <label>Pie X <span id="lblPieX" class="editor-val"></span></label>
+      <input type="range" id="ed_footX" min="-400" max="700" oninput="actualizarEditor('footX', this.value)">
+      <label>Pie Y <span id="lblPieY" class="editor-val"></span></label>
+      <input type="range" id="ed_footY" min="-600" max="1600" oninput="actualizarEditor('footY', this.value)">
+      <label>Escala del pie (profundidad) <span id="lblEscalaPie" class="editor-val"></span></label>
+      <input type="range" id="ed_escalaPie" min="200" max="1400" oninput="actualizarEditor('escalaPie', this.value)">
+    </div>
+
+    <div class="card">
+      <h2>Brazo (relativo al hombro)</h2>
+      <label>Codo X <span id="lblCodoX" class="editor-val"></span></label>
+      <input type="range" id="ed_elX" min="-400" max="700" oninput="actualizarEditor('elX', this.value)">
+      <label>Codo Y <span id="lblCodoY" class="editor-val"></span></label>
+      <input type="range" id="ed_elY" min="-600" max="1600" oninput="actualizarEditor('elY', this.value)">
+      <label>Mano X <span id="lblManoX" class="editor-val"></span></label>
+      <input type="range" id="ed_wrX" min="-400" max="700" oninput="actualizarEditor('wrX', this.value)">
+      <label>Mano Y <span id="lblManoY" class="editor-val"></span></label>
+      <input type="range" id="ed_wrY" min="-600" max="1600" oninput="actualizarEditor('wrY', this.value)">
+    </div>
+
+    <div class="card">
+      <h2>Vista previa animada (interpola entre las 4 poses)</h2>
+      <canvas id="canvasEditorPreview" height="220" style="border-radius:12px; background:#0d1a12; width:100%; display:block;"></canvas>
+      <button class="btn" id="btnEditorPlay" onclick="editorTogglePlay()" style="margin-top:8px;">▶ Reproducir</button>
+    </div>
+
+    <div class="card">
+      <h2>Exportar</h2>
+      <button class="btn primario" onclick="exportarEditor()">Generar código</button>
+      <textarea id="editorCodigoExportado" readonly placeholder="Tocá 'Generar código' y copiá esto para mandármelo" style="margin-top:8px; min-height:160px; font-family:var(--mono); font-size:11px;"></textarea>
     </div>
   </div>
 
@@ -576,6 +645,25 @@
        rodilla en swing > apoyo (por pierna, siguiendo cada una en un
        barrido completo) y mano-adelante siempre más cerca del centro
        que mano-atrás.
+   v20: Editor de animación. Después de varias rondas de "Gemini mira un
+       video, dice qué está mal, ajusto a ciegas" se decidió atacar la
+       raíz del problema (no puedo ver el render) en vez de seguir
+       adivinando. Gemini propuso también un código con modelo 3D propio,
+       pero tenía discontinuidades reales (la mano y el pie saltan de
+       golpe donde sinP cruza por cero, dos veces por ciclo) — se
+       descartó, aunque se tomó prestada la idea de ordenar por
+       profundidad Z en vez de mi swap fijo adelante/atrás. Nueva
+       pantalla "Editor de animación" (desde Más): 4 poses clave
+       (Contacto/Apoyo medio/Despegue/Vuelo) × 2 modos, con sliders para
+       rodilla/pie/codo/mano (posición + ancho/escala como pista de
+       profundidad), canvas con la pose en vivo, vista previa animada
+       interpolando entre las 4 poses, y botón para generar el código
+       de las poses ajustadas y mandármelo. Valores iniciales calculados
+       a partir de las fórmulas ya validadas de v19, no arranca de cero.
+       Se guarda en localStorage entre sesiones. Verificado que las 8
+       poses por defecto dibujan sin error, que la interpolación
+       coincide exacto con cada keyframe en los bordes, y que el JSON
+       exportado no pierde datos al reconstruirse.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1663,6 +1751,201 @@ function repScrubInput(el) {
   vt = replayTotal * (el.value / 1000);
   renderReplay();
 }
+
+/* ============================================================
+   EDITOR DE ANIMACIÓN
+   Herramienta para ajustar "a ojo" las 4 poses clave del corredor (Contacto,
+   Apoyo medio, Despegue, Vuelo) con sliders, en vez de seguir adivinando
+   ángulos que no puedo ver renderizados. Valores de partida calculados a
+   partir de las fórmulas ya validadas de v19, en las mismas unidades
+   (coeficiente × escala s) que ya usa drawRunnerRear.
+   Pierna: relativo a la CADERA. Brazo: relativo al HOMBRO.
+   ============================================================ */
+const EDITOR_CAMPOS = ['kneeX', 'kneeY', 'anchoRodilla', 'footX', 'footY', 'escalaPie', 'elX', 'elY', 'wrX', 'wrY'];
+const EDITOR_ORDEN_KF = ['contacto', 'apoyoMedio', 'despegue', 'vuelo'];
+const EDITOR_KEYFRAMES_DEFAULT = {
+  carrera: {
+    contacto:   { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.028, footY: 1.324, escalaPie: 1.000, elX: 0.030, elY: 0.440, wrX: 0.050, wrY: 0.840 },
+    apoyoMedio: { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.028, footY: 1.324, escalaPie: 1.000, elX: 0.013, elY: 0.402, wrX: 0.002, wrY: 0.749 },
+    despegue:   { kneeX: 0.019, kneeY: 0.656, anchoRodilla: 0.227, footX: 0.074, footY: 1.154, escalaPie: 0.946, elX: -0.043, elY: 0.278, wrX: -0.153, wrY: 0.451 },
+    vuelo:      { kneeX: 0.065, kneeY: 0.406, anchoRodilla: 0.260, footX: 0.082, footY: -0.254, escalaPie: 0.700, elX: -0.060, elY: 0.240, wrX: -0.201, wrY: 0.360 },
+  },
+  caminata: {
+    contacto:   { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.021, footY: 1.337, escalaPie: 1.000, elX: 0.030, elY: 0.390, wrX: 0.030, wrY: 0.740 },
+    apoyoMedio: { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.021, footY: 1.337, escalaPie: 1.000, elX: 0.017, elY: 0.364, wrX: 0.017, wrY: 0.667 },
+    despegue:   { kneeX: 0.032, kneeY: 0.620, anchoRodilla: 0.235, footX: 0.088, footY: 1.109, escalaPie: 0.886, elX: -0.007, elY: 0.316, wrX: -0.007, wrY: 0.533 },
+    vuelo:      { kneeX: 0.065, kneeY: 0.406, anchoRodilla: 0.260, footX: 0.145, footY: 0.312, escalaPie: 0.700, elX: -0.020, elY: 0.290, wrX: -0.020, wrY: 0.460 },
+  }
+};
+
+let editorModo = 'carrera', editorKF = 'contacto', editorDatos = null;
+let editorPreviewT = 0, editorPreviewRAF = null, editorPreviewLast = 0, editorPlaying = false;
+
+function cargarEditorDatos() {
+  const guardado = lsGet('correr_editor_keyframes', null);
+  editorDatos = guardado || JSON.parse(JSON.stringify(EDITOR_KEYFRAMES_DEFAULT));
+}
+function guardarEditorDatos() { lsSet('correr_editor_keyframes', editorDatos); }
+function datosActuales() { return editorDatos[editorModo][editorKF]; }
+
+function abrirEditor() {
+  if (!editorDatos) cargarEditorDatos();
+  pararBucleEscena();
+  const ov = document.getElementById('overlayEditor');
+  ov.classList.add('activa'); ov.scrollTop = 0;
+  cambiarEditorModo(editorModo);
+  cambiarEditorKF(editorKF);
+}
+function cerrarEditor() {
+  editorPlaying = false;
+  pararEditorPreviewLoop();
+  document.getElementById('overlayEditor').classList.remove('activa');
+  if (escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa')) iniciarBucleEscena();
+}
+function cambiarEditorModo(modo) {
+  editorModo = modo;
+  document.querySelectorAll('.editor-modo-btn').forEach(b => b.classList.toggle('sel', b.dataset.modo === modo));
+  cargarSlidersDesdeEditorDatos();
+  renderEditorPose();
+}
+function cambiarEditorKF(kf) {
+  editorKF = kf;
+  document.querySelectorAll('.editor-kf-btn').forEach(b => b.classList.toggle('sel', b.dataset.kf === kf));
+  cargarSlidersDesdeEditorDatos();
+  renderEditorPose();
+}
+function cargarSlidersDesdeEditorDatos() {
+  const d = datosActuales();
+  EDITOR_CAMPOS.forEach(campo => { document.getElementById('ed_' + campo).value = Math.round(d[campo] * 1000); });
+  actualizarEtiquetasEditor();
+}
+function actualizarEtiquetasEditor() {
+  const d = datosActuales();
+  document.getElementById('lblRodillaX').textContent = d.kneeX.toFixed(3);
+  document.getElementById('lblRodillaY').textContent = d.kneeY.toFixed(3);
+  document.getElementById('lblAnchoRodilla').textContent = d.anchoRodilla.toFixed(3);
+  document.getElementById('lblPieX').textContent = d.footX.toFixed(3);
+  document.getElementById('lblPieY').textContent = d.footY.toFixed(3);
+  document.getElementById('lblEscalaPie').textContent = d.escalaPie.toFixed(3);
+  document.getElementById('lblCodoX').textContent = d.elX.toFixed(3);
+  document.getElementById('lblCodoY').textContent = d.elY.toFixed(3);
+  document.getElementById('lblManoX').textContent = d.wrX.toFixed(3);
+  document.getElementById('lblManoY').textContent = d.wrY.toFixed(3);
+}
+function actualizarEditor(campo, valorSlider) {
+  datosActuales()[campo] = parseInt(valorSlider, 10) / 1000;
+  actualizarEtiquetasEditor();
+  guardarEditorDatos();
+  renderEditorPose();
+}
+function reiniciarEditorKF() {
+  editorDatos[editorModo][editorKF] = JSON.parse(JSON.stringify(EDITOR_KEYFRAMES_DEFAULT[editorModo][editorKF]));
+  cargarSlidersDesdeEditorDatos();
+  guardarEditorDatos();
+  renderEditorPose();
+}
+
+// dibuja al corredor completo (las dos piernas y brazos, espejados) a partir de un objeto de
+// pose "d" con los 10 campos — reusa segmentoGrueso/shadeHex, igual estilo que drawRunnerRear,
+// pero SIN animación propia: la pose es exactamente la que dicen los campos, punto.
+function dibujarPoseDesdeD(ctx, cx, gy, s, d, jersey) {
+  const skin = '#e8934c', zapatilla = '#20242b';
+  const shorts = shadeHex(jersey, 0.42);
+  const hipY = gy - 1.35 * s, shY = gy - 2.35 * s, headY = gy - 2.66 * s, lean = s * 0.05;
+
+  ctx.fillStyle = 'rgba(0,0,0,.28)';
+  ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
+
+  function leg(side) {
+    const hipX = cx + side * s * 0.16;
+    const kneeX = hipX + side * d.kneeX * s, kneeY = hipY + d.kneeY * s;
+    const footX = hipX + side * d.footX * s, footY = hipY + d.footY * s;
+    const anchoRodilla = Math.max(s * 0.05, d.anchoRodilla * s);
+    segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, anchoRodilla, skin);
+    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, anchoRodilla, s * 0.14, skin);
+    const escalaPie = Math.max(0.1, d.escalaPie);
+    ctx.save(); ctx.translate(footX, footY + s * 0.05);
+    ctx.fillStyle = zapatilla;
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  leg(1); leg(-1);
+
+  ctx.fillStyle = shorts;
+  ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
+  ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
+
+  const hipHW = s * 0.26, shHW = hipHW * 1.275;
+  ctx.fillStyle = jersey;
+  ctx.beginPath();
+  ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
+  ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
+  ctx.closePath(); ctx.fill();
+
+  function arm(side) {
+    const shX = cx + side * s * 0.30 + lean;
+    const elX = shX + side * d.elX * s, elY = shY + d.elY * s;
+    const wrX = shX + side * d.wrX * s, wrY = shY + d.wrY * s;
+    segmentoGrueso(ctx, shX, shY, elX, elY, s * 0.20, s * 0.15, jersey);
+    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
+  }
+  arm(-1); arm(1);
+
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
+}
+function renderEditorPose() {
+  const cv = document.getElementById('canvasEditor');
+  const w = cv.clientWidth, h = cv.clientHeight || 320;
+  cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  dibujarPoseDesdeD(ctx, w / 2, h - 14, Math.min(w * 0.26, h * 0.42), datosActuales(), '#3d7ec9');
+}
+
+// interpola entre las 4 poses clave, en orden, con un suavizado coseno (no lineal a los saltos)
+function interpolarEditor(datosModo, tGlobal) {
+  const i = Math.floor(tGlobal) % 4;
+  const frac = tGlobal - Math.floor(tGlobal);
+  const easeFrac = (1 - Math.cos(frac * Math.PI)) / 2;
+  const a = datosModo[EDITOR_ORDEN_KF[i]], b = datosModo[EDITOR_ORDEN_KF[(i + 1) % 4]];
+  const out = {};
+  EDITOR_CAMPOS.forEach(campo => { out[campo] = a[campo] + (b[campo] - a[campo]) * easeFrac; });
+  return out;
+}
+function editorTogglePlay() {
+  editorPlaying = !editorPlaying;
+  document.getElementById('btnEditorPlay').textContent = editorPlaying ? '❚❚ Pausa' : '▶ Reproducir';
+  if (editorPlaying) { editorPreviewLast = 0; editorPreviewRAF = requestAnimationFrame(editorPreviewLoop); }
+}
+function pararEditorPreviewLoop() { if (editorPreviewRAF) { cancelAnimationFrame(editorPreviewRAF); editorPreviewRAF = null; } }
+function editorPreviewLoop(ts) {
+  if (!editorPlaying) { editorPreviewRAF = null; return; }
+  const dt = editorPreviewLast ? Math.min(0.1, (ts - editorPreviewLast) / 1000) : 0;
+  editorPreviewLast = ts;
+  editorPreviewT = (editorPreviewT + dt * 1.4) % 4; // ~2.9s por ciclo completo de las 4 poses
+  renderEditorPreview();
+  editorPreviewRAF = requestAnimationFrame(editorPreviewLoop);
+}
+function renderEditorPreview() {
+  const cv = document.getElementById('canvasEditorPreview');
+  const w = cv.clientWidth, h = cv.clientHeight || 220;
+  cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const d = interpolarEditor(editorDatos[editorModo], editorPreviewT);
+  dibujarPoseDesdeD(ctx, w / 2, h - 10, Math.min(w * 0.18, h * 0.30), d, '#3d7ec9');
+}
+function exportarEditor() {
+  const texto = '// Poses del Editor de animación de Correr (coeficientes × escala s).\n' +
+    '// Pierna relativa a la cadera, brazo relativo al hombro. Un lado (side=+1); el otro se espeja.\n' +
+    'const EDITOR_KEYFRAMES = ' + JSON.stringify(editorDatos, null, 2) + ';';
+  document.getElementById('editorCodigoExportado').value = texto;
+  toast('Código generado — copialo y mandámelo');
+}
+
 
 /* ============================================================
    CICLO DE SESIÓN
