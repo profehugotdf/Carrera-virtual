@@ -22,7 +22,7 @@
   *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
   html,body{margin:0;padding:0;background:var(--bg);color:var(--texto);font-family:var(--sans);
     height:100%; overflow-x:hidden;}
-  body{padding-bottom:78px;}
+  body{padding-bottom:24px;}
   button{font-family:inherit; cursor:pointer;}
   input{font-family:inherit;}
 
@@ -32,13 +32,6 @@
   header .ver{font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--borde);
     border-radius:20px; padding:2px 9px; margin-left:8px;}
   header .titulowrap{display:flex; align-items:baseline;}
-
-  nav.tabs{position:fixed; bottom:0; left:0; right:0; z-index:30; display:flex; background:var(--panel);
-    border-top:1px solid var(--borde); padding-bottom:env(safe-area-inset-bottom);}
-  nav.tabs button{flex:1; background:none; border:none; color:var(--muted); font-size:11px; padding:10px 4px 8px;
-    display:flex; flex-direction:column; align-items:center; gap:3px; font-weight:600; letter-spacing:0.3px;}
-  nav.tabs button.activo{color:var(--ritmo);}
-  nav.tabs .ico{font-size:18px;}
 
   main{padding:14px 14px 24px;}
   .view{display:none;}
@@ -99,6 +92,14 @@
 
   #canvasEscena{width:100%; height:320px; display:block; border-radius:12px; background:#0d1a12;}
 
+  .rep-pick-row{display:flex; align-items:center; gap:10px; padding:8px 2px; border-bottom:1px solid var(--borde); font-size:13px;}
+  .rep-pick-row input[type=checkbox]{width:20px; height:20px; flex:none;}
+  .rep-pick-row .txt{flex:1;}
+  .rep-pick-row .txt .d{font-size:11px; color:var(--muted); margin-top:2px;}
+  .rep-speed-btn.on{border-color:var(--ritmo); color:var(--ritmo);}
+  #repLane{width:100%; height:90px; display:block; border-radius:10px; background:var(--panel2);}
+  #repRoad{width:100%; height:260px; display:block; border-radius:12px; background:#0d1a12;}
+
   /* ---- historial ---- */
   .sesion-item{background:var(--panel); border:1px solid var(--borde); border-radius:12px; padding:12px 14px;
     margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;}
@@ -132,7 +133,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v7</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v11</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -266,10 +267,19 @@
       <h2>Notas de la sesión</h2>
       <textarea id="notasSesion" placeholder="Sensaciones, cinta usada, etc."></textarea>
     </div>
+
+    <div class="card">
+      <h2>Más</h2>
+      <button class="btn" onclick="cambiarTab('historial')">📈 Historial de sesiones</button>
+      <button class="btn" onclick="cambiarTab('zonas')" style="margin-top:8px;">🎯 Zonas y VMA</button>
+      <button class="btn" onclick="cambiarTab('importar')" style="margin-top:8px;">⬇️ Importar TCX</button>
+      <button class="btn" onclick="abrirReplay()" style="margin-top:8px;">🏁 Carrera virtual (replay)</button>
+    </div>
   </section>
 
   <!-- ===================== VISTA: HISTORIAL ===================== -->
   <section class="view" id="view-historial">
+    <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
     <div class="card">
       <h2>Forma (CTL / ATL / TSB)</h2>
       <canvas id="chartForma" height="140"></canvas>
@@ -287,6 +297,7 @@
 
   <!-- ===================== VISTA: ZONAS ===================== -->
   <section class="view" id="view-zonas">
+    <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
     <div class="card">
       <h2>Umbral estimado</h2>
       <div class="fila">
@@ -333,6 +344,7 @@
 
   <!-- ===================== VISTA: IMPORTAR ===================== -->
   <section class="view" id="view-importar">
+    <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
     <div class="card">
       <h2>Importar TCX (Garmin Connect / TrainingPeaks)</h2>
       <div class="file-drop">
@@ -347,7 +359,7 @@
     <button class="cerrar" onclick="cerrarDetalle()">← Volver</button>
     <div class="card">
       <h2 id="detalleTitulo">Sesión</h2>
-      <div id="detalleResumen" style="font-family:var(--mono); font-size:13px; line-height:1.9;"></div>
+      <div id="detalleResumen"></div>
     </div>
     <div class="card">
       <h2>Ritmo / Pulso / Cadencia</h2>
@@ -360,14 +372,60 @@
     </div>
   </div>
 
-</main>
+  <!-- ===================== OVERLAY: CARRERA VIRTUAL (REPLAY) ===================== -->
+  <div class="overlay" id="overlayReplay">
+    <button class="cerrar" onclick="cerrarReplay()">← Volver</button>
 
-<nav class="tabs">
-  <button class="activo" onclick="cambiarTab('vivo')" id="tabVivo"><span class="ico">🏃</span>Vivo</button>
-  <button onclick="cambiarTab('historial')" id="tabHistorial"><span class="ico">📈</span>Historial</button>
-  <button onclick="cambiarTab('zonas')" id="tabZonas"><span class="ico">🎯</span>Zonas</button>
-  <button onclick="cambiarTab('importar')" id="tabImportar"><span class="ico">⬇️</span>Importar</button>
-</nav>
+    <div class="card" id="repSetupCard">
+      <h2>Carrera virtual (replay)</h2>
+      <div class="estado-conexion" style="margin-bottom:8px;">Elegí 2 o más sesiones para hacerlas correr entre sí — no importa si son de cinta, aire libre o TCX importado, la comparación es siempre por distancia recorrida en el tiempo.</div>
+      <div id="repPick" style="max-height:280px; overflow-y:auto;"></div>
+      <label style="margin-top:12px;">Vista</label>
+      <select id="selectRepEscenario">
+        <option value="ninguno">Carril (simple)</option>
+        <option value="pista">Pista 400m (3D)</option>
+        <option value="sendero">Sendero (3D)</option>
+      </select>
+      <button class="btn primario" onclick="iniciarReplay()" style="margin-top:12px;">Iniciar carrera</button>
+    </div>
+
+    <div class="card" id="repViewCard" style="display:none;">
+      <div id="repWinner" style="text-align:center; font-weight:800; font-size:15px; margin-bottom:8px;">—</div>
+      <canvas id="repLane" height="90"></canvas>
+
+      <div id="repRoadWrap" style="display:none; margin-top:12px;">
+        <button class="btn chico" id="btnRepCamara" onclick="repCambiarCamara()" style="margin-bottom:6px;">Cámara: —</button>
+        <canvas id="repRoad" height="260"></canvas>
+      </div>
+
+      <div style="margin:12px 0 4px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:1px;">Posiciones (top 4)</div>
+      <div id="repStandings" class="card" style="margin:0; padding:8px 10px;"></div>
+
+      <div id="repTime" style="text-align:center; margin-top:10px; font-family:var(--mono); font-size:13px;">0:00 / 0:00</div>
+      <input type="range" id="repScrub" min="0" max="1000" value="0" style="width:100%; margin-top:4px;" oninput="repScrubInput(this)">
+      <div class="fila" style="margin-top:8px;">
+        <button class="btn" id="repPlayBtn" onclick="repPlayPause()">▶ Play</button>
+        <button class="btn" onclick="repReiniciar()">Reiniciar</button>
+      </div>
+      <div class="fila" style="margin-top:8px;">
+        <button class="btn chico rep-speed-btn" data-sp="1" onclick="repSetSpeed(1)">1x</button>
+        <button class="btn chico rep-speed-btn" data-sp="2" onclick="repSetSpeed(2)">2x</button>
+        <button class="btn chico rep-speed-btn" data-sp="5" onclick="repSetSpeed(5)">5x</button>
+        <button class="btn chico rep-speed-btn" data-sp="10" onclick="repSetSpeed(10)">10x</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== OVERLAY: SESIÓN TERMINADA ===================== -->
+  <div class="overlay" id="overlayResumenPost">
+    <div class="card">
+      <h2>Sesión terminada</h2>
+      <div id="resumenPostContenido"></div>
+      <button class="btn primario" onclick="cerrarResumenPost()" style="margin-top:14px;">Listo</button>
+    </div>
+  </div>
+
+</main>
 
 <div class="toast" id="toast"></div>
 
@@ -401,6 +459,33 @@
        (velocidad al VO2máx), que ahora se agrega aparte en Zonas,
        estimada del mejor esfuerzo de 5min (u 8min de reserva), con
        tabla de ritmos por %VMA para series.
+   v8: Carrera virtual (replay), portada de Bici Indoor (Hugo pasó de
+       nuevo el código fuente) — desde Historial, elegís 2+ sesiones
+       guardadas y corren entre sí a velocidad ajustable (1x-10x), con
+       vista de carril simple o 3D (pista/sendero, reusando roadBands
+       de v5). A diferencia de Bici Indoor no hace falta que compartan
+       ruta real: las vistas 3D de Correr son sintéticas.
+   v9: navegación rehecha para calcar la estructura de Bici Indoor —
+       se sacó la barra de pestañas fija de abajo. Ahora "Vivo" es la
+       pantalla de inicio, con una tarjeta "Más" al final que lleva a
+       Historial/Zonas/Importar/Replay, cada una con su botón "Volver".
+       cambiarTab() sigue llamándose así por los call sites existentes,
+       pero ahora es navegación de pantalla completa, no pestañas.
+   v10: información de sesión al estilo de Bici Indoor — grilla de tiles
+       (Tiempo/Distancia/Ritmo/Pulso medio+máx/Cadencia/[Potencia]/TSS)
+       en vez de lista de texto, nueva pantalla "Sesión terminada" al
+       finalizar (como su resumen post-sesión), y desacople con etiqueta
+       cualitativa (buena base / aceptable / posible falta), igual que
+       "Desacople Pw:Hr" en Bici Indoor. Nuevo: si el TCX de Garmin trae
+       potencia de carrera (Forerunner) o cadencia real, ahora se leen
+       (antes se ignoraban) y se suman al resumen y al desacople.
+   v11: drawRunnerRear() redibujada a partir de 4 fotos de referencia que
+       pasó Hugo (fase de apoyo, cruce de piernas, despegue con rodilla
+       flexionada). Piernas y brazos ahora son formas sólidas rellenas
+       (segmentoGrueso, trapecio con ancho propio en cada punta) en vez
+       de trazos finos, más flexión de codo, más vuelo del talón atrás,
+       piel más cálida, y el celeste de "vos" más brillante. Pendiente:
+       modo caminata (<5km/h) para el sprite, todavía no implementado.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -536,16 +621,25 @@ function vamInstantaneo(velocidadMS, pendientePct) {
   const angulo = Math.atan(pendientePct / 100);
   return velocidadMS * Math.sin(angulo) * 3600;
 }
-function calcularDesacople(puntos) {
+function calcularDesacople(puntos, key) {
+  key = key || 'velocidad';
   if (puntos.length < 4) return null;
   const midT = puntos[0].t + (puntos[puntos.length - 1].t - puntos[0].t) / 2;
-  const p1 = puntos.filter(p => p.t < midT && p.velocidad > 0 && p.pulso > 0);
-  const p2 = puntos.filter(p => p.t >= midT && p.velocidad > 0 && p.pulso > 0);
+  const p1 = puntos.filter(p => p.t < midT && p[key] > 0 && p.pulso > 0);
+  const p2 = puntos.filter(p => p.t >= midT && p[key] > 0 && p.pulso > 0);
   if (!p1.length || !p2.length) return null;
-  const ratio1 = promedio(p1.map(p => p.velocidad)) / promedio(p1.map(p => p.pulso));
-  const ratio2 = promedio(p2.map(p => p.velocidad)) / promedio(p2.map(p => p.pulso));
+  const ratio1 = promedio(p1.map(p => p[key])) / promedio(p1.map(p => p.pulso));
+  const ratio2 = promedio(p2.map(p => p[key])) / promedio(p2.map(p => p.pulso));
   if (!ratio1) return null;
   return ((ratio1 - ratio2) / ratio1) * 100;
+}
+// misma escala de calificación que usa Bici Indoor para su desacople Pw:Hr
+function calificarDesacople(pct) {
+  if (pct == null) return '';
+  const abs = Math.abs(pct);
+  if (abs < 5) return 'buena base aeróbica para esta duración';
+  if (abs < 10) return 'aceptable, al límite';
+  return 'posible falta de base aeróbica para este ritmo/duración';
 }
 // mejor promedio de velocidad sostenida durante `duracionSeg`, sobre una serie {t, distAcum}
 function mejorEsfuerzoVentana(puntos, duracionSeg) {
@@ -635,20 +729,28 @@ let escenarioActual = 'ninguno'; // 'ninguno' | 'pista' | 'sendero'
 let roadCtxEscena = null, roadRAFEscena = null, roadLastEscena = 0;
 let runnerPhase = 0, ghostRunnerPhase = 0;
 
+// ---- Carrera virtual (replay) ----
+const REP_COLORS = ['#4cc2ff', '#f0883e', '#3fb950', '#e3c53f', '#b46bd6', '#ff6b6b', '#5ad1c8', '#ff9ec4'];
+let repList = [], repPicked = new Set(), repRacers = [];
+let repEscenario = 'ninguno', repCam = 0;
+let vt = 0, replaySpeed = 2, replayPlaying = false, replayRAF = null, replayLast = 0, replayTotal = 0;
+let repRoadCtx = null;
+
 let zonas = lsGet(K_ZONAS, { umbralRitmoSegKm: null, umbralPulso: null });
 
 /* ============================================================
    NAVEGACIÓN
    ============================================================ */
+// Sigue llamándose "cambiarTab" por el código ya escrito que la invoca, pero ahora es navegación
+// de pantalla completa (pantalla de inicio + botones + "Volver"), no pestañas simultáneas.
 function cambiarTab(nombre) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('activa'));
   document.getElementById('view-' + nombre).classList.add('activa');
-  document.querySelectorAll('nav.tabs button').forEach(b => b.classList.remove('activo'));
-  document.getElementById('tab' + nombre.charAt(0).toUpperCase() + nombre.slice(1)).classList.add('activo');
   if (nombre === 'historial') renderHistorial();
   if (nombre === 'zonas') renderZonas();
   if (nombre === 'vivo' && escenarioActual !== 'ninguno') iniciarBucleEscena();
   else pararBucleEscena();
+  window.scrollTo(0, 0);
 }
 function cerrarDetalle() { document.getElementById('overlayDetalle').classList.remove('activa'); }
 
@@ -998,53 +1100,79 @@ const LARGO_PISTA_M = 400;
 
 // figura de corredor de espaldas (no de ciclista — Correr no anda en bici). `fase` en radianes,
 // un ciclo completo (2π) = una zancada completa (pierna izq + der); ver actualización en loopEscena().
+// Segmento "grueso" relleno (trapecio) entre dos puntos, con ancho propio en cada extremo —
+// reemplaza los trazos finos de antes para que las extremidades se vean como formas sólidas,
+// igual que en las fotos de referencia que pasó Hugo (no como palitos).
+function segmentoGrueso(ctx, x1, y1, x2, y2, w1, w2, color) {
+  const dx = x2 - x1, dy = y2 - y1;
+  const len = Math.hypot(dx, dy) || 1;
+  const nx = -dy / len, ny = dx / len;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x1 + nx * w1 / 2, y1 + ny * w1 / 2);
+  ctx.lineTo(x2 + nx * w2 / 2, y2 + ny * w2 / 2);
+  ctx.lineTo(x2 - nx * w2 / 2, y2 - ny * w2 / 2);
+  ctx.lineTo(x1 - nx * w1 / 2, y1 - ny * w1 / 2);
+  ctx.closePath();
+  ctx.fill();
+}
 function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha) {
   ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  const skin = '#c98d5e', shorts = '#1e2c4a', zapatilla = '#20242b';
+  const skin = '#e8934c', zapatilla = '#20242b';
+  const shorts = shadeHex(jersey, 0.42); // short bien oscuro, tono derivado de la camiseta (como el navy sobre celeste de la referencia)
   const hipY = gy - 1.35 * s, shY = gy - 2.35 * s, headY = gy - 2.66 * s, lean = s * 0.05;
 
   ctx.fillStyle = 'rgba(0,0,0,.28)';
   ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
 
-  const strideAmp = s * 0.55, liftAmp = s * 0.5;
+  // piernas: apoyo con la de adelante casi estirada, la de atrás con el talón bien pegado al glúteo
+  // en el despegue (referencia: fotos "Strike R" y la de rodilla flexionada atrás)
+  const strideAmp = s * 0.58, liftAmp = s * 0.62;
   const leg = (side, ph) => {
     const swing = Math.sin(ph), lift = Math.max(0, Math.cos(ph));
-    const hipX = cx + side * s * 0.13;
-    const footX = hipX + swing * strideAmp * 0.5, footY = gy - lift * liftAmp * 0.32;
-    const kneeX = hipX + swing * strideAmp * 0.2, kneeY = hipY + (footY - hipY) * 0.5 - lift * s * 0.16;
-    ctx.strokeStyle = skin; ctx.lineWidth = s * 0.19;
-    ctx.beginPath(); ctx.moveTo(hipX, hipY); ctx.lineTo(kneeX, kneeY); ctx.stroke();
-    ctx.lineWidth = s * 0.15;
-    ctx.beginPath(); ctx.moveTo(kneeX, kneeY); ctx.lineTo(footX, footY); ctx.stroke();
+    const hipX = cx + side * s * 0.14;
+    const footX = hipX + swing * strideAmp * 0.55;
+    const footY = gy - lift * liftAmp * 0.42;
+    const kneeX = hipX + swing * strideAmp * 0.24;
+    const kneeY = hipY + (footY - hipY) * 0.48 - lift * s * 0.22;
+    segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, s * 0.22, skin);
+    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, s * 0.22, s * 0.14, skin);
+    const angPie = Math.atan2(footY - kneeY, footX - kneeX) * 0.35;
+    ctx.save(); ctx.translate(footX, footY + s * 0.05); ctx.rotate(angPie);
     ctx.fillStyle = zapatilla;
-    ctx.beginPath(); ctx.ellipse(footX, footY + s * 0.04, s * 0.13, s * 0.07, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17, s * 0.095, 0, 0, 7); ctx.fill();
+    ctx.restore();
   };
   const lPh = fase, rPh = fase + Math.PI;
   if (Math.cos(lPh) > Math.cos(rPh)) { leg(1, rPh); leg(-1, lPh); } else { leg(-1, lPh); leg(1, rPh); }
 
   ctx.fillStyle = shorts;
-  ctx.beginPath(); ctx.moveTo(cx - s * 0.26, hipY - s * 0.1); ctx.lineTo(cx + s * 0.26, hipY - s * 0.1);
-  ctx.lineTo(cx + s * 0.20, hipY + s * 0.28); ctx.lineTo(cx - s * 0.20, hipY + s * 0.28); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
+  ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
 
   ctx.fillStyle = jersey;
   ctx.beginPath();
-  ctx.moveTo(cx - s * 0.25, hipY - s * 0.05); ctx.lineTo(cx + s * 0.25, hipY - s * 0.05);
-  ctx.lineTo(cx + s * 0.29 + lean, shY); ctx.lineTo(cx - s * 0.21 + lean, shY);
+  ctx.moveTo(cx - s * 0.26, hipY - s * 0.05); ctx.lineTo(cx + s * 0.26, hipY - s * 0.05);
+  ctx.lineTo(cx + s * 0.30 + lean, shY); ctx.lineTo(cx - s * 0.22 + lean, shY);
   ctx.closePath(); ctx.fill();
 
+  // brazos: codo bien flexionado, el antebrazo cruza notoriamente hacia el centro del cuerpo
+  // (no un simple palo recto como antes) — así se ve en las 3 fotos nuevas de referencia
   const arm = (side, ph) => {
     const swing = Math.sin(ph);
-    const shX = cx + side * s * 0.23 + lean, elX = shX + swing * s * 0.28, elY = shY + s * 0.32;
-    const wrX = elX - swing * s * 0.05, wrY = elY + s * 0.26;
-    ctx.strokeStyle = jersey; ctx.lineWidth = s * 0.13;
-    ctx.beginPath(); ctx.moveTo(shX, shY + s * 0.02); ctx.lineTo(elX, elY); ctx.stroke();
-    ctx.strokeStyle = skin; ctx.lineWidth = s * 0.11;
-    ctx.beginPath(); ctx.moveTo(elX, elY); ctx.lineTo(wrX, wrY); ctx.stroke();
+    const shX = cx + side * s * 0.24 + lean, shYp = shY + s * 0.02;
+    const elX = shX + swing * s * 0.18;
+    const elY = shYp + s * 0.34 - Math.abs(swing) * s * 0.05;
+    const flexion = 0.45 + Math.max(0, swing) * 0.35;
+    const wrX = elX - side * flexion * s * 0.22;
+    const wrY = elY + s * 0.30 - Math.max(0, swing) * s * 0.12;
+    segmentoGrueso(ctx, shX, shYp, elX, elY, s * 0.20, s * 0.15, jersey);
+    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
   };
   arm(-1, rPh); arm(1, lPh); // brazo opuesto a la pierna del mismo lado
 
   ctx.fillStyle = skin;
-  ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.19, s * 0.21, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
   ctx.restore();
 }
 
@@ -1102,7 +1230,7 @@ function dibujarEscenaSendero(ctx, w, h) {
     const p = roadPointAt(S, distFant);
     if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45); }
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#2f6f9c', 1);
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1);
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
 }
 function dibujarLineaMeta(ctx, S) {
@@ -1135,7 +1263,7 @@ function dibujarEscenaPista(ctx, w, h) {
     const p = roadPointAt(S, d0 + relAhead);
     if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45); }
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#2f6f9c', 1);
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1);
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff);
 }
 function dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff) {
@@ -1165,6 +1293,232 @@ function actualizarLineaVuelta() {
   } else if (escenarioActual === 'sendero') {
     el.textContent = 'Sendero · ' + (distanciaAcumM / 1000).toFixed(2) + ' km recorridos';
   }
+}
+
+/* ============================================================
+   CARRERA VIRTUAL (REPLAY)
+   Portado de Bici Indoor (mismo patrón: elegís 2+ sesiones guardadas y
+   corren entre sí a velocidad ajustable). Reusa roadBands/drawRunnerRear/
+   velodromeBearingAt/SCENES ya definidos arriba para pista/sendero — acá
+   no hace falta que las sesiones compartan ruta real porque las dos
+   vistas 3D de Correr son sintéticas (óvalo o recta), no rutas GPX.
+   ============================================================ */
+function repInterp(samples, t, key) {
+  if (!samples || !samples.length) return 0;
+  if (t <= samples[0].t) return samples[0][key] || 0;
+  const last = samples[samples.length - 1];
+  if (t >= last.t) return last[key] || 0;
+  let i = 0; while (i < samples.length - 1 && samples[i + 1].t < t) i++;
+  const a = samples[i], b = samples[i + 1], va = a[key] || 0, vb = b[key] || 0;
+  return va + (vb - va) * ((t - a.t) / ((b.t - a.t) || 1));
+}
+function repLabel(s) {
+  const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+  const origen = s.modo === 'aire_libre' ? 'aire libre' : (s.modo === 'import_tcx' ? 'TCX' : 'cinta');
+  return fecha + ' · ' + (s.distanciaM / 1000).toFixed(2) + ' km · ' + segAHMS(s.duracionSeg) + ' · ' + origen;
+}
+function abrirReplay() {
+  const ov = document.getElementById('overlayReplay');
+  ov.classList.add('activa'); ov.scrollTop = 0;
+  document.getElementById('repSetupCard').style.display = 'block';
+  document.getElementById('repViewCard').style.display = 'none';
+  poblarReplayPick();
+}
+function cerrarReplay() {
+  replayPlaying = false;
+  pararReplayLoop();
+  document.getElementById('overlayReplay').classList.remove('activa');
+}
+function poblarReplayPick() {
+  repList = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  repPicked.clear();
+  const wrap = document.getElementById('repPick');
+  if (!repList.length) { wrap.innerHTML = '<div class="vacio">No hay sesiones guardadas todavía</div>'; return; }
+  wrap.innerHTML = repList.map((s, i) =>
+    '<label class="rep-pick-row"><input type="checkbox" onchange="repToggle(' + i + ', this.checked)">' +
+    '<div class="txt">' + repLabel(s) + '</div></label>'
+  ).join('');
+}
+function repToggle(i, checked) { if (checked) repPicked.add(i); else repPicked.delete(i); }
+function iniciarReplay() {
+  const idxs = [...repPicked];
+  if (idxs.length < 2) { toast('Elegí al menos dos sesiones'); return; }
+  repRacers = idxs.map((idx, k) => ({
+    sesion: repList[idx], color: REP_COLORS[k % REP_COLORS.length], fase: 0,
+    puntos: puntosDeSesion(repList[idx]).map(p => ({ t: p.t, distAcum: p.distAcum, cadencia: p.cadencia, pulso: p.pulso, ritmo: p.ritmo }))
+  }));
+  repEscenario = document.getElementById('selectRepEscenario').value;
+  replayTotal = Math.max(...repRacers.map(r => r.sesion.duracionSeg));
+  vt = 0; replaySpeed = 2; replayPlaying = false; repSetSpeed(2);
+  repCam = 0; actualizarBotonCamara();
+  document.getElementById('repRoadWrap').style.display = repEscenario === 'ninguno' ? 'none' : 'block';
+  document.getElementById('repSetupCard').style.display = 'none';
+  document.getElementById('repViewCard').style.display = 'block';
+  if (repEscenario !== 'ninguno') fitRepRoad();
+  renderReplay();
+}
+function actualizarBotonCamara() {
+  const btn = document.getElementById('btnRepCamara');
+  if (!repRacers.length) return;
+  btn.textContent = 'Cámara: corredor ' + (repCam + 1) + ' (' + repLabel(repRacers[repCam].sesion).split(' · ')[0] + ')';
+}
+function repCambiarCamara() {
+  if (!repRacers.length) return;
+  repCam = (repCam + 1) % repRacers.length;
+  actualizarBotonCamara();
+  renderReplay();
+}
+function repSetSpeed(sp) {
+  replaySpeed = sp;
+  document.querySelectorAll('.rep-speed-btn').forEach(b => b.classList.toggle('on', parseInt(b.dataset.sp, 10) === sp));
+}
+function pararReplayLoop() { if (replayRAF) { cancelAnimationFrame(replayRAF); replayRAF = null; } }
+function replayLoopFn(ts) {
+  if (!replayPlaying) { replayRAF = null; return; }
+  const dt = replayLast ? Math.min(0.1, (ts - replayLast) / 1000) : 0;
+  replayLast = ts;
+  vt += dt * replaySpeed;
+  for (const r of repRacers) {
+    const cadHz = (repInterp(r.puntos, vt, 'cadencia') || 168) / 60 / 2;
+    r.fase += 2 * Math.PI * cadHz * dt * replaySpeed;
+  }
+  if (vt >= replayTotal) { vt = replayTotal; replayPlaying = false; document.getElementById('repPlayBtn').textContent = '▶ Play'; }
+  renderReplay();
+  if (replayPlaying) replayRAF = requestAnimationFrame(replayLoopFn);
+}
+function repPlayPause() {
+  if (vt >= replayTotal) vt = 0;
+  replayPlaying = !replayPlaying;
+  document.getElementById('repPlayBtn').textContent = replayPlaying ? '❚❚ Pausa' : '▶ Play';
+  if (replayPlaying) { replayLast = 0; replayRAF = requestAnimationFrame(replayLoopFn); }
+}
+function repReiniciar() {
+  vt = 0; replayPlaying = false;
+  document.getElementById('repPlayBtn').textContent = '▶ Play';
+  renderReplay();
+}
+function repState() {
+  return repRacers.map(r => ({
+    r, d: repInterp(r.puntos, vt, 'distAcum'),
+    hr: Math.round(repInterp(r.puntos, vt, 'pulso')),
+    ritmo: repInterp(r.puntos, vt, 'ritmo')
+  }));
+}
+function renderReplay() {
+  const st = repState();
+  const sorted = [...st].sort((a, b) => b.d - a.d);
+  const top = sorted.slice(0, 4);
+  document.getElementById('repTime').textContent = segAHMS(vt) + ' / ' + segAHMS(replayTotal);
+  document.getElementById('repScrub').value = Math.round(replayTotal > 0 ? vt / replayTotal * 1000 : 0);
+
+  document.getElementById('repStandings').innerHTML = top.map((x, i) =>
+    '<div class="fila" style="align-items:center; padding:5px 0; font-size:12.5px;">' +
+    '<b style="flex:none; width:22px;">' + (i + 1) + 'º</b>' +
+    '<span style="width:12px; height:12px; border-radius:3px; background:' + x.r.color + '; flex:none;"></span>' +
+    '<span style="flex:2;">' + (x.d / 1000).toFixed(2) + ' km</span>' +
+    '<span style="flex:1; text-align:right;">' + (x.ritmo ? segAMMSS(x.ritmo) + '/km' : '—') + '</span>' +
+    '<span style="flex:1; text-align:right; color:var(--pulso);">' + (x.hr || '—') + '</span>' +
+    '</div>'
+  ).join('');
+
+  const winnerEl = document.getElementById('repWinner');
+  if (vt >= replayTotal) {
+    const ganador = [...repRacers].sort((a, b) => a.sesion.duracionSeg - b.sesion.duracionSeg)[0];
+    winnerEl.innerHTML = '🏁 Ganó <span style="color:' + ganador.color + '">' + repLabel(ganador.sesion).split(' · ')[0] + '</span> — ' + segAHMS(ganador.sesion.duracionSeg);
+  } else if (top.length >= 2) {
+    const gap = Math.round(top[0].d - top[1].d);
+    winnerEl.innerHTML = 'Puntero <span style="color:' + top[0].r.color + '">1º</span> +' + gap + ' m sobre el 2º';
+  }
+
+  dibujarRepLane(st);
+  if (repEscenario === 'pista') dibujarRepPista(st);
+  else if (repEscenario === 'sendero') dibujarRepSendero(st);
+}
+function dibujarRepLane(st) {
+  const cv = document.getElementById('repLane');
+  const w = cv.clientWidth, h = cv.clientHeight || 90;
+  cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio;
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const groundY = h - 14, margin = 16;
+  const maxD = Math.max(...repRacers.map(r => r.sesion.distanciaM), 1);
+  ctx.strokeStyle = '#273040'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(margin, groundY + 6); ctx.lineTo(w - margin, groundY + 6); ctx.stroke();
+  const xOf = d => margin + Math.min(1, Math.max(0, d / maxD)) * (w - 2 * margin);
+  const orden = [...st].sort((a, b) => a.d - b.d);
+  orden.forEach(x => {
+    const cx = xOf(x.d);
+    ctx.fillStyle = x.r.color;
+    ctx.beginPath(); ctx.arc(cx, groundY, 8, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#04121c'; ctx.lineWidth = 2; ctx.stroke();
+  });
+}
+function fitRepRoad() {
+  const cv = document.getElementById('repRoad');
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight || 260;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  repRoadCtx = { ctx, w, h };
+}
+function dibujarRepPista(st) {
+  if (!repRoadCtx || repRoadCtx.w < 10) fitRepRoad();
+  if (!repRoadCtx || repRoadCtx.w < 10) return;
+  const { ctx, w, h } = repRoadCtx;
+  const camRacer = repRacers[repCam] || repRacers[0];
+  const cam = st.find(x => x.r === camRacer) || st[0];
+  const camD0 = ((cam.d % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
+  const bFn = d => velodromeBearingAt(d, LARGO_PISTA_M);
+  const S = roadBands(ctx, w, h, camD0, bFn, velodromeEleAt, null, SCENES.velodromo_open, VELO_GEOM);
+  dibujarLineaMeta(ctx, S);
+  const youS = Math.max(20, h * 0.135);
+  const otros = st.filter(x => x.r !== camRacer).map(x => {
+    const xd0 = ((x.d % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
+    const relAhead = ((xd0 - camD0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
+    return { x, posD: camD0 + relAhead, relAhead };
+  }).sort((a, b) => b.relAhead - a.relAhead);
+  for (const { x, posD } of otros) {
+    const p = roadPointAt(S, posD); if (!p) continue;
+    const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
+    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9);
+    const lapDiff = Math.floor(x.d / LARGO_PISTA_M) - Math.floor(cam.d / LARGO_PISTA_M);
+    const gap = Math.round(x.d - cam.d);
+    dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m' + (lapDiff !== 0 ? ' (' + (lapDiff > 0 ? '+' : '') + lapDiff + 'v)' : ''), x.r.color);
+  }
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1);
+}
+function dibujarRepSendero(st) {
+  if (!repRoadCtx || repRoadCtx.w < 10) fitRepRoad();
+  if (!repRoadCtx || repRoadCtx.w < 10) return;
+  const { ctx, w, h } = repRoadCtx;
+  const camRacer = repRacers[repCam] || repRacers[0];
+  const cam = st.find(x => x.r === camRacer) || st[0];
+  const bFn = () => 0, eFn = () => 0; // sendero recto y llano (no hay una pendiente "en vivo" acá, es replay)
+  const S = roadBands(ctx, w, h, cam.d, bFn, eFn, null, SCENES.rural, null);
+  const youS = Math.max(20, h * 0.135);
+  const otros = st.filter(x => x.r !== camRacer).sort((a, b) => b.d - a.d);
+  for (const x of otros) {
+    const p = roadPointAt(S, x.d); if (!p) continue;
+    const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
+    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9);
+    const gap = Math.round(x.d - cam.d);
+    dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m', x.r.color);
+  }
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1);
+}
+function dibujarEtiquetaRep(ctx, cx, cy, texto, color) {
+  ctx.font = '700 12px system-ui'; ctx.textAlign = 'center';
+  const tw = ctx.measureText(texto).width;
+  ctx.fillStyle = 'rgba(4,7,10,.72)'; ctx.fillRect(cx - tw / 2 - 4, cy - 12, tw + 8, 16);
+  ctx.fillStyle = color; ctx.fillText(texto, cx, cy);
+  ctx.textAlign = 'start';
+}
+function repScrubInput(el) {
+  replayPlaying = false;
+  document.getElementById('repPlayBtn').textContent = '▶ Play';
+  vt = replayTotal * (el.value / 1000);
+  renderReplay();
 }
 
 /* ============================================================
@@ -1309,26 +1663,29 @@ function promediarBucket(bucket) {
   const ritmos = bucket.filter(p => p.ritmo).map(p => p.ritmo);
   const pulsos = bucket.filter(p => p.pulso).map(p => p.pulso);
   const cadencias = bucket.filter(p => p.cadencia).map(p => p.cadencia);
+  const potencias = bucket.filter(p => p.potencia).map(p => p.potencia);
   return {
     t: ultimo.t,
     ritmo: ritmos.length ? promedio(ritmos) : null,
     pulso: pulsos.length ? promedio(pulsos) : null,
     cadencia: cadencias.length ? promedio(cadencias) : null,
+    potencia: potencias.length ? promedio(potencias) : null,
     pendiente: ultimo.pendiente || 0,
     distAcum: ultimo.distAcum // acumulado real, no se promedia
   };
 }
 function compactarPuntos(puntos) {
-  const t = [], ritmo = [], pulso = [], cadencia = [], pendiente = [], distAcum = [];
+  const t = [], ritmo = [], pulso = [], cadencia = [], potencia = [], pendiente = [], distAcum = [];
   puntos.forEach(p => {
     t.push(Math.round(p.t));
     ritmo.push(p.ritmo ? Math.round(p.ritmo) : 0);
     pulso.push(p.pulso ? Math.round(p.pulso) : 0);
     cadencia.push(p.cadencia ? Math.round(p.cadencia) : 0);
+    potencia.push(p.potencia ? Math.round(p.potencia) : 0);
     pendiente.push(p.pendiente ? Math.round(p.pendiente * 10) : 0);
     distAcum.push(Math.round(p.distAcum));
   });
-  return { t, ritmo, pulso, cadencia, pendiente, distAcum };
+  return { t, ritmo, pulso, cadencia, potencia, pendiente, distAcum };
 }
 function descomprimirPuntos(c) {
   if (!c || !c.t) return [];
@@ -1343,6 +1700,7 @@ function descomprimirPuntos(c) {
       ritmo: c.ritmo[i] || null,
       pulso: c.pulso[i] || null,
       cadencia: c.cadencia[i] || null,
+      potencia: c.potencia ? (c.potencia[i] || null) : null, // sesiones viejas sin este campo -> null
       pendiente: c.pendiente[i] / 10,
       velocidad,
       distAcum
@@ -1372,6 +1730,7 @@ function finalizarSesion() {
   const ritmoPromedioSegKm = ritmosValidos.length ? promedio(ritmosValidos) : null;
   const pulsosValidos = puntosSesion.filter(p => p.pulso).map(p => p.pulso);
   const pulsoPromedio = pulsosValidos.length ? Math.round(promedio(pulsosValidos)) : null;
+  const pulsoMax = pulsosValidos.length ? Math.max(...pulsosValidos) : null;
   const cadenciasValidas = puntosSesion.filter(p => p.cadencia).map(p => p.cadencia);
   const cadenciaPromedio = cadenciasValidas.length ? Math.round(promedio(cadenciasValidas)) : null;
 
@@ -1387,11 +1746,14 @@ function finalizarSesion() {
     distanciaM: Math.round(distanciaAcumM),
     ritmoPromedioSegKm,
     pulsoPromedio,
+    pulsoMax,
     cadenciaPromedio,
+    potenciaPromedio: null, // no se captura en vivo, solo puede venir de un TCX importado
     vamPromedio: tiempoSubidaSeg > 0 ? Math.round(vamAcumWh / tiempoSubidaSeg) : 0,
     elevGanadaM: modo === 'aire_libre' ? Math.round(elevGanadaAcumM) : null,
     tss,
     desacoplePct: desacople,
+    desacoplePotenciaPct: null,
     efAerobica,
     fantasmaId: fantasmaId || null,
     fantasmaDeltaFinalSeg: fantasmaId ? deltaFantasmaUltimo : null,
@@ -1408,9 +1770,9 @@ function finalizarSesion() {
   actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos: puntosSesion });
   actualizarFormaCompartida(sesion);
 
-  toast('Sesión guardada · TSS ' + tss);
   resetearHUD();
   renderZonas();
+  mostrarResumenPost(sesion);
 }
 function resetearHUD() {
   document.getElementById('btnIniciar').disabled = false;
@@ -1668,25 +2030,51 @@ function dibujarChartForma(serie) {
    DETALLE DE SESIÓN + GRÁFICO CON SCRUB
    ============================================================ */
 let sesionDetalleActual = null;
+function tileResumenHTML(valor, etiqueta, claseExtra) {
+  return '<div class="hud-item' + (claseExtra ? ' ' + claseExtra : '') + '"><div class="val">' + valor + '</div><div class="lbl">' + etiqueta + '</div></div>';
+}
+// Grilla de tiles al estilo del resumen post-sesión de Bici Indoor, + texto cualitativo debajo.
+// La usan tanto la pantalla de "Sesión terminada" como el detalle de una sesión del historial.
+function renderResumenSesion(s, contenedorId) {
+  const tiles = [];
+  tiles.push(tileResumenHTML(segAHMS(s.duracionSeg), 'Tiempo'));
+  tiles.push(tileResumenHTML((s.distanciaM / 1000).toFixed(2), 'Distancia km'));
+  tiles.push(tileResumenHTML(s.ritmoPromedioSegKm ? segAMMSS(s.ritmoPromedioSegKm) : '--', 'Ritmo medio /km', 'ritmo'));
+  tiles.push(tileResumenHTML(s.pulsoPromedio || '--', 'Pulso medio bpm', 'pulso'));
+  tiles.push(tileResumenHTML(s.pulsoMax || '--', 'Pulso máx bpm', 'pulso'));
+  tiles.push(tileResumenHTML(s.cadenciaPromedio || '--', 'Cadencia spm'));
+  if (s.potenciaPromedio) tiles.push(tileResumenHTML(s.potenciaPromedio, 'Potencia media W'));
+  tiles.push(tileResumenHTML(s.tss || 0, 'TSS'));
+  if (s.elevGanadaM != null) tiles.push(tileResumenHTML(s.elevGanadaM, 'Desnivel+ (GPS) m'));
+  else tiles.push(tileResumenHTML(s.vamPromedio || 0, 'Desnivel/hora m/h'));
+
+  let extra = '';
+  if (s.desacoplePct != null) extra += 'Desacople ritmo:pulso: <b>' + s.desacoplePct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePct) + '<br>';
+  if (s.desacoplePotenciaPct != null) extra += 'Desacople potencia:pulso: <b>' + s.desacoplePotenciaPct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePotenciaPct) + '<br>';
+  if (s.efAerobica) extra += 'Eficiencia aeróbica: ' + s.efAerobica.toFixed(2) + ' (m/min)/bpm<br>';
+  if (s.fantasmaId) extra += 'vs Fantasma (final): ' + (s.fantasmaDeltaFinalSeg != null ? formatearDelta(s.fantasmaDeltaFinalSeg) : '--') + '<br>';
+
+  document.getElementById(contenedorId).innerHTML =
+    '<div class="hud-grid">' + tiles.join('') + '</div>' +
+    (extra ? '<div class="estado-conexion" style="margin-top:10px; line-height:1.9;">' + extra + '</div>' : '');
+}
+function mostrarResumenPost(s) {
+  renderResumenSesion(s, 'resumenPostContenido');
+  const ov = document.getElementById('overlayResumenPost');
+  ov.classList.add('activa'); ov.scrollTop = 0;
+}
+function cerrarResumenPost() { document.getElementById('overlayResumenPost').classList.remove('activa'); }
+
 function abrirDetalle(id) {
   const sesiones = lsGet(K_SESIONES, []);
   const s = sesiones.find(x => x.id === id);
   if (!s) return;
   sesionDetalleActual = s;
   document.getElementById('detalleTitulo').textContent = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'long', year: 'numeric' });
-  document.getElementById('detalleResumen').innerHTML =
-    'Distancia: ' + (s.distanciaM / 1000).toFixed(2) + ' km<br>' +
-    'Duración: ' + segAHMS(s.duracionSeg) + '<br>' +
-    'Ritmo promedio: ' + (s.ritmoPromedioSegKm ? segAMMSS(s.ritmoPromedioSegKm) + '/km' : '--') + '<br>' +
-    'Pulso promedio: ' + (s.pulsoPromedio || '--') + ' bpm<br>' +
-    'Cadencia promedio: ' + (s.cadenciaPromedio || '--') + ' spm<br>' +
-    (s.elevGanadaM != null ? ('Desnivel+ (GPS, aprox.): ' + s.elevGanadaM + ' m<br>') : ('Desnivel/hora promedio (subidas): ' + (s.vamPromedio || 0) + ' m/h<br>')) +
-    'TSS: ' + (s.tss || 0) + '<br>' +
-    'Desacople ritmo:pulso: ' + (s.desacoplePct != null ? s.desacoplePct.toFixed(1) + '%' : '--') + '<br>' +
-    'Eficiencia aeróbica: ' + (s.efAerobica ? s.efAerobica.toFixed(2) + ' (m/min)/bpm' : '--') +
-    (s.fantasmaId ? ('<br>vs Fantasma (final): ' + (s.fantasmaDeltaFinalSeg != null ? formatearDelta(s.fantasmaDeltaFinalSeg) : '--')) : '');
+  renderResumenSesion(s, 'detalleResumen');
   document.getElementById('detalleNotas').value = s.notas || '';
   document.getElementById('overlayDetalle').classList.add('activa');
+  document.getElementById('overlayDetalle').scrollTop = 0;
   requestAnimationFrame(() => dibujarChartSesion(s));
 }
 function guardarNotasDetalle() {
@@ -1761,6 +2149,17 @@ function manejarArchivoTCX(evt) {
   };
   reader.readAsText(file);
 }
+// Garmin mete Watts/RunCadence dentro de <Extensions><TPX>, a veces con prefijo de namespace
+// (ns3:Watts). getElementsByTagName no los encuentra si hay prefijo, así que busco por localName.
+function buscarLocalName(el, nombre) {
+  const todos = el.getElementsByTagName('*');
+  for (let i = 0; i < todos.length; i++) {
+    const n = todos[i];
+    const local = n.localName || n.tagName.split(':').pop();
+    if (local === nombre) return n;
+  }
+  return null;
+}
 function procesarTCX(xmlTexto, nombreArchivo) {
   const xml = new DOMParser().parseFromString(xmlTexto, 'application/xml');
   if (xml.querySelector('parsererror')) throw new Error('XML inválido');
@@ -1777,10 +2176,14 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     if (t0 === null) t0 = tiempo;
     const hrEl = tp.getElementsByTagName('HeartRateBpm')[0];
     const hrVal = hrEl ? parseInt(hrEl.getElementsByTagName('Value')[0].textContent, 10) : null;
+    const wattsEl = buscarLocalName(tp, 'Watts');
+    const cadEl = buscarLocalName(tp, 'RunCadence');
     puntos.push({
       t: (tiempo - t0) / 1000,
       distAcum: parseFloat(distEl.textContent),
       pulso: hrVal,
+      potencia: wattsEl ? parseFloat(wattsEl.textContent) : null,
+      cadencia: cadEl ? parseInt(cadEl.textContent, 10) : null,
       velocidad: null // se completa abajo por derivación
     });
   });
@@ -1796,7 +2199,6 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     const dd = puntos[i].distAcum - puntos[j].distAcum;
     puntos[i].velocidad = dt > 0 ? dd / dt : 0;
     puntos[i].ritmo = puntos[i].velocidad > 0.1 ? 1000 / puntos[i].velocidad : null;
-    puntos[i].cadencia = null;
     puntos[i].pendiente = 0;
   }
 
@@ -1804,6 +2206,11 @@ function procesarTCX(xmlTexto, nombreArchivo) {
   const distanciaM = puntos[puntos.length - 1].distAcum;
   const pulsosValidos = puntos.filter(p => p.pulso).map(p => p.pulso);
   const pulsoPromedio = pulsosValidos.length ? Math.round(promedio(pulsosValidos)) : null;
+  const pulsoMax = pulsosValidos.length ? Math.max(...pulsosValidos) : null;
+  const potenciasValidas = puntos.filter(p => p.potencia).map(p => p.potencia);
+  const potenciaPromedio = potenciasValidas.length >= 3 ? Math.round(promedio(potenciasValidas)) : null;
+  const cadenciasValidas = puntos.filter(p => p.cadencia).map(p => p.cadencia);
+  const cadenciaPromedio = cadenciasValidas.length >= 3 ? Math.round(promedio(cadenciasValidas)) : null;
   const ritmoPromedioSegKm = distanciaM > 0 ? duracionSeg / (distanciaM / 1000) : null;
 
   document.getElementById('previewTCX').innerHTML =
@@ -1813,7 +2220,9 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     'Duración: ' + segAHMS(duracionSeg) + '<br>' +
     'Distancia: ' + (distanciaM / 1000).toFixed(2) + ' km<br>' +
     'Ritmo promedio: ' + (ritmoPromedioSegKm ? segAMMSS(ritmoPromedioSegKm) + '/km' : '--') + '<br>' +
-    'Pulso promedio: ' + (pulsoPromedio || '--') + ' bpm' +
+    'Pulso promedio: ' + (pulsoPromedio || '--') + ' bpm' + (pulsoMax ? (' (máx ' + pulsoMax + ')') : '') +
+    (cadenciaPromedio ? ('<br>Cadencia promedio: ' + cadenciaPromedio + ' spm') : '') +
+    (potenciaPromedio ? ('<br>Potencia promedio: ' + potenciaPromedio + ' W') : '') +
     '</div>' +
     '<button class="btn primario" id="btnUsarTCX">Usar para sembrar zonas (mejores esfuerzos)</button>' +
     '<button class="btn" id="btnGuardarTCX">Guardar también como sesión en el historial</button>' +
@@ -1834,11 +2243,14 @@ function procesarTCX(xmlTexto, nombreArchivo) {
       distanciaM: Math.round(distanciaM),
       ritmoPromedioSegKm,
       pulsoPromedio,
-      cadenciaPromedio: null,
+      cadenciaPromedio,
+      pulsoMax,
+      potenciaPromedio,
       vamPromedio: 0,
       elevGanadaM: null,
       tss,
       desacoplePct: calcularDesacople(puntos.filter(p => p.velocidad > 0 && p.pulso > 0)),
+      desacoplePotenciaPct: potenciaPromedio ? calcularDesacople(puntos.filter(p => p.potencia > 0 && p.pulso > 0), 'potencia') : null,
       efAerobica: (ritmoPromedioSegKm && pulsoPromedio) ? ((1000 / ritmoPromedioSegKm) * 60 / pulsoPromedio) : null,
       puntos: compactarPuntos(reducirResolucion(puntos, INTERVALO_GUARDADO_SEG)),
       notas: 'Importado de ' + nombreArchivo
@@ -1849,6 +2261,7 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos });
     actualizarFormaCompartida(sesion);
     toast('Sesión importada y guardada · TSS ' + tss);
+    mostrarResumenPost(sesion);
   };
 }
 
