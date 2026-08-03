@@ -133,7 +133,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v18</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v19</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -560,6 +560,22 @@
        test que confirma el orden real de las 10 formas dibujadas
        (pierna×4, brazo-atrás×2, short, torso, brazo-adelante×2) y que
        las piernas no cruzan, en 43 fases × 2 modos.
+   v19: Gemini vio un video de v18 (elogió el ancho general) y pidió dos
+       ajustes de percepción. Rodilla: el muslo ahora también rota más
+       durante el swing (antes ángulo fijo de 5°, solo la pantorrilla se
+       movía) — sube hasta 53° en el pico, dando ~40% menos altura de
+       muslo (escorzo real) sin romper el límite lateral de v18 (sigue
+       muy por debajo del ancho de pelvis). La rodilla se dibuja 18%
+       más ancha en el swing (+ una cápsula visible), simulando volumen
+       hacia la cámara. Braceo: la mano del brazo "adelante" ahora cruza
+       en diagonal hacia el centro del pecho (antes solo subía derecho
+       al costado), la de "atrás" se abre un poco al bajar tras la
+       cadera, y el movimiento usa una curva de easing (acelera y se
+       frena arriba) en vez de sin() puro. Verificado con los dos
+       criterios exactos que dio Gemini contra el código real: ancho de
+       rodilla en swing > apoyo (por pierna, siguiendo cada una en un
+       barrido completo) y mano-adelante siempre más cerca del centro
+       que mano-atrás.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1214,11 +1230,12 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
   const vueloDe = ph => Math.max(0, (-Math.cos(ph) - T) / (1 - T));
 
   // PIERNAS: mantengo los ángulos de rodilla ya validados (carrera 170°→65°, talón al 75% del
-  // largo de la pierna; caminata 175°→135°) pero comprimo fuerte el eje X — Gemini identificó
-  // que estaba usando ese ángulo para ABRIR la pierna hacia el costado (tijera), cuando el eje
-  // lateral casi no debería moverse; el "escorzo" (la pierna se ve más corta al recogerse) tiene
-  // que salir del eje Y solamente. El pie también se achica un poco al elevarse, como pista de
-  // profundidad (Gemini: "el pie se renderiza más pequeño" en impulso/recogida).
+  // largo de la pierna; caminata 175°→135°) y el eje X sigue comprimido (v18, evita la tijera).
+  // NUEVO (Gemini v19): el muslo también rota más durante el swing — antes el ángulo del muslo
+  // era fijo (side*5°), por eso solo se veía "encoger" sin transmitir que la rodilla se proyecta
+  // hacia adelante. Ahora el ángulo crece con la fase de vuelo, dando ~40% menos altura de muslo
+  // en el pico del swing (escorzo real), y la rodilla se dibuja un 18% más ancha en ese punto
+  // (simula el volumen de la rodilla apuntando hacia la cámara).
   const COMPRESION_X_PIERNA = 0.12;
   const rodillaExtendida = caminando ? 175 : 170, rodillaFlexion = caminando ? 135 : 65;
   const thighLen = s * 0.675, shinLen = s * 0.675;
@@ -1226,7 +1243,7 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
     const vuelo = vueloDe(ph);
     const anguloRodilla = rodillaExtendida - vuelo * (rodillaExtendida - rodillaFlexion);
     const pliegue = 180 - anguloRodilla;
-    const anguloMuslo = side * 5;
+    const anguloMuslo = side * (5 + vuelo * 48); // 5° en apoyo -> 53° en el pico del swing (~40% de escorzo)
     const anguloPantorrilla = anguloMuslo + side * pliegue;
     const hipX = cx + side * s * 0.16;
     const kneeX = hipX + Math.sin(anguloMuslo * D2R) * thighLen * COMPRESION_X_PIERNA;
@@ -1234,8 +1251,13 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
     const footX = kneeX + Math.sin(anguloPantorrilla * D2R) * shinLen * COMPRESION_X_PIERNA;
     const footY = kneeY + Math.cos(anguloPantorrilla * D2R) * shinLen;
     const escalaPie = 1 - vuelo * 0.3; // más chico al elevarse (pista de profundidad, no de lateralidad)
-    segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, s * 0.22, skin);
-    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, s * 0.22, s * 0.14, skin);
+    const anchoRodilla = s * 0.22 * (1 + vuelo * 0.18); // +18% de ancho en el swing (volumen hacia la cámara)
+    segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, anchoRodilla, skin);
+    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, anchoRodilla, s * 0.14, skin);
+    if (vuelo > 0.15) { // cápsula de rodilla, visible solo cuando hay flexión apreciable
+      ctx.fillStyle = skin;
+      ctx.beginPath(); ctx.ellipse(kneeX, kneeY, anchoRodilla * 0.55, anchoRodilla * 0.5, 0, 0, 7); ctx.fill();
+    }
     ctx.save(); ctx.translate(footX, footY + s * 0.05);
     ctx.fillStyle = zapatilla;
     ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
@@ -1257,16 +1279,28 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
     ctx.closePath(); ctx.fill();
   }
 
-  // BRAZOS: fórmula de cuadratura que propuso Gemini — el eje Y domina (sin, amplitud grande),
-  // el eje X es mínimo (cos, amplitud chica) solo para un leve cruce hacia el centro, nunca una
-  // rotación que abra el brazo a los costados. El codo se mueve MENOS que la muñeca (está más
-  // cerca del hombro en la cadena), eso solo ya sugiere el quiebre del codo sin rotar en X.
-  const ampYcodo = s * (caminando ? 0.05 : 0.10), ampYmano = s * (caminando ? 0.14 : 0.24);
-  const ampXcodo = s * (caminando ? 0.02 : 0.03), ampXmano = s * (caminando ? 0.05 : 0.07);
+  // BRAZOS: la mano del brazo que va "adelante" ahora cruza en diagonal HACIA EL CENTRO del
+  // pecho (no solo sube derecho al costado como en v18), y la del brazo "atrás" se abre un
+  // poco hacia afuera al bajar tras la cadera — así se ve la coordinación natural del braceo.
+  // El "easing" (curva de aceleración/frenado en vez de sin puro) hace que la mano acelere al
+  // subir y se frene un instante arriba, en vez de moverse a velocidad pareja todo el tiempo.
+  const easeBraceo = ph => { const x = Math.sin(ph); return Math.sign(x) * Math.pow(Math.abs(x), 0.65); };
+  const torsoHW = shHW; // medio-ancho del torso a la altura del hombro, ya calculado arriba
   const arm = (side, ph) => {
     const shX = cx + side * s * 0.30 + lean, shYp = shY + s * 0.02;
-    const elX = shX - side * Math.cos(ph) * ampXcodo, elY = shYp + s * 0.32 - Math.sin(ph) * ampYcodo;
-    const wrX = shX - side * Math.cos(ph) * ampXmano, wrY = shYp + s * 0.58 - Math.sin(ph) * ampYmano;
+    const e = caminando ? Math.sin(ph) : easeBraceo(ph); // en caminata no hace falta el frenado (braceo chico)
+    const frontFrac = (e + 1) / 2; // 0 = brazo atrás, 1 = brazo adelante
+
+    const manoXatras = shX + side * s * (caminando ? 0.03 : 0.05);
+    const manoXadelante = caminando ? (shX - side * s * 0.02) : (cx + side * torsoHW * 0.30);
+    const wrX = manoXatras + frontFrac * (manoXadelante - manoXatras);
+    const wrY = shYp + s * 0.58 - e * s * (caminando ? 0.14 : 0.24);
+
+    const codoXatras = shX + side * s * 0.03;
+    const codoXadelante = shX - side * s * (caminando ? 0.02 : 0.06);
+    const elX = codoXatras + frontFrac * (codoXadelante - codoXatras);
+    const elY = shYp + s * 0.32 - e * s * (caminando ? 0.05 : 0.10);
+
     segmentoGrueso(ctx, shX, shYp, elX, elY, s * 0.20, s * 0.15, jersey);
     segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
   };
