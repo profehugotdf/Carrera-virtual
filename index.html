@@ -133,7 +133,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v17</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v18</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -542,6 +542,24 @@
        vuelo en caminata / con fase de vuelo obligatoria en carrera,
        brazos siempre afuera del torso real (ensanchado) y piernas sin
        cruce, barridos en 28 fases × 2 modos.
+   v18: Gemini vio un video real y detectó la causa raíz de fondo — v17
+       rotaba los miembros en el eje lateral (X/abducción) para mostrar
+       la flexión, y eso es justo lo que se ve como "aletas"/tijera.
+       El eje lateral debería casi no moverse; el escorzo (verse más
+       corto al recogerse) tiene que salir del eje Y solamente. Mantuve
+       los ángulos ya validados de rodilla/codo pero les agregué una
+       compresión fuerte en X (COMPRESION_X_PIERNA=0.12): mismo ángulo,
+       mismo escorzo vertical, apertura lateral real bajó de las
+       decenas de px a ~3.5px sobre 10.4px de margen disponible. Brazo
+       reescrito con la cuadratura Y/X que propuso Gemini (Y domina,
+       X mínimo solo para un leve cruce). Nuevo: orden de capas por
+       brazo — el que va "adelante" (mano sube) se dibuja ENCIMA de la
+       camiseta, el que va "atrás" se dibuja DEBAJO (antes los dos
+       brazos se dibujaban siempre encima). Nuevo: el pie se achica un
+       poco al elevarse, como pista de profundidad. Verificado con un
+       test que confirma el orden real de las 10 formas dibujadas
+       (pierna×4, brazo-atrás×2, short, torso, brazo-adelante×2) y que
+       las piernas no cruzan, en 43 fases × 2 modos.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1180,8 +1198,8 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
   const shorts = shadeHex(jersey, 0.42);
   const D2R = Math.PI / 180;
 
-  // Oscilación vertical del centro de masa (solo carrera, según Gemini: 5-8% de la altura total,
-  // mínima en el apoyo — ph=0/π — y máxima en la fase de vuelo — ph=π/2, 3π/2).
+  // Oscilación vertical del centro de masa (solo carrera): 6.5% de la altura total, mínima en
+  // el apoyo (ph=0/π) y máxima en la fase de vuelo (ph=π/2, 3π/2).
   const alturaTotal = s * 2.87;
   const comBounce = caminando ? 0 : (alturaTotal * 0.065) * (1 - Math.cos(2 * fase)) / 2;
   const gyEfectivo = gy - comBounce;
@@ -1190,69 +1208,76 @@ function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
   ctx.fillStyle = 'rgba(0,0,0,.28)';
   ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
 
-  // Ventana de contacto: el pie queda en el piso (vuelo=0) mientras la fase está dentro de
-  // ±medioAncho de la posición de apoyo. En carrera esa ventana es angosta (~27% del ciclo por
-  // pierna), así que con las dos piernas a fase opuesta queda un momento en que NINGUNA toca el
-  // piso — la fase de vuelo obligatoria que pedía Gemini. En caminata la ventana es bien ancha
-  // (~54%), así que siempre hay al menos un pie apoyado (cero fase de vuelo).
+  // Ventana de contacto (fase de vuelo real en carrera, cero fase de vuelo en caminata) — igual que v17.
   const medioAnchoContacto = caminando ? 1.7 : 0.85;
   const T = -Math.cos(medioAnchoContacto);
   const vueloDe = ph => Math.max(0, (-Math.cos(ph) - T) / (1 - T));
 
-  // piernas: ángulo de rodilla REAL (no solo posición) — casi recta en apoyo/impulso, bien
-  // flexionada en el punto más alto del swing. Valores exactos de Gemini: carrera 170°→65°
-  // (talón al ~75% del largo de la pierna), caminata 175°→135°.
+  // PIERNAS: mantengo los ángulos de rodilla ya validados (carrera 170°→65°, talón al 75% del
+  // largo de la pierna; caminata 175°→135°) pero comprimo fuerte el eje X — Gemini identificó
+  // que estaba usando ese ángulo para ABRIR la pierna hacia el costado (tijera), cuando el eje
+  // lateral casi no debería moverse; el "escorzo" (la pierna se ve más corta al recogerse) tiene
+  // que salir del eje Y solamente. El pie también se achica un poco al elevarse, como pista de
+  // profundidad (Gemini: "el pie se renderiza más pequeño" en impulso/recogida).
+  const COMPRESION_X_PIERNA = 0.12;
   const rodillaExtendida = caminando ? 175 : 170, rodillaFlexion = caminando ? 135 : 65;
   const thighLen = s * 0.675, shinLen = s * 0.675;
   const leg = (side, ph) => {
     const vuelo = vueloDe(ph);
     const anguloRodilla = rodillaExtendida - vuelo * (rodillaExtendida - rodillaFlexion);
-    const pliegue = 180 - anguloRodilla; // cuánto se dobla la pantorrilla respecto al muslo
-    const anguloMuslo = side * 5; // apenas una inclinación fija, casi vertical (vista estrictamente posterior)
+    const pliegue = 180 - anguloRodilla;
+    const anguloMuslo = side * 5;
     const anguloPantorrilla = anguloMuslo + side * pliegue;
     const hipX = cx + side * s * 0.16;
-    const kneeX = hipX + Math.sin(anguloMuslo * D2R) * thighLen, kneeY = hipY + Math.cos(anguloMuslo * D2R) * thighLen;
-    const footX = kneeX + Math.sin(anguloPantorrilla * D2R) * shinLen, footY = kneeY + Math.cos(anguloPantorrilla * D2R) * shinLen;
+    const kneeX = hipX + Math.sin(anguloMuslo * D2R) * thighLen * COMPRESION_X_PIERNA;
+    const kneeY = hipY + Math.cos(anguloMuslo * D2R) * thighLen; // eje Y intacto (ahí vive el escorzo)
+    const footX = kneeX + Math.sin(anguloPantorrilla * D2R) * shinLen * COMPRESION_X_PIERNA;
+    const footY = kneeY + Math.cos(anguloPantorrilla * D2R) * shinLen;
+    const escalaPie = 1 - vuelo * 0.3; // más chico al elevarse (pista de profundidad, no de lateralidad)
     segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, s * 0.22, skin);
     segmentoGrueso(ctx, kneeX, kneeY, footX, footY, s * 0.22, s * 0.14, skin);
     ctx.save(); ctx.translate(footX, footY + s * 0.05);
     ctx.fillStyle = zapatilla;
-    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17, s * 0.095, 0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
     ctx.restore();
   };
   const lPh = fase, rPh = fase + Math.PI;
   if (Math.cos(lPh) > Math.cos(rPh)) { leg(1, rPh); leg(-1, lPh); } else { leg(-1, lPh); leg(1, rPh); }
 
-  ctx.fillStyle = shorts;
-  ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
-  ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
-
-  // torso: hombros más anchos que la cadera (Gemini: 1.25-1.3:1 en carrera, 1.15-1.2:1 en
-  // caminata — antes salía ~1:1, por eso el brazo terminaba pisando la camiseta).
+  // torso: hombros más anchos que la cadera (1.275:1 carrera, 1.175:1 caminata)
   const hipHW = s * 0.26, shHW = hipHW * (caminando ? 1.175 : 1.275);
-  ctx.fillStyle = jersey;
-  ctx.beginPath();
-  ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
-  ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
-  ctx.closePath(); ctx.fill();
+  function dibujarShortYTorso() {
+    ctx.fillStyle = shorts;
+    ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
+    ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = jersey;
+    ctx.beginPath();
+    ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
+    ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
+    ctx.closePath(); ctx.fill();
+  }
 
-  // brazos: codo a 90° CONSTANTE en carrera (Gemini), braceo ±30-40° respecto a la vertical.
-  // En caminata: casi recto (~177°), vaivén chico. El hombro se separa bastante del centro
-  // porque, con el brazo extendido swingueando hacia adentro, si no hay margen de sobra el
-  // codo termina pisando el torso otra vez (ya lo medí: hace falta según el largo del brazo).
-  const upperLen = s * 0.36, foreLen = s * 0.32;
+  // BRAZOS: fórmula de cuadratura que propuso Gemini — el eje Y domina (sin, amplitud grande),
+  // el eje X es mínimo (cos, amplitud chica) solo para un leve cruce hacia el centro, nunca una
+  // rotación que abra el brazo a los costados. El codo se mueve MENOS que la muñeca (está más
+  // cerca del hombro en la cadena), eso solo ya sugiere el quiebre del codo sin rotar en X.
+  const ampYcodo = s * (caminando ? 0.05 : 0.10), ampYmano = s * (caminando ? 0.14 : 0.24);
+  const ampXcodo = s * (caminando ? 0.02 : 0.03), ampXmano = s * (caminando ? 0.05 : 0.07);
   const arm = (side, ph) => {
-    const shX = cx + side * s * 0.66 + lean, shYp = shY + s * 0.02;
-    let anguloBrazo, pliegue;
-    if (caminando) { anguloBrazo = side * 4 + Math.sin(ph) * 12; pliegue = 3; }
-    else { anguloBrazo = Math.sin(ph) * 35; pliegue = 90; }
-    const anguloAntebrazo = anguloBrazo + side * pliegue;
-    const elX = shX + Math.sin(anguloBrazo * D2R) * upperLen, elY = shYp + Math.cos(anguloBrazo * D2R) * upperLen;
-    const wrX = elX + Math.sin(anguloAntebrazo * D2R) * foreLen, wrY = elY + Math.cos(anguloAntebrazo * D2R) * foreLen;
-    segmentoGrueso(ctx, shX, shYp, elX, elY, s * (caminando ? 0.18 : 0.20), s * (caminando ? 0.14 : 0.15), jersey);
-    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * (caminando ? 0.14 : 0.15), s * (caminando ? 0.11 : 0.11), skin);
+    const shX = cx + side * s * 0.30 + lean, shYp = shY + s * 0.02;
+    const elX = shX - side * Math.cos(ph) * ampXcodo, elY = shYp + s * 0.32 - Math.sin(ph) * ampYcodo;
+    const wrX = shX - side * Math.cos(ph) * ampXmano, wrY = shYp + s * 0.58 - Math.sin(ph) * ampYmano;
+    segmentoGrueso(ctx, shX, shYp, elX, elY, s * 0.20, s * 0.15, jersey);
+    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
   };
-  arm(-1, rPh); arm(1, lPh); // brazo opuesto a la pierna del mismo lado
+  // Capas: el brazo que va "adelante" (sin(ph)>0, la mano sube) se dibuja ENCIMA de la
+  // camiseta; el que va "atrás" se dibuja DEBAJO — por eso separo torso/short de los brazos acá,
+  // en vez de dibujar los dos brazos siempre después como antes.
+  const brazoL = { side: 1, ph: lPh }, brazoR = { side: -1, ph: rPh };
+  const [atras, adelante] = Math.sin(brazoL.ph) > 0 ? [brazoR, brazoL] : [brazoL, brazoR];
+  arm(atras.side, atras.ph);
+  dibujarShortYTorso();
+  arm(adelante.side, adelante.ph);
 
   ctx.fillStyle = skin;
   ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
