@@ -161,7 +161,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v30</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v32</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -336,6 +336,19 @@
         <button class="btn chico" onclick="document.getElementById('cardForma').style.display='block'; document.getElementById('cardForma').scrollIntoView({behavior:'smooth'});">📊 Forma</button>
       </div>
       <div id="listaSesiones"></div>
+    </div>
+    <div class="card">
+      <h2>Copia de seguridad y retos</h2>
+      <div class="fila" style="gap:6px;">
+        <button class="btn chico" onclick="exportarBackupJSON()">⬇️ Exportar todo</button>
+        <button class="btn chico" onclick="document.getElementById('inputImportarBackup').click()">⬆️ Importar</button>
+      </div>
+      <input type="file" id="inputImportarBackup" accept=".json" style="display:none;" onchange="manejarArchivoBackup(event)">
+      <button class="btn chico" onclick="document.getElementById('inputImportarReto').click()" style="margin-top:8px;">🏁 Importar reto (de un conocido)</button>
+      <input type="file" id="inputImportarReto" accept=".json" style="display:none;" onchange="manejarArchivoReto(event)">
+      <button class="btn chico" onclick="mostrarDiagnosticoAlmacenamiento()" style="margin-top:8px;">🔍 Diagnóstico de almacenamiento</button>
+      <div id="diagnosticoAlmacenamiento" style="margin-top:8px;"></div>
+      <button class="btn peligro" onclick="borrarTodasLasSesiones()" style="margin-top:8px;">🗑️ Borrar todas las sesiones</button>
     </div>
   </section>
 
@@ -578,6 +591,14 @@
       <h2>Exportar</h2>
       <button class="btn primario" onclick="exportarEditor()">Generar código</button>
       <textarea id="editorCodigoExportado" readonly placeholder="Tocá 'Generar código' y copiá esto para mandármelo" style="margin-top:8px; min-height:160px; font-family:var(--mono); font-size:11px;"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Guardar tu edición como archivo</h2>
+      <div class="estado-conexion">Lo que editás queda guardado en este navegador, pero si alguna vez cambio cómo se guardan los datos por dentro, un archivo aparte es la forma más segura de no perder nada — bajalo de vez en cuando.</div>
+      <button class="btn" onclick="descargarEdicionEditor()" style="margin-top:8px;">💾 Descargar mi edición (archivo)</button>
+      <button class="btn" onclick="document.getElementById('inputRestaurarEdicion').click()" style="margin-top:8px;">📂 Restaurar edición desde un archivo</button>
+      <input type="file" id="inputRestaurarEdicion" accept=".json" style="display:none;" onchange="manejarArchivoEdicion(event)">
     </div>
   </div>
 
@@ -918,6 +939,46 @@
        real que el TCX generado respeta el orden del schema, que
        eliminarSesion borra solo la sesión indicada, y que exportar
        desde la lista arma el TCX correcto sin pasar por el detalle.
+   v31: los 4 botones que le faltaban a Correr contra la lista de Bici
+       Indoor, en el orden que definimos. Borrar todas las sesiones
+       (con confirmación, avisa exportar antes si no querés perderlas).
+       Backup completo: "Exportar todo" baja un JSON con sesiones +
+       zonas + mejores esfuerzos; "Importar" lo vuelve a leer FUSIONANDO
+       por id (nunca reemplaza de golpe lo que ya tenías — si el backup
+       es viejo y algo ya existe, no lo duplica ni lo pisa). Diagnóstico
+       de almacenamiento: cuenta bytes reales de las claves de la app en
+       localStorage, con aviso si te acercás al límite típico de 5MB
+       por navegador. Reto (de un conocido): nuevo botón "🏁 Reto" en
+       cada sesión para exportarla como archivo de reto con un nombre
+       puesto a mano, y "Importar reto" del lado de quien lo recibe —
+       queda guardada como sesión marcada esReto/nombreReto, aparece
+       etiquetada distinto en el historial y ya se puede elegir como
+       fantasma sin pasos extra. Verificado sobre el código real:
+       borrar todo vacía el storage, importar un backup fusiona sin
+       duplicar ni pisar sesiones que no estaban en el backup, y el
+       reto exportado se puede reimportar conservando nombre/distancia
+       exactos (round-trip completo).
+   v32: Hugo preguntó si una edición del corredor se pierde al
+       actualizar de versión. Respuesta real: no, mientras siga siendo
+       la MISMA URL en el MISMO navegador — el localStorage vive pegado
+       al origen, no al contenido del archivo. El riesgo real es otro:
+       cada vez que YO cambio la estructura interna de los datos del
+       editor (ya pasó dos veces: v21 y v26), tengo que cambiar el
+       nombre de la clave de guardado para que el código nuevo no
+       intente leer datos con la forma vieja — eso sí puede dejar una
+       edición vieja "huérfana". Dos arreglos: (1) el backup general
+       (Exportar todo/Importar, de v31) ahora también incluye la
+       edición del corredor — antes solo cubría sesiones/zonas/mejores
+       esfuerzos, la del corredor quedaba totalmente afuera. Al
+       importar, si ya había una edición local pide confirmación antes
+       de pisarla, si no había ninguna la restaura directo. (2) Nueva
+       tarjeta en el propio editor para bajar/restaurar la edición como
+       archivo aparte, sin tener que ir hasta Historial — pensada para
+       guardarla de vez en cuando mientras se está trabajando ahí
+       mismo. Verificado sobre el código real: el archivo de edición
+       hace un round-trip exacto (mismo valor de rodilla antes y
+       después), y el backup general incluye y restaura la edición
+       correctamente.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1194,7 +1255,8 @@ function renderSelectorFantasma() {
   sesiones.forEach(s => {
     const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
     const km = (s.distanciaM / 1000).toFixed(2);
-    const origen = s.modo === 'aire_libre' ? 'aire libre' : (s.modo === 'import_tcx' ? 'TCX' : 'cinta');
+    const origen = s.esReto ? ('🏁 reto de ' + (s.nombreReto || 'un conocido')) :
+      (s.modo === 'aire_libre' ? 'aire libre' : (s.modo === 'import_tcx' ? 'TCX' : 'cinta'));
     html += '<option value="' + s.id + '">' + fecha + ' · ' + km + ' km · ' + segAHMS(s.duracionSeg) + ' · ' + origen + '</option>';
   });
   sel.innerHTML = html;
@@ -2313,6 +2375,40 @@ function exportarEditor() {
   document.getElementById('editorCodigoExportado').value = texto;
   toast('Código generado — copialo y mandámelo');
 }
+// respaldo específico de la edición del corredor, independiente del backup general de la app —
+// pensado para bajar rápido mientras estás editando, sin tener que ir hasta Historial.
+function descargarEdicionEditor() {
+  if (!editorDatos) cargarEditorDatos();
+  const paquete = { tipo: 'edicion_correr_v1', exportado: new Date().toISOString(), editorKeyframes: editorDatos };
+  const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'correr_edicion_' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Edición descargada');
+}
+function manejarArchivoEdicion(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { procesarArchivoEdicion(reader.result); }
+    catch (e) { toast('Error leyendo el archivo: ' + e.message); }
+    evt.target.value = '';
+  };
+  reader.readAsText(file);
+}
+function procesarArchivoEdicion(texto) {
+  const paquete = JSON.parse(texto);
+  if (paquete.tipo !== 'edicion_correr_v1' || !paquete.editorKeyframes) throw new Error('No es un archivo de edición de Correr válido');
+  if (!confirm('Esto va a REEMPLAZAR toda tu edición actual del corredor por la del archivo. ¿Seguro?')) return;
+  editorDatos = paquete.editorKeyframes;
+  guardarEditorDatos();
+  cambiarEditorModo(editorModo);
+  seleccionarEditorMomento(editorMomento);
+  toast('Edición restaurada desde el archivo');
+}
 
 
 /* ============================================================
@@ -2782,7 +2878,8 @@ function renderHistorial() {
       const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' +
         new Date(s.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
       const km = (s.distanciaM / 1000).toFixed(2);
-      const tag = s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA');
+      const tag = s.esReto ? ('🏁 RETO DE ' + (s.nombreReto || 'un conocido').toUpperCase()) :
+        (s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA'));
       const pulsoTxt = s.pulsoPromedio ? ('♥ ' + s.pulsoPromedio + (s.pulsoMax ? '/' + s.pulsoMax : '')) : '';
       return '<div class="sesion-item" style="display:block;" onclick="abrirDetalle(\'' + s.id + '\')">' +
         '<div class="sesion-tag">' + tag + '</div>' +
@@ -2791,6 +2888,7 @@ function renderHistorial() {
         '<div class="sesion-acciones">' +
         '<button onclick="event.stopPropagation(); abrirDetalle(\'' + s.id + '\')">↗ Abrir</button>' +
         '<button onclick="event.stopPropagation(); exportarSesionTCX(\'' + s.id + '\')">TCX</button>' +
+        '<button onclick="event.stopPropagation(); exportarSesionComoReto(\'' + s.id + '\')">🏁 Reto</button>' +
         '<button class="del" onclick="event.stopPropagation(); eliminarSesion(\'' + s.id + '\')">✕</button>' +
         '</div></div>';
     }).join('');
@@ -2977,6 +3075,148 @@ function eliminarSesion(id) {
   lsSet(K_SESIONES, sesiones);
   renderHistorial();
   toast('Sesión eliminada');
+}
+function borrarTodasLasSesiones() {
+  const sesiones = lsGet(K_SESIONES, []);
+  if (!sesiones.length) { toast('No hay sesiones guardadas'); return; }
+  if (!confirm('¿Borrar las ' + sesiones.length + ' sesiones guardadas? No se puede deshacer. Si querés conservarlas, primero tocá "Exportar todo".')) return;
+  lsSet(K_SESIONES, []);
+  renderHistorial();
+  toast('Se borraron todas las sesiones');
+}
+
+/* ============================================================
+   COPIA DE SEGURIDAD COMPLETA (exportar/importar todo junto)
+   ============================================================ */
+function exportarBackupJSON() {
+  const paquete = {
+    tipo: 'backup_correr_v1',
+    exportado: new Date().toISOString(),
+    sesiones: lsGet(K_SESIONES, []),
+    zonas: lsGet(K_ZONAS, {}),
+    mejoresEsfuerzos: lsGet(K_MEJORES, {}),
+    editorKeyframes: lsGet('correr_editor_keyframes_v3', null),
+  };
+  const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'correr_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Backup descargado (' + paquete.sesiones.length + ' sesiones' + (paquete.editorKeyframes ? ' + edición del corredor' : '') + ')');
+}
+function manejarArchivoBackup(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { procesarBackupJSON(reader.result); }
+    catch (e) { toast('Error leyendo el backup: ' + e.message); }
+    evt.target.value = '';
+  };
+  reader.readAsText(file);
+}
+// fusiona por id (no duplica sesiones que ya existen) — nunca reemplaza de golpe todo lo que
+// ya tenías guardado, así importar un backup viejo por error no te hace perder sesiones nuevas.
+function procesarBackupJSON(texto) {
+  const paquete = JSON.parse(texto);
+  if (paquete.tipo !== 'backup_correr_v1' || !Array.isArray(paquete.sesiones)) throw new Error('No es un backup de Correr válido');
+  const existentes = lsGet(K_SESIONES, []);
+  const idsExistentes = new Set(existentes.map(s => s.id));
+  const nuevas = paquete.sesiones.filter(s => !idsExistentes.has(s.id));
+  lsSet(K_SESIONES, [...existentes, ...nuevas]);
+  if (paquete.zonas && !lsGet(K_ZONAS, null)) lsSet(K_ZONAS, paquete.zonas); // solo si no tenías zonas cargadas ya
+  let editorRestaurado = false;
+  if (paquete.editorKeyframes) {
+    const editorLocal = lsGet('correr_editor_keyframes_v3', null);
+    if (!editorLocal || confirm('El backup trae una edición del corredor guardada, y ya tenés una local. ¿La reemplazo por la del backup? (Cancelar deja la que ya tenés)')) {
+      lsSet('correr_editor_keyframes_v3', paquete.editorKeyframes);
+      editorDatos = null; // fuerza a releer de localStorage la próxima vez que se abra el editor
+      editorRestaurado = true;
+    }
+  }
+  renderHistorial();
+  toast('Backup importado: ' + nuevas.length + ' sesiones nuevas (' + (paquete.sesiones.length - nuevas.length) + ' ya existían)' + (editorRestaurado ? ' + edición del corredor restaurada' : ''));
+}
+
+/* ============================================================
+   DIAGNÓSTICO DE ALMACENAMIENTO
+   ============================================================ */
+function mostrarDiagnosticoAlmacenamiento() {
+  const claves = Object.keys(localStorage).filter(k => k.startsWith(LS_PREFIX));
+  let totalBytes = 0;
+  const detalle = claves.map(k => {
+    const bytes = (k.length + (localStorage.getItem(k) || '').length) * 2; // aprox UTF-16, 2 bytes/char
+    totalBytes += bytes;
+    return { clave: k, bytes };
+  }).sort((a, b) => b.bytes - a.bytes);
+  const totalKB = (totalBytes / 1024).toFixed(1);
+  const limiteAprox = 5 * 1024 * 1024; // navegadores suelen dar ~5MB por origen a localStorage
+  const pct = Math.min(100, (totalBytes / limiteAprox) * 100);
+  const nSesiones = lsGet(K_SESIONES, []).length;
+  let html = '<div class="estado-conexion' + (pct > 70 ? ' err' : '') + '">' +
+    nSesiones + ' sesiones guardadas · ' + totalKB + ' KB usados (~' + pct.toFixed(1) + '% de un límite típico de 5 MB por navegador)' +
+    (pct > 70 ? ' — considerá exportar y borrar sesiones viejas.' : '') + '</div>';
+  html += '<table class="tabla-zonas" style="margin-top:8px;"><tr><th>Dato</th><th>KB</th></tr>' +
+    detalle.slice(0, 6).map(d => '<tr><td style="text-align:left;">' + d.clave.replace(LS_PREFIX, '') + '</td><td>' + (d.bytes / 1024).toFixed(1) + '</td></tr>').join('') +
+    '</table>';
+  document.getElementById('diagnosticoAlmacenamiento').innerHTML = html;
+}
+
+/* ============================================================
+   RETOS (compartir/importar sesión de un conocido)
+   ============================================================ */
+function exportarSesionComoReto(id) {
+  const sesion = lsGet(K_SESIONES, []).find(x => x.id === id);
+  if (!sesion) return;
+  const nombre = prompt('¿Con qué nombre querés que aparezca este reto para quien lo reciba?', '') || 'un conocido';
+  const paquete = {
+    tipo: 'reto_correr_v1',
+    nombreReto: nombre,
+    fecha: sesion.fecha,
+    duracionSeg: sesion.duracionSeg,
+    distanciaM: sesion.distanciaM,
+    puntos: puntosDeSesion(sesion),
+  };
+  const blob = new Blob([JSON.stringify(paquete)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'reto_' + nombre.replace(/[^a-z0-9]/gi, '_') + '.json';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('Reto exportado — mandaselo a tu conocido');
+}
+function manejarArchivoReto(evt) {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try { procesarRetoJSON(reader.result); }
+    catch (e) { toast('Error leyendo el reto: ' + e.message); }
+    evt.target.value = '';
+  };
+  reader.readAsText(file);
+}
+function procesarRetoJSON(texto, nombreOverride) {
+  const obj = JSON.parse(texto);
+  if (obj.tipo !== 'reto_correr_v1') throw new Error('No es un archivo de reto de Correr válido');
+  if (!obj.puntos || !obj.puntos.length) throw new Error('El archivo de reto no tiene puntos');
+  const sesion = {
+    id: 'reto_' + Date.now(),
+    fecha: obj.fecha,
+    modo: 'reto_importado',
+    duracionSeg: obj.duracionSeg,
+    distanciaM: obj.distanciaM,
+    puntos: obj.puntos,
+    esReto: true,
+    nombreReto: nombreOverride || obj.nombreReto || 'un conocido',
+  };
+  const sesiones = lsGet(K_SESIONES, []);
+  sesiones.push(sesion);
+  lsSet(K_SESIONES, sesiones);
+  renderHistorial();
+  renderSelectorFantasma();
+  toast('Reto de ' + sesion.nombreReto + ' importado — ya podés elegirlo como fantasma');
 }
 function dibujarChartSesion(s) {
   const canvas = document.getElementById('chartSesion');
