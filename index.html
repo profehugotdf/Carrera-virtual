@@ -126,6 +126,15 @@
   .sesion-item .izq .d{font-size:11px; color:var(--muted); margin-top:2px;}
   .sesion-item .der{text-align:right; font-family:var(--mono);}
   .sesion-item .der .tss{color:var(--ritmo); font-weight:700;}
+  .sesion-tag{display:inline-block; background:var(--panel2); color:var(--muted); font-size:10px;
+    font-weight:700; letter-spacing:.03em; padding:2px 7px; border-radius:6px; margin-bottom:4px;}
+  .sesion-fecha{font-size:14px; font-weight:700;}
+  .sesion-datos{font-size:12px; color:var(--muted); margin-top:2px;}
+  .sesion-acciones{display:flex; gap:6px; margin-top:8px;}
+  .sesion-acciones button{flex:1; padding:8px 2px; border-radius:8px; border:1px solid var(--borde);
+    background:var(--panel2); color:var(--texto); font-weight:700; font-size:12px;}
+  .sesion-acciones button.del{background:#2a1414; border-color:#5a2a2a; color:#ff8a8a;}
+  .card-cerrar{float:right; background:none; border:none; color:var(--muted); font-size:16px; padding:0 4px;}
   .vacio{color:var(--muted); text-align:center; padding:30px 10px; font-size:13px;}
 
   table.tabla-zonas{width:100%; border-collapse:collapse; font-size:12.5px;}
@@ -152,7 +161,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v29</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v30</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -300,7 +309,8 @@
   <!-- ===================== VISTA: HISTORIAL ===================== -->
   <section class="view" id="view-historial">
     <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
-    <div class="card">
+    <div class="card" id="cardForma">
+      <button class="card-cerrar" onclick="document.getElementById('cardForma').style.display='none'">✕</button>
       <h2>Forma (CTL / ATL / TSB)</h2>
       <canvas id="chartForma" height="140"></canvas>
       <div class="fila" style="margin-top:8px; text-align:center; font-family:var(--mono); font-size:12px;">
@@ -309,7 +319,8 @@
         <div>TSB<br><b id="formaTSB" style="font-size:16px;">0</b></div>
       </div>
     </div>
-    <div class="card">
+    <div class="card" id="cardEvolucion">
+      <button class="card-cerrar" onclick="document.getElementById('cardEvolucion').style.display='none'">✕</button>
       <h2>Evolución entre sesiones (promedios)</h2>
       <div style="font-size:12px;color:var(--muted);">Ritmo medio /km</div>
       <canvas id="chartEvolRitmo" height="90"></canvas>
@@ -320,6 +331,10 @@
     </div>
     <div class="card">
       <h2>Sesiones</h2>
+      <div class="fila" style="gap:6px; margin-bottom:10px;">
+        <button class="btn chico" onclick="document.getElementById('cardEvolucion').style.display='block'; document.getElementById('cardEvolucion').scrollIntoView({behavior:'smooth'});">📈 Evolución</button>
+        <button class="btn chico" onclick="document.getElementById('cardForma').style.display='block'; document.getElementById('cardForma').scrollIntoView({behavior:'smooth'});">📊 Forma</button>
+      </div>
       <div id="listaSesiones"></div>
     </div>
   </section>
@@ -883,6 +898,26 @@
        (Ritmo/Pulso/Cadencia medios por sesión en el tiempo), al estilo
        de la de Bici Indoor — resultó que la de CTL/ATL/TSB ("Forma")
        YA existía en la app, solo faltaba esta.
+   v30: Hugo mandó una captura del historial de Bici Indoor como
+       referencia, y aclaró que exportar a TCX es para poder subir la
+       sesión a TrainingPeaks — así que antes de tocar el diseño busqué
+       el schema real de Garmin (TrainingCenterDatabase v2) para
+       confirmar qué exige. Faltaban tres elementos OBLIGATORIOS dentro
+       de <Lap> (Calories, Intensity, TriggerMethod) en un orden
+       específico — sin esto, TrainingPeaks u otros servicios podrían
+       rechazar el archivo o importarlo mal aunque la propia app lo
+       pudiera releer sin problema. Corregido con el orden exacto del
+       schema, más pulso promedio/máximo y cadencia media del Lap
+       (antes solo iban en cada Trackpoint). Rediseño de Historial:
+       cada sesión de la lista ahora tiene tag de origen (Cinta/Aire
+       libre/TCX importado), pulso prom/máx visible, y tres acciones
+       directas sin abrir el detalle (Abrir/TCX/Eliminar — nueva
+       función eliminarSesion()). Las tarjetas "Forma" y "Evolución"
+       ahora se pueden cerrar con la X y reabrir con botones arriba de
+       la lista, igual que en Bici Indoor. Verificado sobre el código
+       real que el TCX generado respeta el orden del schema, que
+       eliminarSesion borra solo la sesión indicada, y que exportar
+       desde la lista arma el TCX correcto sin pasar por el detalle.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2744,12 +2779,20 @@ function renderHistorial() {
     cont.innerHTML = '<div class="vacio">Todavía no guardaste ninguna sesión</div>';
   } else {
     cont.innerHTML = sesiones.map(s => {
-      const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
+      const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit' }) + ' ' +
+        new Date(s.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
       const km = (s.distanciaM / 1000).toFixed(2);
-      return '<div class="sesion-item" onclick="abrirDetalle(\'' + s.id + '\')">' +
-        '<div class="izq"><div class="f">' + fecha + ' · ' + km + ' km</div>' +
-        '<div class="d">' + segAHMS(s.duracionSeg) + (s.ritmoPromedioSegKm ? (' · ' + segAMMSS(s.ritmoPromedioSegKm) + '/km') : '') + (s.pulsoPromedio ? (' · ' + s.pulsoPromedio + ' bpm') : '') + '</div></div>' +
-        '<div class="der"><div class="tss">' + (s.tss || 0) + ' TSS</div>' + (s.desacoplePct != null ? ('<div style="font-size:11px;color:var(--muted)">Desac. ' + s.desacoplePct.toFixed(1) + '%</div>') : '') + '</div></div>';
+      const tag = s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA');
+      const pulsoTxt = s.pulsoPromedio ? ('♥ ' + s.pulsoPromedio + (s.pulsoMax ? '/' + s.pulsoMax : '')) : '';
+      return '<div class="sesion-item" style="display:block;" onclick="abrirDetalle(\'' + s.id + '\')">' +
+        '<div class="sesion-tag">' + tag + '</div>' +
+        '<div class="sesion-fecha">' + fecha + '</div>' +
+        '<div class="sesion-datos">' + segAHMS(s.duracionSeg) + ' · ' + km + ' km' + (pulsoTxt ? (' · ' + pulsoTxt) : '') + '</div>' +
+        '<div class="sesion-acciones">' +
+        '<button onclick="event.stopPropagation(); abrirDetalle(\'' + s.id + '\')">↗ Abrir</button>' +
+        '<button onclick="event.stopPropagation(); exportarSesionTCX(\'' + s.id + '\')">TCX</button>' +
+        '<button class="del" onclick="event.stopPropagation(); eliminarSesion(\'' + s.id + '\')">✕</button>' +
+        '</div></div>';
     }).join('');
   }
   const forma = calcularSerieForma();
@@ -2897,25 +2940,43 @@ function generarTCX(sesion) {
     xml += '</Trackpoint>';
     return xml;
   }).join('');
-  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
-    '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">' +
-    '<Activities><Activity Sport="Running"><Id>' + t0.toISOString() + '</Id>' +
-    '<Lap StartTime="' + t0.toISOString() + '">' +
-    '<TotalTimeSeconds>' + sesion.duracionSeg + '</TotalTimeSeconds>' +
+  // orden EXACTO que exige el schema oficial de Garmin (TrainingCenterDatabase v2) dentro de
+  // <Lap>: TotalTimeSeconds, DistanceMeters, [MaximumSpeed], Calories, [AverageHeartRateBpm],
+  // [MaximumHeartRateBpm], Intensity, [Cadence], TriggerMethod, Track — Calories/Intensity/
+  // TriggerMethod son obligatorios aunque no tengamos el dato real (Calories=0 es válido).
+  // Sin esto, servicios como TrainingPeaks pueden rechazar el archivo o importarlo mal.
+  let lap = '<TotalTimeSeconds>' + sesion.duracionSeg + '</TotalTimeSeconds>' +
     '<DistanceMeters>' + sesion.distanciaM.toFixed(2) + '</DistanceMeters>' +
-    '<Track>' + filas + '</Track></Lap></Activity></Activities></TrainingCenterDatabase>';
+    '<Calories>0</Calories>';
+  if (sesion.pulsoPromedio) lap += '<AverageHeartRateBpm><Value>' + Math.round(sesion.pulsoPromedio) + '</Value></AverageHeartRateBpm>';
+  if (sesion.pulsoMax) lap += '<MaximumHeartRateBpm><Value>' + Math.round(sesion.pulsoMax) + '</Value></MaximumHeartRateBpm>';
+  lap += '<Intensity>Active</Intensity>';
+  if (sesion.cadenciaPromedio) lap += '<Cadence>' + Math.round(sesion.cadenciaPromedio) + '</Cadence>';
+  lap += '<TriggerMethod>Manual</TriggerMethod><Track>' + filas + '</Track>';
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2 http://www.garmin.com/xmlschemas/TrainingCenterDatabasev2.xsd">' +
+    '<Activities><Activity Sport="Running"><Id>' + t0.toISOString() + '</Id>' +
+    '<Lap StartTime="' + t0.toISOString() + '">' + lap + '</Lap></Activity></Activities></TrainingCenterDatabase>';
 }
-function exportarSesionTCX() {
-  if (!sesionDetalleActual) return;
-  const xml = generarTCX(sesionDetalleActual);
+function exportarSesionTCX(id) {
+  const sesion = id ? lsGet(K_SESIONES, []).find(x => x.id === id) : sesionDetalleActual;
+  if (!sesion) return;
+  const xml = generarTCX(sesion);
   const blob = new Blob([xml], { type: 'application/vnd.garmin.tcx+xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const fecha = new Date(sesionDetalleActual.fecha).toISOString().slice(0, 10);
+  const fecha = new Date(sesion.fecha).toISOString().slice(0, 10);
   a.href = url; a.download = 'correr_' + fecha + '.tcx';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('TCX descargado');
+}
+function eliminarSesion(id) {
+  if (!confirm('¿Eliminar esta sesión? No se puede deshacer.')) return;
+  const sesiones = lsGet(K_SESIONES, []).filter(x => x.id !== id);
+  lsSet(K_SESIONES, sesiones);
+  renderHistorial();
+  toast('Sesión eliminada');
 }
 function dibujarChartSesion(s) {
   const canvas = document.getElementById('chartSesion');
