@@ -96,8 +96,20 @@
 
   .editor-modo-btn, .editor-kf-btn{flex:1; padding:9px 4px; border-radius:9px; border:1px solid var(--borde);
     background:var(--panel2); color:var(--texto); font-weight:700; font-size:12px;}
+  .editor-kf-sub{font-weight:500; font-size:9px; color:var(--muted); text-transform:none;}
+  .editor-grid4{display:grid; grid-template-columns:repeat(4, 1fr); gap:5px;}
+  .editor-momento-btn{padding:6px 2px; border-radius:8px; border:1px solid var(--borde);
+    background:var(--panel2); color:var(--texto); font-weight:700; font-size:10px;}
+  .editor-momento-btn[data-momento$="D"]{border-bottom:2px solid var(--ritmo);}
+  .editor-momento-btn[data-momento$="I"]{border-bottom:2px solid var(--pendiente);}
+  .editor-momento-btn.sel{background:#1c2a1f; color:#fff; border-width:2px;}
   .editor-modo-btn.sel, .editor-kf-btn.sel{border-color:var(--ritmo); color:var(--ritmo); background:#12201E;}
-  #overlayEditor input[type=range]{width:100%; margin:2px 0 12px;}
+  .editor-grid2x2{display:grid; grid-template-columns:1fr 1fr; gap:8px;}
+  .editor-sticky{position:sticky; top:0; z-index:5; box-shadow:0 12px 14px -10px rgba(0,0,0,0.6); padding:10px 14px;}
+  .editor-vista-btn{flex:1; padding:8px 4px; border-radius:9px; border:1px solid var(--borde);
+    background:var(--panel2); color:var(--texto); font-weight:700; font-size:12px;}
+  .editor-vista-btn.sel{border-color:#fff; color:#fff; background:#22303a;}
+  #overlayEditor input[type=range]{width:100%; margin:2px 0 16px; touch-action:pan-y;}
   #overlayEditor label{display:flex; justify-content:space-between; margin-top:2px;}
   .editor-val{font-family:var(--mono); color:var(--ritmo); font-size:12px;}
   .rep-pick-row input[type=checkbox]{width:20px; height:20px; flex:none;}
@@ -140,7 +152,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v20</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v29</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -298,6 +310,15 @@
       </div>
     </div>
     <div class="card">
+      <h2>Evolución entre sesiones (promedios)</h2>
+      <div style="font-size:12px;color:var(--muted);">Ritmo medio /km</div>
+      <canvas id="chartEvolRitmo" height="90"></canvas>
+      <div style="font-size:12px;color:var(--muted);margin-top:10px;">Pulso medio (bpm)</div>
+      <canvas id="chartEvolPulso" height="90"></canvas>
+      <div style="font-size:12px;color:var(--muted);margin-top:10px;">Cadencia media (spm)</div>
+      <canvas id="chartEvolCadencia" height="90"></canvas>
+    </div>
+    <div class="card">
       <h2>Sesiones</h2>
       <div id="listaSesiones"></div>
     </div>
@@ -378,6 +399,9 @@
       <label>Notas</label>
       <textarea id="detalleNotas" onchange="guardarNotasDetalle()"></textarea>
     </div>
+    <div class="card">
+      <button class="btn" onclick="exportarSesionTCX()">⬇️ Exportar a TCX</button>
+    </div>
   </div>
 
   <!-- ===================== OVERLAY: CARRERA VIRTUAL (REPLAY) ===================== -->
@@ -437,52 +461,100 @@
   <div class="overlay" id="overlayEditor">
     <button class="cerrar" onclick="cerrarEditor()">← Volver</button>
 
+    <!-- selector de franja: no queda fijo, se scrollea con el resto (se toca poco) -->
     <div class="card">
       <h2>Editor de animación</h2>
-      <div class="modo-btns">
-        <button class="editor-modo-btn" data-modo="carrera" onclick="cambiarEditorModo('carrera')">Carrera</button>
+      <div class="editor-grid2x2">
         <button class="editor-modo-btn" data-modo="caminata" onclick="cambiarEditorModo('caminata')">Caminata</button>
+        <button class="editor-modo-btn" data-modo="trote" onclick="cambiarEditorModo('trote')">Trote suave</button>
+        <button class="editor-modo-btn" data-modo="carrera" onclick="cambiarEditorModo('carrera')">Carrera</button>
+        <button class="editor-modo-btn" data-modo="sprint" onclick="cambiarEditorModo('sprint')">Sprint</button>
       </div>
-      <div class="fila" style="margin-top:8px; gap:6px;">
-        <button class="btn chico editor-kf-btn" data-kf="contacto" onclick="cambiarEditorKF('contacto')">Contacto</button>
-        <button class="btn chico editor-kf-btn" data-kf="apoyoMedio" onclick="cambiarEditorKF('apoyoMedio')">Apoyo medio</button>
-        <button class="btn chico editor-kf-btn" data-kf="despegue" onclick="cambiarEditorKF('despegue')">Despegue</button>
-        <button class="btn chico editor-kf-btn" data-kf="vuelo" onclick="cambiarEditorKF('vuelo')">Vuelo</button>
+    </div>
+
+    <!-- botones de instante + canvas: fijos (sticky) al scrollear los sliders de abajo, para ver
+         el resultado en vivo sin perder de vista el dibujo. Achicado a propósito (canvas más
+         chico, sin el selector de franja acá) para dejar más pantalla libre para los sliders. -->
+    <div class="card editor-sticky">
+      <div class="editor-grid4">
+        <button class="btn chico editor-momento-btn" data-momento="contactoD" onclick="seleccionarEditorMomento('contactoD')">Contacto D</button>
+        <button class="btn chico editor-momento-btn" data-momento="apoyoD" onclick="seleccionarEditorMomento('apoyoD')">Apoyo D</button>
+        <button class="btn chico editor-momento-btn" data-momento="despegueD" onclick="seleccionarEditorMomento('despegueD')">Despegue D</button>
+        <button class="btn chico editor-momento-btn" data-momento="vueloD" onclick="seleccionarEditorMomento('vueloD')">Vuelo D</button>
+        <button class="btn chico editor-momento-btn" data-momento="contactoI" onclick="seleccionarEditorMomento('contactoI')">Contacto I</button>
+        <button class="btn chico editor-momento-btn" data-momento="apoyoI" onclick="seleccionarEditorMomento('apoyoI')">Apoyo I</button>
+        <button class="btn chico editor-momento-btn" data-momento="despegueI" onclick="seleccionarEditorMomento('despegueI')">Despegue I</button>
+        <button class="btn chico editor-momento-btn" data-momento="vueloI" onclick="seleccionarEditorMomento('vueloI')">Vuelo I</button>
       </div>
-      <canvas id="canvasEditor" height="320" style="margin-top:10px; border-radius:12px; background:#0d1a12; width:100%; display:block;"></canvas>
-      <button class="btn chico" onclick="reiniciarEditorKF()" style="margin-top:8px;">↺ Reiniciar esta pose a los valores por defecto</button>
+      <div class="fila" style="margin-top:6px; gap:6px;">
+        <button class="editor-vista-btn" data-vista="der" onclick="cambiarEditorVista('der')">Ver sliders: Derecho</button>
+        <button class="editor-vista-btn" data-vista="izq" onclick="cambiarEditorVista('izq')">Ver sliders: Izquierdo</button>
+      </div>
+      <canvas id="canvasEditor" height="170" style="margin-top:6px; border-radius:12px; background:#0d1a12; width:100%; display:block;"></canvas>
     </div>
 
     <div class="card">
-      <h2>Pierna (relativo a la cadera)</h2>
-      <label>Rodilla X <span id="lblRodillaX" class="editor-val"></span></label>
-      <input type="range" id="ed_kneeX" min="-400" max="700" oninput="actualizarEditor('kneeX', this.value)">
-      <label>Rodilla Y <span id="lblRodillaY" class="editor-val"></span></label>
-      <input type="range" id="ed_kneeY" min="-600" max="1600" oninput="actualizarEditor('kneeY', this.value)">
-      <label>Ancho de rodilla <span id="lblAnchoRodilla" class="editor-val"></span></label>
-      <input type="range" id="ed_anchoRodilla" min="50" max="500" oninput="actualizarEditor('anchoRodilla', this.value)">
-      <label>Pie X <span id="lblPieX" class="editor-val"></span></label>
-      <input type="range" id="ed_footX" min="-400" max="700" oninput="actualizarEditor('footX', this.value)">
-      <label>Pie Y <span id="lblPieY" class="editor-val"></span></label>
-      <input type="range" id="ed_footY" min="-600" max="1600" oninput="actualizarEditor('footY', this.value)">
-      <label>Escala del pie (profundidad) <span id="lblEscalaPie" class="editor-val"></span></label>
-      <input type="range" id="ed_escalaPie" min="200" max="1400" oninput="actualizarEditor('escalaPie', this.value)">
+      <button class="btn chico" onclick="reiniciarEditorMomento()">↺ Reiniciar ESTE instante (los dos lados) a su valor por defecto</button>
+      <button class="btn chico" onclick="espejarEditorInstante()" style="margin-top:8px;">🪞 Espejar D→I: pisa Contacto/Apoyo/Despegue/Vuelo I con el espejo de los D</button>
     </div>
 
     <div class="card">
-      <h2>Brazo (relativo al hombro)</h2>
-      <label>Codo X <span id="lblCodoX" class="editor-val"></span></label>
-      <input type="range" id="ed_elX" min="-400" max="700" oninput="actualizarEditor('elX', this.value)">
-      <label>Codo Y <span id="lblCodoY" class="editor-val"></span></label>
-      <input type="range" id="ed_elY" min="-600" max="1600" oninput="actualizarEditor('elY', this.value)">
-      <label>Mano X <span id="lblManoX" class="editor-val"></span></label>
-      <input type="range" id="ed_wrX" min="-400" max="700" oninput="actualizarEditor('wrX', this.value)">
-      <label>Mano Y <span id="lblManoY" class="editor-val"></span></label>
-      <input type="range" id="ed_wrY" min="-600" max="1600" oninput="actualizarEditor('wrY', this.value)">
+      <h2>Cuerpo entero</h2>
+      <label>Oscilación vertical (todo el cuerpo sube/baja) <span id="lblBounce" class="editor-val"></span></label>
+      <input type="range" id="ed_bounce" min="-100" max="400" oninput="actualizarEditorBounce(this.value)">
+      <div class="estado-conexion">Un valor por cada uno de los 8 instantes — el torso está a una sola altura en cada uno, así que no se separa por lado.</div>
+    </div>
+
+    <div class="card" id="cardEditorDer">
+      <h2>Pierna y brazo — lado DERECHO</h2>
+      <label>Rodilla X <span id="lblDerRodillaX" class="editor-val"></span></label>
+      <input type="range" id="ed_der_kneeX" min="-400" max="700" oninput="actualizarEditor('der','kneeX', this.value)">
+      <label>Rodilla Y <span id="lblDerRodillaY" class="editor-val"></span></label>
+      <input type="range" id="ed_der_kneeY" min="-600" max="1600" oninput="actualizarEditor('der','kneeY', this.value)">
+      <label>Ancho de rodilla <span id="lblDerAnchoRodilla" class="editor-val"></span></label>
+      <input type="range" id="ed_der_anchoRodilla" min="50" max="500" oninput="actualizarEditor('der','anchoRodilla', this.value)">
+      <label>Pie X <span id="lblDerPieX" class="editor-val"></span></label>
+      <input type="range" id="ed_der_footX" min="-400" max="700" oninput="actualizarEditor('der','footX', this.value)">
+      <label>Pie Y <span id="lblDerPieY" class="editor-val"></span></label>
+      <input type="range" id="ed_der_footY" min="-600" max="1600" oninput="actualizarEditor('der','footY', this.value)">
+      <label>Escala del pie (profundidad) <span id="lblDerEscalaPie" class="editor-val"></span></label>
+      <input type="range" id="ed_der_escalaPie" min="200" max="1400" oninput="actualizarEditor('der','escalaPie', this.value)">
+      <label>Codo X <span id="lblDerCodoX" class="editor-val"></span></label>
+      <input type="range" id="ed_der_elX" min="-400" max="700" oninput="actualizarEditor('der','elX', this.value)">
+      <label>Codo Y <span id="lblDerCodoY" class="editor-val"></span></label>
+      <input type="range" id="ed_der_elY" min="-600" max="1600" oninput="actualizarEditor('der','elY', this.value)">
+      <label>Mano X <span id="lblDerManoX" class="editor-val"></span></label>
+      <input type="range" id="ed_der_wrX" min="-400" max="700" oninput="actualizarEditor('der','wrX', this.value)">
+      <label>Mano Y <span id="lblDerManoY" class="editor-val"></span></label>
+      <input type="range" id="ed_der_wrY" min="-600" max="1600" oninput="actualizarEditor('der','wrY', this.value)">
+    </div>
+
+    <div class="card" id="cardEditorIzq">
+      <h2>Pierna y brazo — lado IZQUIERDO</h2>
+      <label>Rodilla X <span id="lblIzqRodillaX" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_kneeX" min="-400" max="700" oninput="actualizarEditor('izq','kneeX', this.value)">
+      <label>Rodilla Y <span id="lblIzqRodillaY" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_kneeY" min="-600" max="1600" oninput="actualizarEditor('izq','kneeY', this.value)">
+      <label>Ancho de rodilla <span id="lblIzqAnchoRodilla" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_anchoRodilla" min="50" max="500" oninput="actualizarEditor('izq','anchoRodilla', this.value)">
+      <label>Pie X <span id="lblIzqPieX" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_footX" min="-400" max="700" oninput="actualizarEditor('izq','footX', this.value)">
+      <label>Pie Y <span id="lblIzqPieY" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_footY" min="-600" max="1600" oninput="actualizarEditor('izq','footY', this.value)">
+      <label>Escala del pie (profundidad) <span id="lblIzqEscalaPie" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_escalaPie" min="200" max="1400" oninput="actualizarEditor('izq','escalaPie', this.value)">
+      <label>Codo X <span id="lblIzqCodoX" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_elX" min="-400" max="700" oninput="actualizarEditor('izq','elX', this.value)">
+      <label>Codo Y <span id="lblIzqCodoY" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_elY" min="-600" max="1600" oninput="actualizarEditor('izq','elY', this.value)">
+      <label>Mano X <span id="lblIzqManoX" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_wrX" min="-400" max="700" oninput="actualizarEditor('izq','wrX', this.value)">
+      <label>Mano Y <span id="lblIzqManoY" class="editor-val"></span></label>
+      <input type="range" id="ed_izq_wrY" min="-600" max="1600" oninput="actualizarEditor('izq','wrY', this.value)">
     </div>
 
     <div class="card">
-      <h2>Vista previa animada (interpola entre las 4 poses)</h2>
+      <h2>Vista previa animada (interpola los 8 instantes en secuencia)</h2>
       <canvas id="canvasEditorPreview" height="220" style="border-radius:12px; background:#0d1a12; width:100%; display:block;"></canvas>
       <button class="btn" id="btnEditorPlay" onclick="editorTogglePlay()" style="margin-top:8px;">▶ Reproducir</button>
     </div>
@@ -664,6 +736,153 @@
        poses por defecto dibujan sin error, que la interpolación
        coincide exacto con cada keyframe en los bordes, y que el JSON
        exportado no pierde datos al reconstruirse.
+   v21: primera captura real del editor — Hugo señaló 3 problemas: los
+       dos lados salían simétricos (el editor solo controlaba un lado y
+       espejaba, poco realista para "Vuelo" donde una pierna está
+       recogida y la otra extendida), no había control de oscilación
+       vertical, y el canvas se perdía de vista al scrollear hasta los
+       sliders de abajo. Reescrito: cada pose ahora guarda lado
+       derecho/izquierdo por separado (con selector), el izquierdo
+       arranca copiado del derecho en su pose CONTRALATERAL (a media
+       vuelta, la relación real entre piernas al correr) en vez de
+       espejado; nuevo slider de oscilación vertical (uno por franja,
+       no por pose); el canvas + selectores quedan con position:sticky
+       arriba mientras se scrollean los sliders. De paso, ampliado de
+       2 a 4 franjas de velocidad (Caminata/Trote suave/Carrera/Sprint),
+       cada una con sus propios parámetros de flexión de rodilla, brazo
+       y rebote, generados con la misma fórmula parametrizada (los
+       valores de "carrera" coinciden con los ya validados en v19).
+       Verificado que las 32 poses (4 franjas × 2 lados × 4 keyframes)
+       dibujan sin error, que el lado izquierdo es realmente distinto
+       del derecho en "vuelo", y que la oscilación vertical crece con
+       la intensidad de la franja.
+   v22: Hugo mandó "carrera" ajustada a mano (los dos lados, las 4
+       poses) y preguntó si había que generar 4 fases más para el
+       ciclo completo. No hacía falta: sus propios datos YA cubren las
+       8 (contacto/apoyo medio/despegue/vuelo × der/izq), solo que
+       emparejadas de a dos por INSTANTE simultáneo en vez de listadas
+       en secuencia — en cada pestaña del editor ya se ven las dos
+       piernas a la vez. Se agregó una etiqueta chica en cada botón de
+       pose mostrando qué hace el pie contrario en ese mismo instante
+       (ej. "Contacto / izq: despegue"), para que quede explícito sin
+       tener que duplicar nada. Los valores de "carrera" que mandó
+       Hugo quedaron como nuevo default (incluido su bounce=0.026,
+       más bajo que trote a propósito — el test que asumía que crecía
+       con la franja se corrigió, esa suba no era una regla real de
+       la app).
+   v23: aclaración de Hugo — der/izq son los hemisferios del cuerpo, y
+       las "4 fases" que mandó eran solo el derecho; el izquierdo debía
+       salir de ESPEJAR esa secuencia, no ser otro juego de valores
+       aparte (como sí había hecho en la vuelta anterior). Ojo con el
+       espejado: es a igual número, no a signo invertido — el propio
+       drawRunnerRear/dibujarPoseDesdeD ya invierte el signo al
+       multiplicar por side=-1, así que copiar el mismo valor de la
+       pose contralateral (der.despegue → izq.contacto, etc.) alcanza.
+       Nuevo botón "🪞 Espejar" en el editor para hacerlo con un toque
+       en cualquier franja, y actualizado el izquierdo de "carrera" así
+       a partir del derecho que mandó Hugo. Verificado a mano (el mismo
+       cálculo que ya había probado antes de escribirlo en el archivo)
+       y confirmado que el izquierdo guardado coincide exactamente con
+       espejar el derecho, pose por pose.
+   v24: Hugo reportó que tocar "Espejar" le pisaba trabajo hecho a mano
+       (estaba usando 8 imágenes de referencia de otra app de posado 3D,
+       una por cada momento×lado). La causa de fondo: con "4 botones de
+       pose + selector de lado aparte" quedaba ambiguo en qué lado
+       estabas parado sin mirar dos controles distintos, fácil de
+       pisarse. Reemplazado por una grilla de 8 botones directos (uno
+       por combinación pose+lado: "Contacto D", "Contacto I", etc.),
+       sin selector aparte — un solo toque deja clarísimo qué estás
+       editando. "Reiniciar" ahora también actúa sobre una sola pose
+       (la seleccionada), no los dos lados a la vez. "Espejar" se dejó
+       (sigue sirviendo si algún día se quiere generar el izquierdo
+       rápido) pero ahora pide confirmación antes de pisar las 4 poses,
+       ya que es irreversible. Verificado que la grilla tiene las 8
+       combinaciones exactas sin duplicados y que no quedó ninguna
+       referencia colgante a las funciones viejas de selección.
+   v25: Hugo preguntó si la oscilación vertical era independiente por
+       botón — no lo era, y al revisarlo encontré que eso era un bug
+       real, no solo una limitación: "bounce" era UN número por franja,
+       igual en las 4 poses, así que durante la animación el cuerpo se
+       desplazaba la misma cantidad siempre = CERO oscilación real (un
+       corrimiento constante no es un rebote). Cambiado a un valor por
+       cada uno de los 4 momentos (compartido entre los dos lados, no
+       por lado — el torso está a una sola altura en cada instante).
+       Nueva función interpolarBounce(), misma lógica de suavizado
+       coseno que ya usa interpolarLado() para el resto de los campos.
+       Verificado que ahora el bounce varía de verdad a lo largo del
+       ciclo (antes el rango era 0, ahora no), que coincide exacto con
+       cada keyframe en los bordes t=0..3, y que caminata se mantiene
+       en 0 en los 4 momentos como pide la spec de caminata.
+   v26: cambio de fondo en el modelo de datos, tras un ida y vuelta con
+       Hugo para entender bien qué pedía. Lo que armé en v24/v25 tenía
+       "8 botones, cada uno con SOLO un lado (10 campos)" — Hugo en
+       realidad necesitaba "8 botones, cada uno con LOS DOS lados juntos
+       (20 campos)", porque cada una de sus 8 fotos de referencia muestra
+       el cuerpo completo (los dos brazos y las dos piernas) en un
+       instante puntual, no un lado aislado. Reestructurado: ya no hay
+       "editorLado" — los 8 botones ahora son 8 INSTANTES de la secuencia
+       (contactoD/apoyoD/despegueD/vueloD/contactoI/apoyoI/despegueI/
+       vueloI), cada uno con der+izq editables a la vez en pantalla (dos
+       tarjetas de 10 sliders, sin toggle). Migración automática de los
+       datos existentes de "carrera" sin perder nada: contactoD.der/izq
+       = exactamente lo que ya tenía Hugo en der.contacto/izq.contacto;
+       los 4 instantes "I" nuevos se sembraron con el espejo (swap
+       der<->izq) de los "D" correspondientes como punto de partida.
+       "Espejar" pasó a llamarse "Espejar D→I" y ahora regenera los 4
+       instantes I completos a partir de los D. Vista previa animada:
+       ahora interpola en secuencia los 8 instantes (antes 4 con los
+       lados en paralelo). Verificado que la migración conserva exacto
+       lo que Hugo ya había ajustado, que los 32 instantes (4 franjas×8)
+       tienen los 20 campos completos, y que la interpolación de la
+       secuencia de 8 coincide exacto con cada instante en los bordes.
+   v27: Hugo reportó que al intentar scrollear la pantalla del editor,
+       el dedo caía sobre el slider y terminaba moviendo el control en
+       vez de bajar la página (los sliders ocupan todo el ancho).
+       Agregado touch-action:pan-y a los 20 sliders del editor — le
+       indica al navegador que los gestos verticales sobre el control
+       son para scrollear la página, no para arrastrar el valor (deja
+       el arrastre horizontal intacto para seguir ajustando el slider
+       normalmente). También un poco más de aire vertical entre
+       controles. No lo pude probar en un dispositivo táctil real —
+       avisame si con esto alcanza o si hace falta algo más (por
+       ejemplo, angostar los sliders para dejar un margen sin control
+       en los bordes de la pantalla).
+   v28: Hugo pidió que el bloque fijo del editor ocupe como máximo dos
+       tercios de la pantalla (antes casi la tapaba entera, dejando
+       poco lugar para los sliders), y preguntó qué opinaba de agregar
+       un switch derecho/izquierdo en vez de mostrar los 20 sliders
+       juntos. Las dos con sentido: achiqué el bloque sticky sacando el
+       selector de franja (Caminata/Trote/Carrera/Sprint no se toca
+       tan seguido, ahora scrollea con el resto), el canvas bajó de
+       280 a 170px, y agregué el switch "Ver sliders: Derecho/
+       Izquierdo" que solo cambia cuáles de los 20 sliders se ven (10
+       por vez) — a diferencia del selector de lado que había en v23 y
+       causó problemas, este NO decide qué instante se edita (eso lo
+       siguen fijando los 8 botones únicamente), así que no reintroduce
+       aquella ambigüedad. De paso encontré otra edición a medio hacer
+       en el archivo de trabajo (ya tenía un intento de achicar el
+       canvas pero con scroll anidado dentro del bloque fijo, y sin el
+       switch) — no confié en ese estado y reconstruí desde la v27
+       limpia.
+   v29: tres cosas. (1) Bug real que introduje en v28: al achicar el
+       canvas del editor de 280 a 170px no ajusté la fórmula de escala
+       de la figura en consecuencia — seguía calculando un tamaño
+       pensado para el canvas viejo, así que la cabeza quedaba dibujada
+       fuera del área visible. Corregido con una fórmula que sí tiene
+       en cuenta la altura total real de la figura (~2.87×escala,
+       cabeza a pies) más margen de seguridad, en vez de un porcentaje
+       fijo de la altura del canvas que no tenía relación real con eso.
+       Verificado en 5 tamaños de canvas distintos que la cabeza queda
+       con margen positivo siempre. (2) Exportar a TCX: la app solo
+       podía importar, ahora cada sesión guardada tiene un botón
+       "Exportar a TCX" en el detalle — genera un TCX con las mismas
+       etiquetas que ya sabe leer procesarTCX() (Trackpoint/Time/
+       DistanceMeters/HeartRateBpm/Extensions-TPX-Watts-RunCadence), así
+       que lo que se exporta se puede volver a importar sin perder
+       nada. (3) Nueva tarjeta "Evolución entre sesiones" en Historial
+       (Ritmo/Pulso/Cadencia medios por sesión en el tiempo), al estilo
+       de la de Bici Indoor — resultó que la de CTL/ATL/TSB ("Forma")
+       YA existía en la app, solo faltaba esta.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1757,36 +1976,86 @@ function repScrubInput(el) {
    Herramienta para ajustar "a ojo" las 4 poses clave del corredor (Contacto,
    Apoyo medio, Despegue, Vuelo) con sliders, en vez de seguir adivinando
    ángulos que no puedo ver renderizados. Valores de partida calculados a
-   partir de las fórmulas ya validadas de v19, en las mismas unidades
+   partir de las fórmulas ya validadas (v19), en las mismas unidades
    (coeficiente × escala s) que ya usa drawRunnerRear.
    Pierna: relativo a la CADERA. Brazo: relativo al HOMBRO.
+   8 INSTANTES de la secuencia completa (Contacto/Apoyo/Despegue/Vuelo,
+   cada uno con versión D e I según qué pie protagoniza ese instante).
+   Cada uno de los 8 trae los DOS lados juntos (20 campos) — el instante
+   ya describe el cuerpo completo tal como se ve en una foto de
+   referencia, no un lado aislado. No hay relación automática entre los
+   8 (salvo que uses "Espejar D→I" a propósito).
+   4 franjas de velocidad (Caminata/Trote suave/Carrera/Sprint), cada una
+   con su propio valor de oscilación vertical por instante (8 valores).
    ============================================================ */
 const EDITOR_CAMPOS = ['kneeX', 'kneeY', 'anchoRodilla', 'footX', 'footY', 'escalaPie', 'elX', 'elY', 'wrX', 'wrY'];
-const EDITOR_ORDEN_KF = ['contacto', 'apoyoMedio', 'despegue', 'vuelo'];
+const EDITOR_MOMENTOS = ['contactoD', 'apoyoD', 'despegueD', 'vueloD', 'contactoI', 'apoyoI', 'despegueI', 'vueloI'];
+const EDITOR_ORDEN_MODOS = ['caminata', 'trote', 'carrera', 'sprint'];
 const EDITOR_KEYFRAMES_DEFAULT = {
-  carrera: {
-    contacto:   { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.028, footY: 1.324, escalaPie: 1.000, elX: 0.030, elY: 0.440, wrX: 0.050, wrY: 0.840 },
-    apoyoMedio: { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.028, footY: 1.324, escalaPie: 1.000, elX: 0.013, elY: 0.402, wrX: 0.002, wrY: 0.749 },
-    despegue:   { kneeX: 0.019, kneeY: 0.656, anchoRodilla: 0.227, footX: 0.074, footY: 1.154, escalaPie: 0.946, elX: -0.043, elY: 0.278, wrX: -0.153, wrY: 0.451 },
-    vuelo:      { kneeX: 0.065, kneeY: 0.406, anchoRodilla: 0.260, footX: 0.082, footY: -0.254, escalaPie: 0.700, elX: -0.060, elY: 0.240, wrX: -0.201, wrY: 0.360 },
-  },
   caminata: {
-    contacto:   { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.021, footY: 1.337, escalaPie: 1.000, elX: 0.030, elY: 0.390, wrX: 0.030, wrY: 0.740 },
-    apoyoMedio: { kneeX: 0.007, kneeY: 0.672, anchoRodilla: 0.220, footX: 0.021, footY: 1.337, escalaPie: 1.000, elX: 0.017, elY: 0.364, wrX: 0.017, wrY: 0.667 },
-    despegue:   { kneeX: 0.032, kneeY: 0.620, anchoRodilla: 0.235, footX: 0.088, footY: 1.109, escalaPie: 0.886, elX: -0.007, elY: 0.316, wrX: -0.007, wrY: 0.533 },
-    vuelo:      { kneeX: 0.065, kneeY: 0.406, anchoRodilla: 0.260, footX: 0.145, footY: 0.312, escalaPie: 0.700, elX: -0.020, elY: 0.290, wrX: -0.020, wrY: 0.460 },
-  }
+    bounce: { contactoD: 0.0000, apoyoD: 0.0000, despegueD: 0.0000, vueloD: 0.0000, contactoI: 0.0000, apoyoI: 0.0000, despegueI: 0.0000, vueloI: 0.0000 },
+    poses: {
+      contactoD: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0300, elY: 0.3900, wrX: 0.0300, wrY: 0.7400 }, izq: { kneeX: 0.0151, kneeY: 0.6632, anchoRodilla: 0.2284, footX: 0.0568, footY: 1.2420, escalaPie: 0.9619, elX: -0.0070, elY: 0.3160, wrX: -0.0070, wrY: 0.5329 } },
+      apoyoD: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0170, elY: 0.3640, wrX: 0.0170, wrY: 0.6671 }, izq: { kneeX: 0.0277, kneeY: 0.6343, anchoRodilla: 0.2420, footX: 0.1011, footY: 0.9196, escalaPie: 0.9000, elX: -0.0200, elY: 0.2900, wrX: -0.0200, wrY: 0.4600 } },
+      despegueD: { der: { kneeX: 0.0151, kneeY: 0.6632, anchoRodilla: 0.2284, footX: 0.0568, footY: 1.2420, escalaPie: 0.9619, elX: -0.0070, elY: 0.3160, wrX: -0.0070, wrY: 0.5329 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0300, elY: 0.3900, wrX: 0.0300, wrY: 0.7400 } },
+      vueloD: { der: { kneeX: 0.0277, kneeY: 0.6343, anchoRodilla: 0.2420, footX: 0.1011, footY: 0.9196, escalaPie: 0.9000, elX: -0.0200, elY: 0.2900, wrX: -0.0200, wrY: 0.4600 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0170, elY: 0.3640, wrX: 0.0170, wrY: 0.6671 } },
+      contactoI: { der: { kneeX: 0.0151, kneeY: 0.6632, anchoRodilla: 0.2284, footX: 0.0568, footY: 1.2420, escalaPie: 0.9619, elX: -0.0070, elY: 0.3160, wrX: -0.0070, wrY: 0.5329 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0300, elY: 0.3900, wrX: 0.0300, wrY: 0.7400 } },
+      apoyoI: { der: { kneeX: 0.0277, kneeY: 0.6343, anchoRodilla: 0.2420, footX: 0.1011, footY: 0.9196, escalaPie: 0.9000, elX: -0.0200, elY: 0.2900, wrX: -0.0200, wrY: 0.4600 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0170, elY: 0.3640, wrX: 0.0170, wrY: 0.6671 } },
+      despegueI: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0300, elY: 0.3900, wrX: 0.0300, wrY: 0.7400 }, izq: { kneeX: 0.0151, kneeY: 0.6632, anchoRodilla: 0.2284, footX: 0.0568, footY: 1.2420, escalaPie: 0.9619, elX: -0.0070, elY: 0.3160, wrX: -0.0070, wrY: 0.5329 } },
+      vueloI: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0211, footY: 1.3372, escalaPie: 1.0000, elX: 0.0170, elY: 0.3640, wrX: 0.0170, wrY: 0.6671 }, izq: { kneeX: 0.0277, kneeY: 0.6343, anchoRodilla: 0.2420, footX: 0.1011, footY: 0.9196, escalaPie: 0.9000, elX: -0.0200, elY: 0.2900, wrX: -0.0200, wrY: 0.4600 } },
+    },
+  },
+  trote: {
+    bounce: { contactoD: 0.0053, apoyoD: 0.0000, despegueD: 0.0158, vueloD: 0.0350, contactoI: 0.0053, apoyoI: 0.0000, despegueI: 0.0158, vueloI: 0.0350 },
+    poses: {
+      contactoD: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0300, elY: 0.4100, wrX: 0.0500, wrY: 0.7800 }, izq: { kneeX: 0.0292, kneeY: 0.6323, anchoRodilla: 0.2454, footX: 0.1046, footY: 1.0846, escalaPie: 0.8642, elX: -0.0244, elY: 0.2853, wrX: -0.0854, wrY: 0.4436 } },
+      apoyoD: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0175, elY: 0.3654, wrX: 0.0165, wrY: 0.6634 }, izq: { kneeX: 0.0503, kneeY: 0.5537, anchoRodilla: 0.2680, footX: 0.1332, footY: 0.5766, escalaPie: 0.8000, elX: -0.0400, elY: 0.2700, wrX: -0.1000, wrY: 0.4200 } },
+      despegueD: { der: { kneeX: 0.0292, kneeY: 0.6323, anchoRodilla: 0.2454, footX: 0.1046, footY: 1.0846, escalaPie: 0.8642, elX: -0.0244, elY: 0.2853, wrX: -0.0854, wrY: 0.4436 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0300, elY: 0.4100, wrX: 0.0500, wrY: 0.7800 } },
+      vueloD: { der: { kneeX: 0.0503, kneeY: 0.5537, anchoRodilla: 0.2680, footX: 0.1332, footY: 0.5766, escalaPie: 0.8000, elX: -0.0400, elY: 0.2700, wrX: -0.1000, wrY: 0.4200 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0175, elY: 0.3654, wrX: 0.0165, wrY: 0.6634 } },
+      contactoI: { der: { kneeX: 0.0292, kneeY: 0.6323, anchoRodilla: 0.2454, footX: 0.1046, footY: 1.0846, escalaPie: 0.8642, elX: -0.0244, elY: 0.2853, wrX: -0.0854, wrY: 0.4436 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0300, elY: 0.4100, wrX: 0.0500, wrY: 0.7800 } },
+      apoyoI: { der: { kneeX: 0.0503, kneeY: 0.5537, anchoRodilla: 0.2680, footX: 0.1332, footY: 0.5766, escalaPie: 0.8000, elX: -0.0400, elY: 0.2700, wrX: -0.1000, wrY: 0.4200 }, izq: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0175, elY: 0.3654, wrX: 0.0165, wrY: 0.6634 } },
+      despegueI: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0300, elY: 0.4100, wrX: 0.0500, wrY: 0.7800 }, izq: { kneeX: 0.0292, kneeY: 0.6323, anchoRodilla: 0.2454, footX: 0.1046, footY: 1.0846, escalaPie: 0.8642, elX: -0.0244, elY: 0.2853, wrX: -0.0854, wrY: 0.4436 } },
+      vueloI: { der: { kneeX: 0.0071, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0253, footY: 1.3301, escalaPie: 1.0000, elX: 0.0175, elY: 0.3654, wrX: 0.0165, wrY: 0.6634 }, izq: { kneeX: 0.0503, kneeY: 0.5537, anchoRodilla: 0.2680, footX: 0.1332, footY: 0.5766, escalaPie: 0.8000, elX: -0.0400, elY: 0.2700, wrX: -0.1000, wrY: 0.4200 } },
+    },
+  },
+  carrera: {
+    bounce: { contactoD: 0.0039, apoyoD: 0.0000, despegueD: 0.0117, vueloD: 0.0260, contactoI: 0.0039, apoyoI: 0.0000, despegueI: 0.0117, vueloI: 0.0260 },
+    poses: {
+      contactoD: { der: { kneeX: 0.0540, kneeY: 0.6610, anchoRodilla: 0.1790, footX: 0.0260, footY: 1.2240, escalaPie: 0.6350, elX: 0.1600, elY: 0.4880, wrX: 0.0920, wrY: 0.7190 }, izq: { kneeX: 0.0070, kneeY: 0.6960, anchoRodilla: 0.2090, footX: -0.0110, footY: 1.3360, escalaPie: 0.6950, elX: 0.0980, elY: 0.5820, wrX: 0.1060, wrY: 0.6550 } },
+      apoyoD: { der: { kneeX: 0.0010, kneeY: 0.6970, anchoRodilla: 0.2080, footX: -0.0480, footY: 1.3390, escalaPie: 0.7540, elX: 0.0610, elY: 0.6400, wrX: 0.0610, wrY: 0.7090 }, izq: { kneeX: 0.0270, kneeY: 0.5590, anchoRodilla: 0.2170, footX: 0.0410, footY: 1.0080, escalaPie: 0.9830, elX: 0.0930, elY: 0.5110, wrX: 0.0990, wrY: 0.5410 } },
+      despegueD: { der: { kneeX: 0.0070, kneeY: 0.6960, anchoRodilla: 0.2090, footX: -0.0110, footY: 1.3360, escalaPie: 0.6950, elX: 0.0980, elY: 0.5820, wrX: 0.1060, wrY: 0.6550 }, izq: { kneeX: 0.0540, kneeY: 0.6610, anchoRodilla: 0.1790, footX: 0.0260, footY: 1.2240, escalaPie: 0.6350, elX: 0.1600, elY: 0.4880, wrX: 0.0920, wrY: 0.7190 } },
+      vueloD: { der: { kneeX: 0.0270, kneeY: 0.5590, anchoRodilla: 0.2170, footX: 0.0410, footY: 1.0080, escalaPie: 0.9830, elX: 0.0930, elY: 0.5110, wrX: 0.0990, wrY: 0.5410 }, izq: { kneeX: 0.0010, kneeY: 0.6970, anchoRodilla: 0.2080, footX: -0.0480, footY: 1.3390, escalaPie: 0.7540, elX: 0.0610, elY: 0.6400, wrX: 0.0610, wrY: 0.7090 } },
+      contactoI: { der: { kneeX: 0.0070, kneeY: 0.6960, anchoRodilla: 0.2090, footX: -0.0110, footY: 1.3360, escalaPie: 0.6950, elX: 0.0980, elY: 0.5820, wrX: 0.1060, wrY: 0.6550 }, izq: { kneeX: 0.0540, kneeY: 0.6610, anchoRodilla: 0.1790, footX: 0.0260, footY: 1.2240, escalaPie: 0.6350, elX: 0.1600, elY: 0.4880, wrX: 0.0920, wrY: 0.7190 } },
+      apoyoI: { der: { kneeX: 0.0270, kneeY: 0.5590, anchoRodilla: 0.2170, footX: 0.0410, footY: 1.0080, escalaPie: 0.9830, elX: 0.0930, elY: 0.5110, wrX: 0.0990, wrY: 0.5410 }, izq: { kneeX: 0.0010, kneeY: 0.6970, anchoRodilla: 0.2080, footX: -0.0480, footY: 1.3390, escalaPie: 0.7540, elX: 0.0610, elY: 0.6400, wrX: 0.0610, wrY: 0.7090 } },
+      despegueI: { der: { kneeX: 0.0540, kneeY: 0.6610, anchoRodilla: 0.1790, footX: 0.0260, footY: 1.2240, escalaPie: 0.6350, elX: 0.1600, elY: 0.4880, wrX: 0.0920, wrY: 0.7190 }, izq: { kneeX: 0.0070, kneeY: 0.6960, anchoRodilla: 0.2090, footX: -0.0110, footY: 1.3360, escalaPie: 0.6950, elX: 0.0980, elY: 0.5820, wrX: 0.1060, wrY: 0.6550 } },
+      vueloI: { der: { kneeX: 0.0010, kneeY: 0.6970, anchoRodilla: 0.2080, footX: -0.0480, footY: 1.3390, escalaPie: 0.7540, elX: 0.0610, elY: 0.6400, wrX: 0.0610, wrY: 0.7090 }, izq: { kneeX: 0.0270, kneeY: 0.5590, anchoRodilla: 0.2170, footX: 0.0410, footY: 1.0080, escalaPie: 0.9830, elX: 0.0930, elY: 0.5110, wrX: 0.0990, wrY: 0.5410 } },
+    },
+  },
+  sprint: {
+    bounce: { contactoD: 0.0135, apoyoD: 0.0000, despegueD: 0.0405, vueloD: 0.0900, contactoI: 0.0135, apoyoI: 0.0000, despegueI: 0.0405, vueloI: 0.0900 },
+    poses: {
+      contactoD: { der: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0400, elY: 0.4700, wrX: 0.0600, wrY: 0.9000 }, izq: { kneeX: 0.0733, kneeY: 0.4949, anchoRodilla: 0.2790, footX: 0.1810, footY: 0.5470, escalaPie: 0.6403, elX: -0.0637, elY: 0.2494, wrX: -0.2205, wrY: 0.3706 } },
+      apoyoD: { der: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0089, elY: 0.4183, wrX: -0.0378, wrY: 0.7817 }, izq: { kneeX: 0.1112, kneeY: 0.2118, anchoRodilla: 0.2960, footX: 0.0879, footY: -1.0900, escalaPie: 0.5500, elX: -0.0800, elY: 0.2100, wrX: -0.2600, wrY: 0.2600 } },
+      despegueD: { der: { kneeX: 0.0733, kneeY: 0.4949, anchoRodilla: 0.2790, footX: 0.1810, footY: 0.5470, escalaPie: 0.6403, elX: -0.0637, elY: 0.2494, wrX: -0.2205, wrY: 0.3706 }, izq: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0400, elY: 0.4700, wrX: 0.0600, wrY: 0.9000 } },
+      vueloD: { der: { kneeX: 0.1112, kneeY: 0.2118, anchoRodilla: 0.2960, footX: 0.0879, footY: -1.0900, escalaPie: 0.5500, elX: -0.0800, elY: 0.2100, wrX: -0.2600, wrY: 0.2600 }, izq: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0089, elY: 0.4183, wrX: -0.0378, wrY: 0.7817 } },
+      contactoI: { der: { kneeX: 0.0733, kneeY: 0.4949, anchoRodilla: 0.2790, footX: 0.1810, footY: 0.5470, escalaPie: 0.6403, elX: -0.0637, elY: 0.2494, wrX: -0.2205, wrY: 0.3706 }, izq: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0400, elY: 0.4700, wrX: 0.0600, wrY: 0.9000 } },
+      apoyoI: { der: { kneeX: 0.1112, kneeY: 0.2118, anchoRodilla: 0.2960, footX: 0.0879, footY: -1.0900, escalaPie: 0.5500, elX: -0.0800, elY: 0.2100, wrX: -0.2600, wrY: 0.2600 }, izq: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0089, elY: 0.4183, wrX: -0.0378, wrY: 0.7817 } },
+      despegueI: { der: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0400, elY: 0.4700, wrX: 0.0600, wrY: 0.9000 }, izq: { kneeX: 0.0733, kneeY: 0.4949, anchoRodilla: 0.2790, footX: 0.1810, footY: 0.5470, escalaPie: 0.6403, elX: -0.0637, elY: 0.2494, wrX: -0.2205, wrY: 0.3706 } },
+      vueloI: { der: { kneeX: 0.0083, kneeY: 0.6724, anchoRodilla: 0.2200, footX: 0.0369, footY: 1.3121, escalaPie: 1.0000, elX: 0.0089, elY: 0.4183, wrX: -0.0378, wrY: 0.7817 }, izq: { kneeX: 0.1112, kneeY: 0.2118, anchoRodilla: 0.2960, footX: 0.0879, footY: -1.0900, escalaPie: 0.5500, elX: -0.0800, elY: 0.2100, wrX: -0.2600, wrY: 0.2600 } },
+    },
+  },
 };
+const EDITOR_MODO_LABEL = { caminata: 'Caminata', trote: 'Trote suave', carrera: 'Carrera', sprint: 'Sprint' };
 
-let editorModo = 'carrera', editorKF = 'contacto', editorDatos = null;
+let editorModo = 'carrera', editorMomento = 'contactoD', editorVista = 'der', editorDatos = null;
 let editorPreviewT = 0, editorPreviewRAF = null, editorPreviewLast = 0, editorPlaying = false;
 
 function cargarEditorDatos() {
-  const guardado = lsGet('correr_editor_keyframes', null);
+  const guardado = lsGet('correr_editor_keyframes_v3', null);
   editorDatos = guardado || JSON.parse(JSON.stringify(EDITOR_KEYFRAMES_DEFAULT));
 }
-function guardarEditorDatos() { lsSet('correr_editor_keyframes', editorDatos); }
-function datosActuales() { return editorDatos[editorModo][editorKF]; }
+function guardarEditorDatos() { lsSet('correr_editor_keyframes_v3', editorDatos); }
+function datosActuales() { return editorDatos[editorModo].poses[editorMomento]; }
 
 function abrirEditor() {
   if (!editorDatos) cargarEditorDatos();
@@ -1794,7 +2063,8 @@ function abrirEditor() {
   const ov = document.getElementById('overlayEditor');
   ov.classList.add('activa'); ov.scrollTop = 0;
   cambiarEditorModo(editorModo);
-  cambiarEditorKF(editorKF);
+  seleccionarEditorMomento(editorMomento);
+  cambiarEditorVista(editorVista);
 }
 function cerrarEditor() {
   editorPlaying = false;
@@ -1805,58 +2075,108 @@ function cerrarEditor() {
 function cambiarEditorModo(modo) {
   editorModo = modo;
   document.querySelectorAll('.editor-modo-btn').forEach(b => b.classList.toggle('sel', b.dataset.modo === modo));
+  cargarBounceSlider();
   cargarSlidersDesdeEditorDatos();
   renderEditorPose();
 }
-function cambiarEditorKF(kf) {
-  editorKF = kf;
-  document.querySelectorAll('.editor-kf-btn').forEach(b => b.classList.toggle('sel', b.dataset.kf === kf));
+function cargarBounceSlider() {
+  const v = editorDatos[editorModo].bounce[editorMomento];
+  document.getElementById('ed_bounce').value = Math.round(v * 1000);
+  document.getElementById('lblBounce').textContent = v.toFixed(3);
+}
+function seleccionarEditorMomento(momento) {
+  editorMomento = momento;
+  document.querySelectorAll('.editor-momento-btn').forEach(b => b.classList.toggle('sel', b.dataset.momento === momento));
+  cargarBounceSlider();
   cargarSlidersDesdeEditorDatos();
   renderEditorPose();
+}
+// solo cambia qué tarjeta de sliders se ve (10 en vez de 20 en pantalla a la vez) — NO cambia
+// qué instante se está editando, eso lo sigue fijando únicamente seleccionarEditorMomento().
+function cambiarEditorVista(vista) {
+  editorVista = vista;
+  document.querySelectorAll('.editor-vista-btn').forEach(b => b.classList.toggle('sel', b.dataset.vista === vista));
+  document.getElementById('cardEditorDer').style.display = vista === 'der' ? '' : 'none';
+  document.getElementById('cardEditorIzq').style.display = vista === 'izq' ? '' : 'none';
 }
 function cargarSlidersDesdeEditorDatos() {
   const d = datosActuales();
-  EDITOR_CAMPOS.forEach(campo => { document.getElementById('ed_' + campo).value = Math.round(d[campo] * 1000); });
+  for (const lado of ['der', 'izq']) {
+    EDITOR_CAMPOS.forEach(campo => { document.getElementById('ed_' + lado + '_' + campo).value = Math.round(d[lado][campo] * 1000); });
+  }
   actualizarEtiquetasEditor();
 }
 function actualizarEtiquetasEditor() {
   const d = datosActuales();
-  document.getElementById('lblRodillaX').textContent = d.kneeX.toFixed(3);
-  document.getElementById('lblRodillaY').textContent = d.kneeY.toFixed(3);
-  document.getElementById('lblAnchoRodilla').textContent = d.anchoRodilla.toFixed(3);
-  document.getElementById('lblPieX').textContent = d.footX.toFixed(3);
-  document.getElementById('lblPieY').textContent = d.footY.toFixed(3);
-  document.getElementById('lblEscalaPie').textContent = d.escalaPie.toFixed(3);
-  document.getElementById('lblCodoX').textContent = d.elX.toFixed(3);
-  document.getElementById('lblCodoY').textContent = d.elY.toFixed(3);
-  document.getElementById('lblManoX').textContent = d.wrX.toFixed(3);
-  document.getElementById('lblManoY').textContent = d.wrY.toFixed(3);
+  const PREFIJOS = { der: 'Der', izq: 'Izq' };
+  for (const lado of ['der', 'izq']) {
+    const p = PREFIJOS[lado];
+    document.getElementById('lbl' + p + 'RodillaX').textContent = d[lado].kneeX.toFixed(3);
+    document.getElementById('lbl' + p + 'RodillaY').textContent = d[lado].kneeY.toFixed(3);
+    document.getElementById('lbl' + p + 'AnchoRodilla').textContent = d[lado].anchoRodilla.toFixed(3);
+    document.getElementById('lbl' + p + 'PieX').textContent = d[lado].footX.toFixed(3);
+    document.getElementById('lbl' + p + 'PieY').textContent = d[lado].footY.toFixed(3);
+    document.getElementById('lbl' + p + 'EscalaPie').textContent = d[lado].escalaPie.toFixed(3);
+    document.getElementById('lbl' + p + 'CodoX').textContent = d[lado].elX.toFixed(3);
+    document.getElementById('lbl' + p + 'CodoY').textContent = d[lado].elY.toFixed(3);
+    document.getElementById('lbl' + p + 'ManoX').textContent = d[lado].wrX.toFixed(3);
+    document.getElementById('lbl' + p + 'ManoY').textContent = d[lado].wrY.toFixed(3);
+  }
 }
-function actualizarEditor(campo, valorSlider) {
-  datosActuales()[campo] = parseInt(valorSlider, 10) / 1000;
+function actualizarEditor(lado, campo, valorSlider) {
+  datosActuales()[lado][campo] = parseInt(valorSlider, 10) / 1000;
   actualizarEtiquetasEditor();
   guardarEditorDatos();
   renderEditorPose();
 }
-function reiniciarEditorKF() {
-  editorDatos[editorModo][editorKF] = JSON.parse(JSON.stringify(EDITOR_KEYFRAMES_DEFAULT[editorModo][editorKF]));
+function actualizarEditorBounce(valorSlider) {
+  const v = parseInt(valorSlider, 10) / 1000;
+  editorDatos[editorModo].bounce[editorMomento] = v;
+  document.getElementById('lblBounce').textContent = v.toFixed(3);
+  guardarEditorDatos();
+  renderEditorPose();
+}
+function reiniciarEditorMomento() {
+  editorDatos[editorModo].poses[editorMomento] = JSON.parse(JSON.stringify(EDITOR_KEYFRAMES_DEFAULT[editorModo].poses[editorMomento]));
+  editorDatos[editorModo].bounce[editorMomento] = EDITOR_KEYFRAMES_DEFAULT[editorModo].bounce[editorMomento];
+  cargarBounceSlider();
   cargarSlidersDesdeEditorDatos();
   guardarEditorDatos();
   renderEditorPose();
 }
+// espejo D->I: cada instante "I" (Contacto I, Apoyo I, Despegue I, Vuelo I) se llena con el
+// espejo izquierda-derecha del instante "D" correspondiente — mismos números, pero con der/izq
+// INTERCAMBIADOS (no negados: la inversión geométrica ya la hace dibujarPoseDesdeD sola al
+// multiplicar por side=-1). Es solo un punto de partida rápido; después se puede seguir
+// ajustando cada uno de los 8 instantes por separado.
+function espejarEditorInstante() {
+  if (!confirm('Esto va a REEMPLAZAR Contacto I, Apoyo I, Despegue I y Vuelo I (en "' + EDITOR_MODO_LABEL[editorModo] + '") con el espejo de los D correspondientes. Se pierde lo que hayas ajustado ahí. ¿Seguro?')) return;
+  const md = editorDatos[editorModo];
+  ['contacto', 'apoyo', 'despegue', 'vuelo'].forEach(base => {
+    const origen = md.poses[base + 'D'];
+    md.poses[base + 'I'] = { der: JSON.parse(JSON.stringify(origen.izq)), izq: JSON.parse(JSON.stringify(origen.der)) };
+    md.bounce[base + 'I'] = md.bounce[base + 'D'];
+  });
+  guardarEditorDatos();
+  cargarBounceSlider();
+  cargarSlidersDesdeEditorDatos();
+  renderEditorPose();
+  toast('Instantes "I" regenerados espejando los "D"');
+}
 
-// dibuja al corredor completo (las dos piernas y brazos, espejados) a partir de un objeto de
-// pose "d" con los 10 campos — reusa segmentoGrueso/shadeHex, igual estilo que drawRunnerRear,
-// pero SIN animación propia: la pose es exactamente la que dicen los campos, punto.
-function dibujarPoseDesdeD(ctx, cx, gy, s, d, jersey) {
+// dibuja al corredor completo a partir de datos de pose independientes por lado (dDer/dIzq) más
+// un desplazamiento vertical de cuerpo entero (bounce) — reusa segmentoGrueso/shadeHex, mismo
+// estilo que drawRunnerRear, pero SIN animación propia: la pose es la que dicen los campos.
+function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey) {
   const skin = '#e8934c', zapatilla = '#20242b';
   const shorts = shadeHex(jersey, 0.42);
+  const gy = gyBase - (bounce || 0) * s;
   const hipY = gy - 1.35 * s, shY = gy - 2.35 * s, headY = gy - 2.66 * s, lean = s * 0.05;
 
   ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, gyBase + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
 
-  function leg(side) {
+  function leg(side, d) {
     const hipX = cx + side * s * 0.16;
     const kneeX = hipX + side * d.kneeX * s, kneeY = hipY + d.kneeY * s;
     const footX = hipX + side * d.footX * s, footY = hipY + d.footY * s;
@@ -1869,7 +2189,7 @@ function dibujarPoseDesdeD(ctx, cx, gy, s, d, jersey) {
     ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
     ctx.restore();
   }
-  leg(1); leg(-1);
+  leg(1, dDer); leg(-1, dIzq);
 
   ctx.fillStyle = shorts;
   ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
@@ -1882,37 +2202,46 @@ function dibujarPoseDesdeD(ctx, cx, gy, s, d, jersey) {
   ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
   ctx.closePath(); ctx.fill();
 
-  function arm(side) {
+  function arm(side, d) {
     const shX = cx + side * s * 0.30 + lean;
     const elX = shX + side * d.elX * s, elY = shY + d.elY * s;
     const wrX = shX + side * d.wrX * s, wrY = shY + d.wrY * s;
     segmentoGrueso(ctx, shX, shY, elX, elY, s * 0.20, s * 0.15, jersey);
     segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
   }
-  arm(-1); arm(1);
+  arm(-1, dIzq); arm(1, dDer);
 
   ctx.fillStyle = skin;
   ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
 }
 function renderEditorPose() {
   const cv = document.getElementById('canvasEditor');
-  const w = cv.clientWidth, h = cv.clientHeight || 320;
+  const w = cv.clientWidth, h = cv.clientHeight || 280;
   cv.width = w * devicePixelRatio; cv.height = h * devicePixelRatio;
   const ctx = cv.getContext('2d');
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  dibujarPoseDesdeD(ctx, w / 2, h - 14, Math.min(w * 0.26, h * 0.42), datosActuales(), '#3d7ec9');
+  const md = editorDatos[editorModo], d = md.poses[editorMomento];
+  dibujarPoseDesdeD(ctx, w / 2, h - 14, Math.min(w * 0.26, (h - 14) / 3.02), d.der, d.izq, md.bounce[editorMomento], '#3d7ec9');
 }
 
-// interpola entre las 4 poses clave, en orden, con un suavizado coseno (no lineal a los saltos)
-function interpolarEditor(datosModo, tGlobal) {
-  const i = Math.floor(tGlobal) % 4;
+// interpola UN lado (10 campos) entre dos instantes consecutivos de la secuencia de 8, con
+// suavizado coseno (no lineal a los saltos)
+function interpolarLadoEnSecuencia(poses, lado, tGlobal) {
+  const i = Math.floor(tGlobal) % 8;
   const frac = tGlobal - Math.floor(tGlobal);
   const easeFrac = (1 - Math.cos(frac * Math.PI)) / 2;
-  const a = datosModo[EDITOR_ORDEN_KF[i]], b = datosModo[EDITOR_ORDEN_KF[(i + 1) % 4]];
+  const a = poses[EDITOR_MOMENTOS[i]][lado], b = poses[EDITOR_MOMENTOS[(i + 1) % 8]][lado];
   const out = {};
   EDITOR_CAMPOS.forEach(campo => { out[campo] = a[campo] + (b[campo] - a[campo]) * easeFrac; });
   return out;
+}
+function interpolarBounceEnSecuencia(bounceObj, tGlobal) {
+  const i = Math.floor(tGlobal) % 8;
+  const frac = tGlobal - Math.floor(tGlobal);
+  const easeFrac = (1 - Math.cos(frac * Math.PI)) / 2;
+  const a = bounceObj[EDITOR_MOMENTOS[i]], b = bounceObj[EDITOR_MOMENTOS[(i + 1) % 8]];
+  return a + (b - a) * easeFrac;
 }
 function editorTogglePlay() {
   editorPlaying = !editorPlaying;
@@ -1924,7 +2253,7 @@ function editorPreviewLoop(ts) {
   if (!editorPlaying) { editorPreviewRAF = null; return; }
   const dt = editorPreviewLast ? Math.min(0.1, (ts - editorPreviewLast) / 1000) : 0;
   editorPreviewLast = ts;
-  editorPreviewT = (editorPreviewT + dt * 1.4) % 4; // ~2.9s por ciclo completo de las 4 poses
+  editorPreviewT = (editorPreviewT + dt * 2.6) % 8; // ~3.1s por ciclo completo de los 8 instantes
   renderEditorPreview();
   editorPreviewRAF = requestAnimationFrame(editorPreviewLoop);
 }
@@ -1935,12 +2264,16 @@ function renderEditorPreview() {
   const ctx = cv.getContext('2d');
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const d = interpolarEditor(editorDatos[editorModo], editorPreviewT);
-  dibujarPoseDesdeD(ctx, w / 2, h - 10, Math.min(w * 0.18, h * 0.30), d, '#3d7ec9');
+  const md = editorDatos[editorModo];
+  const dDer = interpolarLadoEnSecuencia(md.poses, 'der', editorPreviewT);
+  const dIzq = interpolarLadoEnSecuencia(md.poses, 'izq', editorPreviewT);
+  const bounceActual = interpolarBounceEnSecuencia(md.bounce, editorPreviewT);
+  dibujarPoseDesdeD(ctx, w / 2, h - 10, Math.min(w * 0.18, (h - 10) / 3.02), dDer, dIzq, bounceActual, '#3d7ec9');
 }
 function exportarEditor() {
   const texto = '// Poses del Editor de animación de Correr (coeficientes × escala s).\n' +
-    '// Pierna relativa a la cadera, brazo relativo al hombro. Un lado (side=+1); el otro se espeja.\n' +
+    '// 8 instantes por franja, cada uno con los dos lados (der/izq) juntos, más su\n' +
+    '// propio valor de oscilación vertical (bounce).\n' +
     'const EDITOR_KEYFRAMES = ' + JSON.stringify(editorDatos, null, 2) + ';';
   document.getElementById('editorCodigoExportado').value = texto;
   toast('Código generado — copialo y mandámelo');
@@ -2424,6 +2757,39 @@ function renderHistorial() {
   document.getElementById('formaATL').textContent = forma.atl.toFixed(1);
   document.getElementById('formaTSB').textContent = forma.tsb.toFixed(1);
   dibujarChartForma(forma.serie);
+  renderEvolucionSesiones();
+}
+// promedios por sesión (ritmo/pulso/cadencia), en orden cronológico, para ver la tendencia
+// entre entrenamientos — al estilo de la tarjeta "Evolución entre sesiones" de Bici Indoor.
+function calcularEvolucionSesiones() {
+  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  return {
+    ritmo: sesiones.filter(s => s.ritmoPromedioSegKm).map(s => s.ritmoPromedioSegKm),
+    pulso: sesiones.filter(s => s.pulsoPromedio).map(s => s.pulsoPromedio),
+    cadencia: sesiones.filter(s => s.cadenciaPromedio).map(s => s.cadenciaPromedio),
+  };
+}
+function dibujarLineaSimple(canvasId, valores, color, invertirY) {
+  const canvas = document.getElementById(canvasId);
+  const ctx = canvas.getContext('2d');
+  const w = canvas.clientWidth, h = canvas.clientHeight || 90;
+  canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
+  ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  if (valores.length < 2) return;
+  const minV = Math.min(...valores), maxV = Math.max(...valores);
+  const rango = (maxV - minV) || 1;
+  const escalaY = v => { const t = (v - minV) / rango; return invertirY ? 10 + t * (h - 20) : (h - 10) - t * (h - 20); };
+  const escalaX = i => (i / (valores.length - 1)) * (w - 10) + 5;
+  ctx.beginPath();
+  valores.forEach((v, i) => { const x = escalaX(i), y = escalaY(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+}
+function renderEvolucionSesiones() {
+  const d = calcularEvolucionSesiones();
+  dibujarLineaSimple('chartEvolRitmo', d.ritmo, '#4FD8C4', true); // invertido: ritmo más bajo (más rápido) se dibuja más arriba
+  dibujarLineaSimple('chartEvolPulso', d.pulso, '#FF6B57', false);
+  dibujarLineaSimple('chartEvolCadencia', d.cadencia, '#818B95', false);
 }
 
 function dibujarChartForma(serie) {
@@ -2511,6 +2877,45 @@ function guardarNotasDetalle() {
     sesiones[idx].notas = document.getElementById('detalleNotas').value;
     lsSet(K_SESIONES, sesiones);
   }
+}
+// genera un TCX válido a partir de una sesión guardada — mismas etiquetas que ya sabe leer
+// procesarTCX() (Trackpoint/Time/DistanceMeters/HeartRateBpm/Extensions-TPX-Watts-RunCadence),
+// así que un archivo exportado acá se puede volver a importar sin perder nada.
+function generarTCX(sesion) {
+  const puntos = puntosDeSesion(sesion);
+  const t0 = new Date(sesion.fecha);
+  const filas = puntos.map(p => {
+    const tiempoAbs = new Date(t0.getTime() + p.t * 1000).toISOString();
+    let xml = '<Trackpoint><Time>' + tiempoAbs + '</Time><DistanceMeters>' + p.distAcum.toFixed(2) + '</DistanceMeters>';
+    if (p.pulso) xml += '<HeartRateBpm><Value>' + Math.round(p.pulso) + '</Value></HeartRateBpm>';
+    if (p.potencia || p.cadencia) {
+      xml += '<Extensions><TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">';
+      if (p.potencia) xml += '<Watts>' + Math.round(p.potencia) + '</Watts>';
+      if (p.cadencia) xml += '<RunCadence>' + Math.round(p.cadencia) + '</RunCadence>';
+      xml += '</TPX></Extensions>';
+    }
+    xml += '</Trackpoint>';
+    return xml;
+  }).join('');
+  return '<?xml version="1.0" encoding="UTF-8"?>\n' +
+    '<TrainingCenterDatabase xmlns="http://www.garmin.com/xmlschemas/TrainingCenterDatabase/v2">' +
+    '<Activities><Activity Sport="Running"><Id>' + t0.toISOString() + '</Id>' +
+    '<Lap StartTime="' + t0.toISOString() + '">' +
+    '<TotalTimeSeconds>' + sesion.duracionSeg + '</TotalTimeSeconds>' +
+    '<DistanceMeters>' + sesion.distanciaM.toFixed(2) + '</DistanceMeters>' +
+    '<Track>' + filas + '</Track></Lap></Activity></Activities></TrainingCenterDatabase>';
+}
+function exportarSesionTCX() {
+  if (!sesionDetalleActual) return;
+  const xml = generarTCX(sesionDetalleActual);
+  const blob = new Blob([xml], { type: 'application/vnd.garmin.tcx+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const fecha = new Date(sesionDetalleActual.fecha).toISOString().slice(0, 10);
+  a.href = url; a.download = 'correr_' + fecha + '.tcx';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  toast('TCX descargado');
 }
 function dibujarChartSesion(s) {
   const canvas = document.getElementById('chartSesion');
