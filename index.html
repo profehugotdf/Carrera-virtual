@@ -112,6 +112,10 @@
   #overlayEditor input[type=range]{width:100%; margin:2px 0 16px; touch-action:pan-y;}
   #overlayEditor label{display:flex; justify-content:space-between; margin-top:2px;}
   .editor-val{font-family:var(--mono); color:var(--ritmo); font-size:12px;}
+  .animo-row{gap:6px;}
+  .animo-btn{flex:1; padding:10px 2px; border-radius:10px; border:1px solid var(--borde);
+    background:var(--panel2); font-size:22px; line-height:1;}
+  .animo-btn.sel{border-color:var(--ritmo); background:#12201E; transform:scale(1.08);}
   .rep-pick-row input[type=checkbox]{width:20px; height:20px; flex:none;}
   .rep-pick-row .txt{flex:1;}
   .rep-pick-row .txt .d{font-size:11px; color:var(--muted); margin-top:2px;}
@@ -161,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v32</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v33</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -419,9 +423,30 @@
       <div id="detalleResumen"></div>
     </div>
     <div class="card">
-      <h2>Ritmo / Pulso / Cadencia</h2>
-      <canvas id="chartSesion" height="180"></canvas>
-      <div class="scrub-info" id="scrubInfo">Tocá o arrastrá sobre el gráfico</div>
+      <h2>Gráficas</h2>
+      <div style="font-size:12px;color:var(--muted);">Ritmo (min/km)</div>
+      <canvas id="chartDetRitmo" height="100"></canvas>
+      <div style="font-size:12px;color:var(--muted);margin-top:12px;">Pulso (bpm)</div>
+      <canvas id="chartDetPulso" height="100"></canvas>
+      <div style="font-size:12px;color:var(--muted);margin-top:12px;">Cadencia (spm)</div>
+      <canvas id="chartDetCadencia" height="100"></canvas>
+      <div id="chartDetPotenciaWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">Potencia (W)</div>
+        <canvas id="chartDetPotencia" height="100"></canvas>
+      </div>
+      <div class="scrub-info" id="scrubInfo">Tocá o arrastrá sobre cualquier gráfico para ver el detalle</div>
+    </div>
+    <div class="card">
+      <h2>¿Cómo te sentiste?</h2>
+      <div class="fila animo-row" id="animoDetalleRow">
+        <button class="animo-btn" data-val="1" onclick="actualizarAnimoDetalle(1)">😖</button>
+        <button class="animo-btn" data-val="2" onclick="actualizarAnimoDetalle(2)">😕</button>
+        <button class="animo-btn" data-val="3" onclick="actualizarAnimoDetalle(3)">😐</button>
+        <button class="animo-btn" data-val="4" onclick="actualizarAnimoDetalle(4)">🙂</button>
+        <button class="animo-btn" data-val="5" onclick="actualizarAnimoDetalle(5)">😄</button>
+      </div>
+      <label style="margin-top:12px;">Esfuerzo percibido (RPE, 1-10) <span id="lblRpeDetalle" class="editor-val">--</span></label>
+      <input type="range" id="rpeDetalleSlider" min="1" max="10" step="1" oninput="actualizarRpeDetalle(this.value)">
     </div>
     <div class="card">
       <label>Notas</label>
@@ -481,6 +506,18 @@
     <div class="card">
       <h2>Sesión terminada</h2>
       <div id="resumenPostContenido"></div>
+    </div>
+    <div class="card">
+      <h2>¿Cómo te sentiste?</h2>
+      <div class="fila animo-row" id="animoPostRow">
+        <button class="animo-btn" data-val="1" onclick="actualizarAnimoPost(1)">😖</button>
+        <button class="animo-btn" data-val="2" onclick="actualizarAnimoPost(2)">😕</button>
+        <button class="animo-btn" data-val="3" onclick="actualizarAnimoPost(3)">😐</button>
+        <button class="animo-btn" data-val="4" onclick="actualizarAnimoPost(4)">🙂</button>
+        <button class="animo-btn" data-val="5" onclick="actualizarAnimoPost(5)">😄</button>
+      </div>
+      <label style="margin-top:12px;">Esfuerzo percibido (RPE, 1-10) <span id="lblRpePost" class="editor-val">--</span></label>
+      <input type="range" id="rpePostSlider" min="1" max="10" step="1" oninput="actualizarRpePost(this.value)">
       <button class="btn primario" onclick="cerrarResumenPost()" style="margin-top:14px;">Listo</button>
     </div>
   </div>
@@ -979,6 +1016,27 @@
        hace un round-trip exacto (mismo valor de rodilla antes y
        después), y el backup general incluye y restaura la edición
        correctamente.
+   v33: dos pedidos con una captura de Bici Indoor de referencia.
+       (1) El gráfico combinado "Ritmo/Pulso/Cadencia" (todo superpuesto
+       en un solo canvas) se reemplazó por gráficos apilados
+       individuales — uno por métrica (Ritmo, Pulso, Cadencia, y
+       Potencia si la sesión tiene ese dato), cada uno con sus propias
+       etiquetas de mínimo/máximo como en Bici Indoor. El ritmo se
+       formatea como mm:ss en la etiqueta (no segundos planos) y sigue
+       invertido (más rápido arriba). El scrub táctil ahora es
+       compartido entre los 4 gráficos, no hace falta tocar uno en
+       particular. (2) Ánimo y esfuerzo percibido (RPE): 5 botones de
+       emoji (😖😕😐🙂😄) más un slider de 1 a 10, disponibles tanto en
+       "Sesión terminada" (recién corrida) como en el detalle de
+       cualquier sesión guardada (para cargarlo después si te
+       olvidaste). Quedan como campos `animo`/`rpe` en la sesión, así
+       que ya viajan solos con el backup y el TCX/reto que ya existían
+       — no hizo falta tocar esas funciones. Verificado sobre el código
+       real: el cálculo de min/max de cada mini-gráfico, el formato
+       mm:ss de la etiqueta de ritmo, que sin datos de potencia la
+       tarjeta se pueda ocultar (devuelve null), y que ánimo/RPE se
+       graban en la sesión correcta tanto desde "Sesión terminada"
+       como desde el detalle.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2963,6 +3021,7 @@ function dibujarChartForma(serie) {
    DETALLE DE SESIÓN + GRÁFICO CON SCRUB
    ============================================================ */
 let sesionDetalleActual = null;
+let sesionRecienGuardadaId = null;
 function tileResumenHTML(valor, etiqueta, claseExtra) {
   return '<div class="hud-item' + (claseExtra ? ' ' + claseExtra : '') + '"><div class="val">' + valor + '</div><div class="lbl">' + etiqueta + '</div></div>';
 }
@@ -2992,7 +3051,11 @@ function renderResumenSesion(s, contenedorId) {
     (extra ? '<div class="estado-conexion" style="margin-top:10px; line-height:1.9;">' + extra + '</div>' : '');
 }
 function mostrarResumenPost(s) {
+  sesionRecienGuardadaId = s.id;
   renderResumenSesion(s, 'resumenPostContenido');
+  marcarAnimoSeleccionado('animoPostRow', null);
+  document.getElementById('rpePostSlider').value = 5;
+  document.getElementById('lblRpePost').textContent = '--';
   const ov = document.getElementById('overlayResumenPost');
   ov.classList.add('activa'); ov.scrollTop = 0;
 }
@@ -3006,9 +3069,12 @@ function abrirDetalle(id) {
   document.getElementById('detalleTitulo').textContent = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'long', year: 'numeric' });
   renderResumenSesion(s, 'detalleResumen');
   document.getElementById('detalleNotas').value = s.notas || '';
+  marcarAnimoSeleccionado('animoDetalleRow', s.animo || null);
+  document.getElementById('rpeDetalleSlider').value = s.rpe || 5;
+  document.getElementById('lblRpeDetalle').textContent = s.rpe != null ? s.rpe : '--';
   document.getElementById('overlayDetalle').classList.add('activa');
   document.getElementById('overlayDetalle').scrollTop = 0;
-  requestAnimationFrame(() => dibujarChartSesion(s));
+  requestAnimationFrame(() => dibujarGraficasDetalle(s));
 }
 function guardarNotasDetalle() {
   if (!sesionDetalleActual) return;
@@ -3218,51 +3284,108 @@ function procesarRetoJSON(texto, nombreOverride) {
   renderSelectorFantasma();
   toast('Reto de ' + sesion.nombreReto + ' importado — ya podés elegirlo como fantasma');
 }
-function dibujarChartSesion(s) {
-  const canvas = document.getElementById('chartSesion');
+// dibuja UN mini-gráfico con etiquetas de min/max (arriba/abajo), estilo Bici Indoor.
+// invertirY=true significa "el valor más BAJO se dibuja arriba" (usado para ritmo: más rápido = mejor).
+// formateador(v) da el texto de la etiqueta (ej. mm:ss para ritmo, número plano para lo demás).
+// Devuelve {minV, maxV} o null si no hay datos suficientes (para que el llamador pueda ocultar la tarjeta).
+function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formateador, tMax) {
+  const canvas = document.getElementById(canvasId);
   const ctx = canvas.getContext('2d');
-  const w = canvas.clientWidth, h = canvas.clientHeight || 180;
+  const w = canvas.clientWidth, h = canvas.clientHeight || 100;
   canvas.width = w * devicePixelRatio; canvas.height = h * devicePixelRatio;
   ctx.setTransform(devicePixelRatio, 0, 0, devicePixelRatio, 0, 0);
   ctx.clearRect(0, 0, w, h);
-  const puntos = puntosDeSesion(s).filter(p => p.ritmo || p.pulso);
+  const validos = puntos.filter(p => p[key] != null && p[key] > 0);
+  if (validos.length < 2) return null;
+  const valores = validos.map(p => p[key]);
+  const minV = Math.min(...valores), maxV = Math.max(...valores);
+  const rango = (maxV - minV) || 1;
+  const escalaY = v => { const t = (v - minV) / rango; return invertirY ? 16 + t * (h - 30) : (h - 14) - t * (h - 30); };
+  const escalaX = t => (t / tMax) * (w - 10) + 5;
+  ctx.beginPath();
+  let first = true;
+  puntos.forEach(p => {
+    if (p[key] == null || p[key] <= 0) { first = true; return; }
+    const x = escalaX(p.t), y = escalaY(p[key]);
+    if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+  const valorArriba = invertirY ? minV : maxV, valorAbajo = invertirY ? maxV : minV;
+  ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif';
+  ctx.fillText(formateador(valorArriba), 4, 12);
+  ctx.fillText(formateador(valorAbajo), 4, h - 4);
+  return { minV, maxV };
+}
+function dibujarGraficasDetalle(s) {
+  const puntos = puntosDeSesion(s);
   if (!puntos.length) return;
   const tMax = puntos[puntos.length - 1].t || 1;
-  const ritmos = puntos.filter(p => p.ritmo).map(p => p.ritmo);
-  const rMin = Math.min(...ritmos), rMax = Math.max(...ritmos);
-  const pulsos = puntos.filter(p => p.pulso).map(p => p.pulso);
-  const hMin = Math.min(...pulsos, 40), hMax = Math.max(...pulsos, 100);
+  dibujarMiniChartSesion('chartDetRitmo', puntos, 'ritmo', '#4FD8C4', true, v => segAMMSS(Math.round(v)), tMax);
+  dibujarMiniChartSesion('chartDetPulso', puntos, 'pulso', '#FF6B57', false, v => Math.round(v), tMax);
+  dibujarMiniChartSesion('chartDetCadencia', puntos, 'cadencia', '#818B95', false, v => Math.round(v), tMax);
+  const hayPotencia = dibujarMiniChartSesion('chartDetPotencia', puntos, 'potencia', '#F5C542', false, v => Math.round(v), tMax);
+  document.getElementById('chartDetPotenciaWrap').style.display = hayPotencia ? 'block' : 'none';
 
-  const escalaX = t => (t / tMax) * (w - 10) + 5;
-  const escalaRitmo = r => h - 10 - ((rMax - r) / Math.max(1, (rMax - rMin))) * (h - 20); // invertido: ritmo bajo = arriba
-  const escalaPulso = p => h - 10 - ((p - hMin) / Math.max(1, (hMax - hMin))) * (h - 20);
-
-  function linea(color, key, escala) {
-    ctx.beginPath();
-    let first = true;
-    puntos.forEach(p => {
-      if (!p[key]) { first = true; return; }
-      const x = escalaX(p.t), y = escala(p[key]);
-      if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
-    });
-    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
-  }
-  linea('#4FD8C4', 'ritmo', escalaRitmo);
-  linea('#FF6B57', 'pulso', escalaPulso);
-
-  // ---- scrub táctil ----
+  // ---- scrub táctil compartido entre los 4 mini-gráficos ----
   const info = document.getElementById('scrubInfo');
-  function manejarScrub(clientX) {
-    const rect = canvas.getBoundingClientRect();
+  function manejarScrub(clientX, canvasRef) {
+    const rect = canvasRef.getBoundingClientRect();
     const x = clientX - rect.left;
     const t = (x / rect.width) * tMax;
     let cercano = puntos[0];
     puntos.forEach(p => { if (Math.abs(p.t - t) < Math.abs(cercano.t - t)) cercano = p; });
     info.textContent = segAHMS(cercano.t) + ' · ' + (cercano.ritmo ? segAMMSS(cercano.ritmo) + '/km' : '--') +
-      ' · ' + (cercano.pulso || '--') + ' bpm' + (cercano.cadencia ? (' · ' + cercano.cadencia + ' spm') : '');
+      ' · ' + (cercano.pulso || '--') + ' bpm' + (cercano.cadencia ? (' · ' + cercano.cadencia + ' spm') : '') +
+      (cercano.potencia ? (' · ' + cercano.potencia + ' W') : '');
   }
-  canvas.onpointerdown = e => { canvas.setPointerCapture(e.pointerId); manejarScrub(e.clientX); };
-  canvas.onpointermove = e => { if (e.pressure > 0 || e.buttons > 0) manejarScrub(e.clientX); };
+  ['chartDetRitmo', 'chartDetPulso', 'chartDetCadencia', 'chartDetPotencia'].forEach(id => {
+    const cv = document.getElementById(id);
+    cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); manejarScrub(e.clientX, cv); };
+    cv.onpointermove = e => { if (e.pressure > 0 || e.buttons > 0) manejarScrub(e.clientX, cv); };
+  });
+}
+
+/* ============================================================
+   ÁNIMO Y ESFUERZO PERCIBIDO (RPE)
+   ============================================================ */
+function marcarAnimoSeleccionado(filaId, valor) {
+  document.querySelectorAll('#' + filaId + ' .animo-btn').forEach(b => b.classList.toggle('sel', Number(b.dataset.val) === valor));
+}
+function actualizarAnimoSesion(id, valor) {
+  const sesiones = lsGet(K_SESIONES, []);
+  const idx = sesiones.findIndex(s => s.id === id);
+  if (idx < 0) return;
+  sesiones[idx].animo = valor;
+  lsSet(K_SESIONES, sesiones);
+}
+function actualizarRpeSesion(id, valor) {
+  const sesiones = lsGet(K_SESIONES, []);
+  const idx = sesiones.findIndex(s => s.id === id);
+  if (idx < 0) return;
+  sesiones[idx].rpe = valor;
+  lsSet(K_SESIONES, sesiones);
+}
+function actualizarAnimoPost(valor) {
+  if (!sesionRecienGuardadaId) return;
+  actualizarAnimoSesion(sesionRecienGuardadaId, valor);
+  marcarAnimoSeleccionado('animoPostRow', valor);
+}
+function actualizarRpePost(valor) {
+  if (!sesionRecienGuardadaId) return;
+  actualizarRpeSesion(sesionRecienGuardadaId, Number(valor));
+  document.getElementById('lblRpePost').textContent = valor;
+}
+function actualizarAnimoDetalle(valor) {
+  if (!sesionDetalleActual) return;
+  actualizarAnimoSesion(sesionDetalleActual.id, valor);
+  sesionDetalleActual.animo = valor;
+  marcarAnimoSeleccionado('animoDetalleRow', valor);
+}
+function actualizarRpeDetalle(valor) {
+  if (!sesionDetalleActual) return;
+  actualizarRpeSesion(sesionDetalleActual.id, Number(valor));
+  sesionDetalleActual.rpe = Number(valor);
+  document.getElementById('lblRpeDetalle').textContent = valor;
 }
 
 /* ============================================================
