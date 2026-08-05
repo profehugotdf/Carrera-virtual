@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v33</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v35</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -235,6 +235,23 @@
     </div>
 
     <div class="card">
+      <h2>Meta de la sesión</h2>
+      <div class="modo-btns" id="metaBtns">
+        <button id="btnMetaLibre" onclick="seleccionarMeta('libre')">Libre</button>
+        <button id="btnMetaTiempo" onclick="seleccionarMeta('tiempo')">Por tiempo</button>
+        <button id="btnMetaDistancia" onclick="seleccionarMeta('distancia')">Por distancia</button>
+      </div>
+      <div id="panelMetaTiempo" style="display:none;">
+        <label>Minutos</label>
+        <input type="number" id="metaValorTiempo" placeholder="30" inputmode="numeric" onchange="actualizarMetaValor()">
+      </div>
+      <div id="panelMetaDistancia" style="display:none;">
+        <label>Kilómetros</label>
+        <input type="number" id="metaValorDistancia" placeholder="5" step="0.1" inputmode="decimal" onchange="actualizarMetaValor()">
+      </div>
+    </div>
+
+    <div class="card">
       <h2>Sesión en vivo</h2>
       <div class="cinta-ritmo"><div class="cinta-marker" id="cintaMarker" style="left:50%;"></div></div>
 
@@ -262,6 +279,10 @@
         <div class="hud-item grande fantasma" id="tileFantasma" style="display:none;">
           <div class="val" id="hudFantasma">--</div>
           <div class="lbl" id="lblFantasma">vs Fantasma</div>
+        </div>
+        <div class="hud-item grande ritmo" id="tileMeta" style="display:none;">
+          <div class="val" id="hudMeta">--</div>
+          <div class="lbl" id="lblMeta">Restante</div>
         </div>
         <div class="hud-item" id="tileVAM">
           <div class="val" id="hudVAM">0</div>
@@ -447,6 +468,7 @@
       </div>
       <label style="margin-top:12px;">Esfuerzo percibido (RPE, 1-10) <span id="lblRpeDetalle" class="editor-val">--</span></label>
       <input type="range" id="rpeDetalleSlider" min="1" max="10" step="1" oninput="actualizarRpeDetalle(this.value)">
+      <div class="estado-conexion" id="descRpeDetalle" style="margin-top:2px;"></div>
     </div>
     <div class="card">
       <label>Notas</label>
@@ -518,6 +540,7 @@
       </div>
       <label style="margin-top:12px;">Esfuerzo percibido (RPE, 1-10) <span id="lblRpePost" class="editor-val">--</span></label>
       <input type="range" id="rpePostSlider" min="1" max="10" step="1" oninput="actualizarRpePost(this.value)">
+      <div class="estado-conexion" id="descRpePost" style="margin-top:2px;"></div>
       <button class="btn primario" onclick="cerrarResumenPost()" style="margin-top:14px;">Listo</button>
     </div>
   </div>
@@ -1037,6 +1060,56 @@
        tarjeta se pueda ocultar (devuelve null), y que ánimo/RPE se
        graban en la sesión correcta tanto desde "Sesión terminada"
        como desde el detalle.
+   v34: la más importante hasta ahora — drawRunnerRear() (la del render
+       EN VIVO: vos, el fantasma, y los corredores del replay) nunca
+       había llegado a usar nada de lo que Hugo ajustó en el Editor de
+       animación desde v20. Seguía con las fórmulas de ángulos viejas
+       de v19, con un simple booleano caminando/corriendo. Se reescribió
+       por completo: nueva claseVelocidad() con los 4 umbrales exactos
+       que pidió Hugo (caminata ≤6km/h, trote ≤10, carrera ≤15, sprint
+       >15 — con margen por error de punto flotante justo en los
+       bordes), y drawRunnerRear ahora interpola las poses reales de
+       EDITOR_KEYFRAMES (lo guardado en localStorage por el editor, o
+       los defaults si Hugo no tocó esa franja) para la franja que
+       corresponda, usando exactamente las mismas interpolarLadoEnSecuencia/
+       interpolarBounceEnSecuencia/dibujarPoseDesdeD que ya usa la vista
+       previa del editor — mismo resultado ahí y en la app en vivo, sin
+       duplicar lógica de dibujo. El pedido de "coincidiendo con la
+       cadencia de los sensores" ya estaba resuelto de fábrica:
+       runnerPhase avanza según cadHz = cadencia real / 60 / 2, así que
+       la fase de la animación siempre siguió la zancada real, no un
+       reloj fijo. Caché con invalidación automática (obtenerDatosCorredor
+       + corredorDatosCache, se resetea sola en guardarEditorDatos) para
+       no releer/parsear localStorage en cada cuadro. Quedó esCaminando()
+       sin uso, se retiró. Los tests viejos que probaban la geometría
+       por fórmulas (geom_v17/18/19, test_v17/18/19) quedaron obsoletos
+       a propósito — probaban un código que ya no existe, no son una
+       regresión. Verificado sobre el código real: los umbrales exactos,
+       que dos franjas distintas dibujan geometría distinta a la misma
+       fase (confirma que el pipeline completo está conectado, no solo
+       la función suelta), y que mover un slider de verdad en el editor
+       (simulado con las funciones reales de la UI) se refleja al toque
+       en lo que dibuja drawRunnerRear, sin recargar la página.
+   v35: dos pedidos con una captura del detalle de sesión. (1) Descripción
+       del RPE: tabla de 10 frases (estilo escala de Borg) que se
+       muestra debajo del slider y cambia con el valor, tanto en
+       "Sesión terminada" como en el detalle — así no hay que adivinar
+       qué significa cada número. (2) Meta de sesión por tiempo o
+       distancia, interpretando "seleccionar la sesión actual como en
+       Bici Indoor" como poder marcar un objetivo antes de arrancar
+       (Libre/Por tiempo/Por distancia) y ver cuánto falta en vivo —
+       nuevo tile "Restante" con el % de progreso, aviso una sola vez
+       al alcanzarla (no corta la sesión sola, sigue siendo decisión
+       del corredor). La meta queda bloqueada mientras la sesión está
+       en marcha, para no cambiarla a mitad de carrera por error.
+       Encontré y corregí en el camino un bug propio: al insertar el
+       reseteo de metaAlcanzada en iniciarSesion() se me borró sin
+       querer la línea que lee el fantasma elegido — quedó restaurada
+       antes de dar por terminada la tarea. Verificado sobre el código
+       real (disparando seleccionarMeta/actualizarMetaValor como lo
+       haría la UI, no pisando variables a mano): progreso y "alcanzada"
+       correctos para tiempo y distancia, restante nunca negativo tras
+       pasarse de la meta, y las 10 descripciones de RPE completas.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1250,6 +1323,7 @@ function deltaFantasmaSeg(puntosFantasma, tiempoActual, distanciaActual) {
    ESTADO GLOBAL
    ============================================================ */
 let modo = null; // 'ble' | 'manual' | 'aire_libre'
+let metaTipo = 'libre', metaValor = null, metaAlcanzada = false; // meta de la sesión (opcional): 'libre' | 'tiempo' (min) | 'distancia' (km)
 let sesionActiva = false;
 let sesionPausada = false;
 let cronometro = { inicio: 0, acumulado: 0 };
@@ -1338,6 +1412,34 @@ function seleccionarModo(m) {
   document.getElementById('tileVAMprom').style.display = m === 'aire_libre' ? 'none' : 'block';
   document.getElementById('tileDesnivel').style.display = m === 'aire_libre' ? 'block' : 'none';
   pendienteActual = 0;
+}
+function seleccionarMeta(tipo) {
+  if (sesionActiva) { toast('La meta no se puede cambiar con la sesión en marcha'); return; }
+  metaTipo = tipo;
+  document.getElementById('btnMetaLibre').classList.toggle('sel', tipo === 'libre');
+  document.getElementById('btnMetaTiempo').classList.toggle('sel', tipo === 'tiempo');
+  document.getElementById('btnMetaDistancia').classList.toggle('sel', tipo === 'distancia');
+  document.getElementById('panelMetaTiempo').style.display = tipo === 'tiempo' ? 'block' : 'none';
+  document.getElementById('panelMetaDistancia').style.display = tipo === 'distancia' ? 'block' : 'none';
+  actualizarMetaValor();
+}
+function actualizarMetaValor() {
+  if (metaTipo === 'tiempo') metaValor = parseFloat(document.getElementById('metaValorTiempo').value) || null;
+  else if (metaTipo === 'distancia') metaValor = parseFloat(document.getElementById('metaValorDistancia').value) || null;
+  else metaValor = null;
+}
+// null si no hay meta activa (modo libre o sin valor cargado); si no, {restante, alcanzada, pct}
+// — restante en segundos (tiempo) o metros (distancia), nunca negativo.
+function calcularProgresoMeta(tSeg, distanciaAcumM) {
+  if (metaTipo === 'tiempo' && metaValor) {
+    const metaSeg = metaValor * 60;
+    return { restante: Math.max(0, metaSeg - tSeg), alcanzada: tSeg >= metaSeg, pct: Math.min(100, (tSeg / metaSeg) * 100) };
+  }
+  if (metaTipo === 'distancia' && metaValor) {
+    const metaM = metaValor * 1000;
+    return { restante: Math.max(0, metaM - distanciaAcumM), alcanzada: distanciaAcumM >= metaM, pct: Math.min(100, (distanciaAcumM / metaM) * 100) };
+  }
+  return null;
 }
 
 /* ============================================================
@@ -1655,8 +1757,6 @@ const LARGO_PISTA_M = 400;
 // Segmento "grueso" relleno (trapecio) entre dos puntos, con ancho propio en cada extremo —
 // reemplaza los trazos finos de antes para que las extremidades se vean como formas sólidas,
 // igual que en las fotos de referencia que pasó Hugo (no como palitos).
-// criterio para elegir la figura de caminata en vez de la de carrera: menos de 5 km/h
-function esCaminando(velocidadMS) { return (velocidadMS || 0) * 3.6 < 5; }
 function segmentoGrueso(ctx, x1, y1, x2, y2, w1, w2, color) {
   const dx = x2 - x1, dy = y2 - y1;
   const len = Math.hypot(dx, dy) || 1;
@@ -1670,115 +1770,40 @@ function segmentoGrueso(ctx, x1, y1, x2, y2, w1, w2, color) {
   ctx.closePath();
   ctx.fill();
 }
-function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, caminando) {
+// clasifica la velocidad en una de las 4 franjas del editor de animación, según los umbrales
+// que definió Hugo: caminata hasta 6 km/h, trote hasta 10, carrera hasta 15, sprint más de 15.
+function claseVelocidad(velocidadMS) {
+  const kmh = (velocidadMS || 0) * 3.6;
+  if (kmh <= 6) return 'caminata';
+  if (kmh <= 10) return 'trote';
+  if (kmh <= 15) return 'carrera';
+  return 'sprint';
+}
+// datos del corredor: usa lo que Hugo haya ajustado en el Editor de animación (guardado en
+// localStorage) si existe, si no cae a los valores por defecto embebidos en el archivo. Cacheado
+// para no leer/parsear localStorage en cada cuadro de animación — se invalida sola cada vez que
+// el editor guarda algo (ver guardarEditorDatos).
+let corredorDatosCache = null;
+function obtenerDatosCorredor() {
+  if (!corredorDatosCache) corredorDatosCache = lsGet('correr_editor_keyframes_v3', null) || EDITOR_KEYFRAMES_DEFAULT;
+  return corredorDatosCache;
+}
+// dibuja al corredor en la fase (radianes, igual convención que runnerPhase/ghostRunnerPhase —
+// una vuelta completa 0..2π es un ciclo de zancada entero) usando las poses reales del editor
+// para la franja de velocidad correspondiente, interpolando entre los 8 instantes de esa franja.
+function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, velocidadMS) {
   ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  const skin = '#e8934c', zapatilla = '#20242b';
-  const shorts = shadeHex(jersey, 0.42);
-  const D2R = Math.PI / 180;
-
-  // Oscilación vertical del centro de masa (solo carrera): 6.5% de la altura total, mínima en
-  // el apoyo (ph=0/π) y máxima en la fase de vuelo (ph=π/2, 3π/2).
-  const alturaTotal = s * 2.87;
-  const comBounce = caminando ? 0 : (alturaTotal * 0.065) * (1 - Math.cos(2 * fase)) / 2;
-  const gyEfectivo = gy - comBounce;
-  const hipY = gyEfectivo - 1.35 * s, shY = gyEfectivo - 2.35 * s, headY = gyEfectivo - 2.66 * s, lean = s * 0.05;
-
-  ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.beginPath(); ctx.ellipse(cx, gy + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
-
-  // Ventana de contacto (fase de vuelo real en carrera, cero fase de vuelo en caminata) — igual que v17.
-  const medioAnchoContacto = caminando ? 1.7 : 0.85;
-  const T = -Math.cos(medioAnchoContacto);
-  const vueloDe = ph => Math.max(0, (-Math.cos(ph) - T) / (1 - T));
-
-  // PIERNAS: mantengo los ángulos de rodilla ya validados (carrera 170°→65°, talón al 75% del
-  // largo de la pierna; caminata 175°→135°) y el eje X sigue comprimido (v18, evita la tijera).
-  // NUEVO (Gemini v19): el muslo también rota más durante el swing — antes el ángulo del muslo
-  // era fijo (side*5°), por eso solo se veía "encoger" sin transmitir que la rodilla se proyecta
-  // hacia adelante. Ahora el ángulo crece con la fase de vuelo, dando ~40% menos altura de muslo
-  // en el pico del swing (escorzo real), y la rodilla se dibuja un 18% más ancha en ese punto
-  // (simula el volumen de la rodilla apuntando hacia la cámara).
-  const COMPRESION_X_PIERNA = 0.12;
-  const rodillaExtendida = caminando ? 175 : 170, rodillaFlexion = caminando ? 135 : 65;
-  const thighLen = s * 0.675, shinLen = s * 0.675;
-  const leg = (side, ph) => {
-    const vuelo = vueloDe(ph);
-    const anguloRodilla = rodillaExtendida - vuelo * (rodillaExtendida - rodillaFlexion);
-    const pliegue = 180 - anguloRodilla;
-    const anguloMuslo = side * (5 + vuelo * 48); // 5° en apoyo -> 53° en el pico del swing (~40% de escorzo)
-    const anguloPantorrilla = anguloMuslo + side * pliegue;
-    const hipX = cx + side * s * 0.16;
-    const kneeX = hipX + Math.sin(anguloMuslo * D2R) * thighLen * COMPRESION_X_PIERNA;
-    const kneeY = hipY + Math.cos(anguloMuslo * D2R) * thighLen; // eje Y intacto (ahí vive el escorzo)
-    const footX = kneeX + Math.sin(anguloPantorrilla * D2R) * shinLen * COMPRESION_X_PIERNA;
-    const footY = kneeY + Math.cos(anguloPantorrilla * D2R) * shinLen;
-    const escalaPie = 1 - vuelo * 0.3; // más chico al elevarse (pista de profundidad, no de lateralidad)
-    const anchoRodilla = s * 0.22 * (1 + vuelo * 0.18); // +18% de ancho en el swing (volumen hacia la cámara)
-    segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, anchoRodilla, skin);
-    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, anchoRodilla, s * 0.14, skin);
-    if (vuelo > 0.15) { // cápsula de rodilla, visible solo cuando hay flexión apreciable
-      ctx.fillStyle = skin;
-      ctx.beginPath(); ctx.ellipse(kneeX, kneeY, anchoRodilla * 0.55, anchoRodilla * 0.5, 0, 0, 7); ctx.fill();
-    }
-    ctx.save(); ctx.translate(footX, footY + s * 0.05);
-    ctx.fillStyle = zapatilla;
-    ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
-    ctx.restore();
-  };
-  const lPh = fase, rPh = fase + Math.PI;
-  if (Math.cos(lPh) > Math.cos(rPh)) { leg(1, rPh); leg(-1, lPh); } else { leg(-1, lPh); leg(1, rPh); }
-
-  // torso: hombros más anchos que la cadera (1.275:1 carrera, 1.175:1 caminata)
-  const hipHW = s * 0.26, shHW = hipHW * (caminando ? 1.175 : 1.275);
-  function dibujarShortYTorso() {
-    ctx.fillStyle = shorts;
-    ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
-    ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = jersey;
-    ctx.beginPath();
-    ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
-    ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
-    ctx.closePath(); ctx.fill();
-  }
-
-  // BRAZOS: la mano del brazo que va "adelante" ahora cruza en diagonal HACIA EL CENTRO del
-  // pecho (no solo sube derecho al costado como en v18), y la del brazo "atrás" se abre un
-  // poco hacia afuera al bajar tras la cadera — así se ve la coordinación natural del braceo.
-  // El "easing" (curva de aceleración/frenado en vez de sin puro) hace que la mano acelere al
-  // subir y se frene un instante arriba, en vez de moverse a velocidad pareja todo el tiempo.
-  const easeBraceo = ph => { const x = Math.sin(ph); return Math.sign(x) * Math.pow(Math.abs(x), 0.65); };
-  const torsoHW = shHW; // medio-ancho del torso a la altura del hombro, ya calculado arriba
-  const arm = (side, ph) => {
-    const shX = cx + side * s * 0.30 + lean, shYp = shY + s * 0.02;
-    const e = caminando ? Math.sin(ph) : easeBraceo(ph); // en caminata no hace falta el frenado (braceo chico)
-    const frontFrac = (e + 1) / 2; // 0 = brazo atrás, 1 = brazo adelante
-
-    const manoXatras = shX + side * s * (caminando ? 0.03 : 0.05);
-    const manoXadelante = caminando ? (shX - side * s * 0.02) : (cx + side * torsoHW * 0.30);
-    const wrX = manoXatras + frontFrac * (manoXadelante - manoXatras);
-    const wrY = shYp + s * 0.58 - e * s * (caminando ? 0.14 : 0.24);
-
-    const codoXatras = shX + side * s * 0.03;
-    const codoXadelante = shX - side * s * (caminando ? 0.02 : 0.06);
-    const elX = codoXatras + frontFrac * (codoXadelante - codoXatras);
-    const elY = shYp + s * 0.32 - e * s * (caminando ? 0.05 : 0.10);
-
-    segmentoGrueso(ctx, shX, shYp, elX, elY, s * 0.20, s * 0.15, jersey);
-    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
-  };
-  // Capas: el brazo que va "adelante" (sin(ph)>0, la mano sube) se dibuja ENCIMA de la
-  // camiseta; el que va "atrás" se dibuja DEBAJO — por eso separo torso/short de los brazos acá,
-  // en vez de dibujar los dos brazos siempre después como antes.
-  const brazoL = { side: 1, ph: lPh }, brazoR = { side: -1, ph: rPh };
-  const [atras, adelante] = Math.sin(brazoL.ph) > 0 ? [brazoR, brazoL] : [brazoL, brazoR];
-  arm(atras.side, atras.ph);
-  dibujarShortYTorso();
-  arm(adelante.side, adelante.ph);
-
-  ctx.fillStyle = skin;
-  ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
+  const modo = claseVelocidad(velocidadMS);
+  const md = obtenerDatosCorredor()[modo];
+  const faseMod = ((fase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
+  const tGlobal = (faseMod / (2 * Math.PI)) * 8;
+  const dDer = interpolarLadoEnSecuencia(md.poses, 'der', tGlobal);
+  const dIzq = interpolarLadoEnSecuencia(md.poses, 'izq', tGlobal);
+  const bounce = interpolarBounceEnSecuencia(md.bounce, tGlobal);
+  dibujarPoseDesdeD(ctx, cx, gy, s, dDer, dIzq, bounce, jersey);
   ctx.restore();
 }
+
 
 function formatearGapMetros(gapM) {
   const abs = Math.round(Math.abs(gapM));
@@ -1832,9 +1857,9 @@ function dibujarEscenaSendero(ctx, w, h) {
     gapM = distanciaAcumM - distFant;
     deltaSeg = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
     const p = roadPointAt(S, distFant);
-    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, esCaminando(repInterp(puntosFantasma, t, 'velocidad'))); }
+    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, repInterp(puntosFantasma, t, 'velocidad')); }
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, esCaminando(actual.velocidad));
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad);
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
 }
 function dibujarLineaMeta(ctx, S) {
@@ -1865,9 +1890,9 @@ function dibujarEscenaPista(ctx, w, h) {
     const gd0 = ((gNow % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
     const relAhead = ((gd0 - d0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
     const p = roadPointAt(S, d0 + relAhead);
-    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, esCaminando(repInterp(puntosFantasma, t, 'velocidad'))); }
+    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, repInterp(puntosFantasma, t, 'velocidad')); }
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, esCaminando(actual.velocidad));
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad);
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff);
 }
 function dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff) {
@@ -2086,12 +2111,12 @@ function dibujarRepPista(st) {
   for (const { x, posD } of otros) {
     const p = roadPointAt(S, posD); if (!p) continue;
     const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
-    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, esCaminando(x.velocidad));
+    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, x.velocidad);
     const lapDiff = Math.floor(x.d / LARGO_PISTA_M) - Math.floor(cam.d / LARGO_PISTA_M);
     const gap = Math.round(x.d - cam.d);
     dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m' + (lapDiff !== 0 ? ' (' + (lapDiff > 0 ? '+' : '') + lapDiff + 'v)' : ''), x.r.color);
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, esCaminando(cam.velocidad));
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad);
 }
 function dibujarRepSendero(st) {
   if (!repRoadCtx || repRoadCtx.w < 10) fitRepRoad();
@@ -2106,11 +2131,11 @@ function dibujarRepSendero(st) {
   for (const x of otros) {
     const p = roadPointAt(S, x.d); if (!p) continue;
     const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
-    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, esCaminando(x.velocidad));
+    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, x.velocidad);
     const gap = Math.round(x.d - cam.d);
     dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m', x.r.color);
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, esCaminando(cam.velocidad));
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad);
 }
 function dibujarEtiquetaRep(ctx, cx, cy, texto, color) {
   ctx.font = '700 12px system-ui'; ctx.textAlign = 'center';
@@ -2209,7 +2234,7 @@ function cargarEditorDatos() {
   const guardado = lsGet('correr_editor_keyframes_v3', null);
   editorDatos = guardado || JSON.parse(JSON.stringify(EDITOR_KEYFRAMES_DEFAULT));
 }
-function guardarEditorDatos() { lsSet('correr_editor_keyframes_v3', editorDatos); }
+function guardarEditorDatos() { lsSet('correr_editor_keyframes_v3', editorDatos); corredorDatosCache = null; }
 function datosActuales() { return editorDatos[editorModo].poses[editorMomento]; }
 
 function abrirEditor() {
@@ -2483,6 +2508,7 @@ function iniciarSesion() {
   tiempoSubidaSeg = 0;
   elevGanadaAcumM = 0;
   puntosSesion = [];
+  metaAlcanzada = false;
 
   fantasmaId = document.getElementById('selectFantasma').value || null;
   puntosFantasma = null;
@@ -2543,6 +2569,16 @@ function tick() {
   document.getElementById('hudCadencia').textContent = cadencia || '--';
   document.getElementById('hudDistancia').textContent = (distanciaAcumM / 1000).toFixed(2);
   document.getElementById('hudTiempo').textContent = segAHMS(t);
+  const progresoMeta = calcularProgresoMeta(t, distanciaAcumM);
+  if (progresoMeta) {
+    document.getElementById('tileMeta').style.display = 'block';
+    document.getElementById('hudMeta').textContent = metaTipo === 'tiempo' ? segAHMS(progresoMeta.restante) : (progresoMeta.restante / 1000).toFixed(2);
+    document.getElementById('lblMeta').textContent = (metaTipo === 'tiempo' ? 'Restante' : 'Restante km') + ' (' + Math.round(progresoMeta.pct) + '%)';
+    if (progresoMeta.alcanzada && !metaAlcanzada) {
+      metaAlcanzada = true;
+      toast('¡Meta alcanzada! Podés seguir o finalizar cuando quieras');
+    }
+  }
   if (modo === 'aire_libre') {
     document.getElementById('hudDesnivel').textContent = Math.round(elevGanadaAcumM);
   } else {
@@ -2741,6 +2777,7 @@ function resetearHUD() {
   document.getElementById('zonaActualTxt').textContent = '--';
   document.getElementById('selectFantasma').disabled = false;
   document.getElementById('tileFantasma').style.display = 'none';
+  document.getElementById('tileMeta').style.display = 'none';
   document.getElementById('hudFantasma').classList.remove('adelante', 'atras');
   puntosFantasma = null;
   renderSelectorFantasma();
@@ -3056,6 +3093,7 @@ function mostrarResumenPost(s) {
   marcarAnimoSeleccionado('animoPostRow', null);
   document.getElementById('rpePostSlider').value = 5;
   document.getElementById('lblRpePost').textContent = '--';
+  document.getElementById('descRpePost').textContent = RPE_DESCRIPCIONES[5];
   const ov = document.getElementById('overlayResumenPost');
   ov.classList.add('activa'); ov.scrollTop = 0;
 }
@@ -3072,6 +3110,7 @@ function abrirDetalle(id) {
   marcarAnimoSeleccionado('animoDetalleRow', s.animo || null);
   document.getElementById('rpeDetalleSlider').value = s.rpe || 5;
   document.getElementById('lblRpeDetalle').textContent = s.rpe != null ? s.rpe : '--';
+  document.getElementById('descRpeDetalle').textContent = RPE_DESCRIPCIONES[s.rpe || 5];
   document.getElementById('overlayDetalle').classList.add('activa');
   document.getElementById('overlayDetalle').scrollTop = 0;
   requestAnimationFrame(() => dibujarGraficasDetalle(s));
@@ -3370,10 +3409,24 @@ function actualizarAnimoPost(valor) {
   actualizarAnimoSesion(sesionRecienGuardadaId, valor);
   marcarAnimoSeleccionado('animoPostRow', valor);
 }
+// escala de esfuerzo percibido (RPE, estilo Borg CR10) — para saber qué número poner sin adivinar
+const RPE_DESCRIPCIONES = {
+  1: 'Muy, muy liviano — casi no sentís esfuerzo',
+  2: 'Muy liviano',
+  3: 'Liviano — podés charlar sin cortarte',
+  4: 'Moderado — charla cómoda',
+  5: 'Algo intenso — charla posible, con esfuerzo',
+  6: 'Intenso — solo frases cortas',
+  7: 'Muy intenso — cuesta hablar',
+  8: 'Muy, muy intenso — casi no podés hablar',
+  9: 'Casi al máximo',
+  10: 'Esfuerzo máximo — no podrías sostenerlo más',
+};
 function actualizarRpePost(valor) {
   if (!sesionRecienGuardadaId) return;
   actualizarRpeSesion(sesionRecienGuardadaId, Number(valor));
   document.getElementById('lblRpePost').textContent = valor;
+  document.getElementById('descRpePost').textContent = RPE_DESCRIPCIONES[valor] || '';
 }
 function actualizarAnimoDetalle(valor) {
   if (!sesionDetalleActual) return;
@@ -3386,6 +3439,7 @@ function actualizarRpeDetalle(valor) {
   actualizarRpeSesion(sesionDetalleActual.id, Number(valor));
   sesionDetalleActual.rpe = Number(valor);
   document.getElementById('lblRpeDetalle').textContent = valor;
+  document.getElementById('descRpeDetalle').textContent = RPE_DESCRIPCIONES[valor] || '';
 }
 
 /* ============================================================
