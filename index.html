@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v35</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v37</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1110,6 +1110,41 @@
        haría la UI, no pisando variables a mano): progreso y "alcanzada"
        correctos para tiempo y distancia, restante nunca negativo tras
        pasarse de la meta, y las 10 descripciones de RPE completas.
+   v36: Hugo notó que el corredor animado iba a la mitad de los pasos
+       por minuto reales, y sospechó bien: era una confusión de
+       zancadas vs pasos. Confirmado con la especificación oficial de
+       Bluetooth (RSC Measurement, documentación de Nordic Semiconductor):
+       el campo "Instantaneous Cadence" es 1 unidad = 1 ZANCADA/min
+       (stride, un ciclo de ambos pies), no pasos/min — al revés de la
+       convención de Garmin (steps per minute, ambos pies contados por
+       separado), que es la que usa el resto de la app (HUD, historial,
+       exportación TCX, y la fórmula de la animación). handleRSC()
+       guardaba el valor crudo del sensor tal cual, así que quedaba a
+       la mitad de lo real en todos lados downstream. Arreglado en el
+       único lugar donde entra el dato (handleRSC, x2 al leer el byte),
+       no en cada fórmula que lo usa después. Importante: esto también
+       afectaba sesiones YA GUARDADAS en modo "Sensor BLE" — la
+       cadencia que quedó grabada en esas sesiones también está a la
+       mitad de la real. Confirmado que Manual (Hugo tipea el número
+       directo) y Aire libre (conectarBandaHR sólo suscribe al servicio
+       de pulso, nunca pasa por RSC) nunca tuvieron el bug, y TCX
+       importado tampoco (Garmin ya exporta en la convención correcta).
+       Verificado sobre el código real, simulando el byte crudo que
+       mandaría el sensor: con cadencia real de 160 pasos/min (80
+       zancadas/min crudas), antes la animación completaba 80 pasos
+       visuales/min, después 160 — coincide con el reporte de Hugo.
+   v37: el scrub táctil de las gráficas del detalle de sesión ya existía
+       desde v33 (la línea de texto abajo con tiempo/ritmo/pulso/cadencia
+       al arrastrar el dedo) — lo que faltaba, y pidió Hugo, era la parte
+       visual: ver EN el gráfico dónde cae ese punto. dibujarMiniChartSesion()
+       ahora acepta un punto marcado opcional y dibuja una línea vertical
+       punteada + un círculo sobre la curva exacta, en los 4 mini-gráficos
+       a la vez (Ritmo/Pulso/Cadencia/Potencia), sincronizados con la
+       misma posición que ya muestra el texto. Verificado sobre el código
+       real: sin punto marcado no dibuja nada extra, con uno marcado
+       dibuja el círculo en la posición X/Y exacta que corresponde a ese
+       valor, y si el punto tocado no tiene dato para esa métrica en
+       particular (ej. sin potencia en ese instante) no dibuja nada ahí.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1492,7 +1527,12 @@ function handleRSC(event) {
   let idx = 1;
   const speedRaw = v.getUint16(idx, true); idx += 2;
   const speed = speedRaw / 256; // m/s
-  const cadence = v.getUint8(idx); idx += 1; // spm, tal cual lo reporta el dispositivo
+  // OJO: el campo "Instantaneous Cadence" del estándar Bluetooth RSC es 1 unidad = 1 ZANCADA/min
+  // (stride, un ciclo de ambos pies), no pasos/min — a diferencia de la convención de Garmin (y
+  // del resto de esta app: HUD, historial, TCX, fórmula de la animación), que siempre usa pasos
+  // TOTALES por minuto (ambos pies contados). Por eso se multiplica x2 acá, en el único lugar
+  // donde entra el dato crudo — así "cadencia" significa lo mismo en toda la app.
+  const cadence = v.getUint8(idx) * 2; idx += 1; // pasos/min totales (BLE manda zancadas/min)
   actual.velocidad = speed;
   actual.cadencia = cadence;
 }
@@ -3327,7 +3367,7 @@ function procesarRetoJSON(texto, nombreOverride) {
 // invertirY=true significa "el valor más BAJO se dibuja arriba" (usado para ritmo: más rápido = mejor).
 // formateador(v) da el texto de la etiqueta (ej. mm:ss para ritmo, número plano para lo demás).
 // Devuelve {minV, maxV} o null si no hay datos suficientes (para que el llamador pueda ocultar la tarjeta).
-function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formateador, tMax) {
+function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formateador, tMax, puntoMarcado) {
   const canvas = document.getElementById(canvasId);
   const ctx = canvas.getContext('2d');
   const w = canvas.clientWidth, h = canvas.clientHeight || 100;
@@ -3353,17 +3393,34 @@ function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formate
   ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif';
   ctx.fillText(formateador(valorArriba), 4, 12);
   ctx.fillText(formateador(valorAbajo), 4, h - 4);
+  // marcador del punto tocado (scrub): línea vertical punteada + punto sobre la curva, para ver
+  // a simple vista EN QUÉ lugar del gráfico cae el valor que se muestra como texto abajo.
+  if (puntoMarcado && puntoMarcado[key] != null && puntoMarcado[key] > 0) {
+    const mx = escalaX(puntoMarcado.t), my = escalaY(puntoMarcado[key]);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, h); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.ellipse(mx, my, 4, 4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = color;
+    ctx.beginPath(); ctx.ellipse(mx, my, 2.3, 2.3, 0, 0, 7); ctx.fill();
+    ctx.restore();
+  }
   return { minV, maxV };
 }
 function dibujarGraficasDetalle(s) {
   const puntos = puntosDeSesion(s);
   if (!puntos.length) return;
   const tMax = puntos[puntos.length - 1].t || 1;
-  dibujarMiniChartSesion('chartDetRitmo', puntos, 'ritmo', '#4FD8C4', true, v => segAMMSS(Math.round(v)), tMax);
-  dibujarMiniChartSesion('chartDetPulso', puntos, 'pulso', '#FF6B57', false, v => Math.round(v), tMax);
-  dibujarMiniChartSesion('chartDetCadencia', puntos, 'cadencia', '#818B95', false, v => Math.round(v), tMax);
-  const hayPotencia = dibujarMiniChartSesion('chartDetPotencia', puntos, 'potencia', '#F5C542', false, v => Math.round(v), tMax);
-  document.getElementById('chartDetPotenciaWrap').style.display = hayPotencia ? 'block' : 'none';
+  function redibujar(puntoMarcado) {
+    dibujarMiniChartSesion('chartDetRitmo', puntos, 'ritmo', '#4FD8C4', true, v => segAMMSS(Math.round(v)), tMax, puntoMarcado);
+    dibujarMiniChartSesion('chartDetPulso', puntos, 'pulso', '#FF6B57', false, v => Math.round(v), tMax, puntoMarcado);
+    dibujarMiniChartSesion('chartDetCadencia', puntos, 'cadencia', '#818B95', false, v => Math.round(v), tMax, puntoMarcado);
+    const hayPotencia = dibujarMiniChartSesion('chartDetPotencia', puntos, 'potencia', '#F5C542', false, v => Math.round(v), tMax, puntoMarcado);
+    document.getElementById('chartDetPotenciaWrap').style.display = hayPotencia ? 'block' : 'none';
+  }
+  redibujar(null);
 
   // ---- scrub táctil compartido entre los 4 mini-gráficos ----
   const info = document.getElementById('scrubInfo');
@@ -3376,6 +3433,7 @@ function dibujarGraficasDetalle(s) {
     info.textContent = segAHMS(cercano.t) + ' · ' + (cercano.ritmo ? segAMMSS(cercano.ritmo) + '/km' : '--') +
       ' · ' + (cercano.pulso || '--') + ' bpm' + (cercano.cadencia ? (' · ' + cercano.cadencia + ' spm') : '') +
       (cercano.potencia ? (' · ' + cercano.potencia + ' W') : '');
+    redibujar(cercano);
   }
   ['chartDetRitmo', 'chartDetPulso', 'chartDetCadencia', 'chartDetPotencia'].forEach(id => {
     const cv = document.getElementById(id);
