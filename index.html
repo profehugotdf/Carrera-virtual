@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v37</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v40</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -183,10 +183,10 @@
       </div>
 
       <div id="panelBLE" style="display:none;">
-        <button class="btn" id="btnConectarReloj" onclick="conectarRelojBLE()">Conectar sensor (reloj Virtual Run o banda HRM-Pro Plus)</button>
+        <button class="btn" id="btnConectarReloj" onclick="conectarRelojBLE()">Conectar sensor de ritmo/cadencia (BLE RSC)</button>
         <button class="btn chico" id="btnConectarBandaAparte" onclick="conectarBandaHR()">+ Conectar banda de pulso aparte</button>
         <div class="estado-conexion" id="estadoBLE">Sin conectar.</div>
-        <div class="estado-conexion" style="margin-top:6px;">La HRM-Pro Plus transmite ritmo y distancia por acelerómetro (sin GPS), ideal para gimnasio bajo techo sin cinta. Aparece en la búsqueda igual que el reloj — elegí la banda directamente, no hace falta emparejarla primero con el reloj.</div>
+        <div class="estado-conexion" style="margin-top:6px;">Compatible con relojes en modo carrera virtual/tapiz y bandas de pecho tipo HRM-Pro que transmiten ritmo y distancia por acelerómetro (sin GPS) — ideal para gimnasio bajo techo sin cinta. La banda aparece en la búsqueda igual que el reloj; elegila directamente, no hace falta emparejarla primero con el reloj.</div>
       </div>
 
       <div id="panelManual" style="display:none;">
@@ -336,13 +336,14 @@
     <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
     <div class="card" id="cardForma">
       <button class="card-cerrar" onclick="document.getElementById('cardForma').style.display='none'">✕</button>
-      <h2>Forma (CTL / ATL / TSB)</h2>
+      <h2>Forma (CTL / ATL / TSB) — todas las apps</h2>
       <canvas id="chartForma" height="140"></canvas>
       <div class="fila" style="margin-top:8px; text-align:center; font-family:var(--mono); font-size:12px;">
         <div>CTL<br><b id="formaCTL" style="color:var(--ritmo);font-size:16px;">0</b></div>
         <div>ATL<br><b id="formaATL" style="color:var(--pulso);font-size:16px;">0</b></div>
         <div>TSB<br><b id="formaTSB" style="font-size:16px;">0</b></div>
       </div>
+      <div class="estado-conexion" id="formaDesglose" style="margin-top:8px;"></div>
     </div>
     <div class="card" id="cardEvolucion">
       <button class="card-cerrar" onclick="document.getElementById('cardEvolucion').style.display='none'">✕</button>
@@ -428,7 +429,8 @@
   <section class="view" id="view-importar">
     <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
     <div class="card">
-      <h2>Importar TCX (Garmin Connect / TrainingPeaks)</h2>
+      <h2>Importar TCX</h2>
+      <div class="estado-conexion" style="margin-bottom:8px;">Formato estándar de la industria, compatible con relojes GPS y plataformas de entrenamiento habituales. Los nombres de marca que puedan aparecer en esta pantalla son solo para indicar compatibilidad — esta app es un proyecto personal, sin afiliación con esas empresas.</div>
       <div class="file-drop">
         <input type="file" id="inputTCX" accept=".tcx,application/xml,text/xml" onchange="manejarArchivoTCX(event)">
       </div>
@@ -1143,8 +1145,79 @@
        misma posición que ya muestra el texto. Verificado sobre el código
        real: sin punto marcado no dibuja nada extra, con uno marcado
        dibuja el círculo en la posición X/Y exacta que corresponde a ese
-       valor, y si el punto tocado no tiene dato para esa métrica en 
+       valor, y si el punto tocado no tiene dato para esa métrica en
        particular (ej. sin potencia en ese instante) no dibuja nada ahí.
+   v38: Hugo pidió ponderar Bici Indoor y Correr juntos para la aptitud
+       física, no por separado. Dato técnico favorable: las dos apps
+       viven bajo el mismo dominio (profehugotdf.github.io, solo cambia
+       la carpeta), y localStorage se comparte por origen — no hace
+       falta ningún mecanismo de sincronización entre apps, ya estaban
+       en condiciones de compartir datos. Y de hecho ya lo hacían a
+       medias: Correr venía escribiendo cada sesión en la clave
+       compartida K_FORMA_COMPARTIDA (entrenamiento_forma_registro)
+       desde el principio del proyecto, con la idea explícita (en un
+       comentario viejo) de armar el panel combinado más adelante — hoy
+       era ese "más adelante". Nueva calcularSerieFormaCombinada(): lee
+       TODAS las entradas de la clave compartida sin importar el
+       deporte, sumando el TSS del mismo día entre apps antes de
+       aplicar el EWMA, y devuelve además el desglose de TSS acumulado
+       por deporte. La tarjeta "Forma" en Historial pasó a usar esto
+       como vista principal (antes solo miraba las sesiones propias de
+       Correr), con el desglose mostrado debajo. De paso, encontré y
+       arreglé un bug real revisando esto: al borrar una sesión de
+       Correr, su TSS quedaba pegado para siempre en el registro
+       compartido — ahora eliminarSesion()/borrarTodasLasSesiones()
+       también lo sacan de ahí (agregado el id de sesión al registro
+       para poder identificarlo), sin tocar las entradas que pueda
+       haber escrito Bici Indoor. Importante: esto depende de que Bici
+       Indoor escriba en el mismo formato ({fecha, deporte, tss}) en
+       esa misma clave — no tengo el código de esa app en este chat
+       para confirmarlo, así que si el nombre de deporte o la clave no
+       coinciden del todo, avisame o pasame ese código y lo reviso.
+       Verificado sobre el código real: el desglose por deporte suma
+       bien TSS de dos deportes distintos el mismo día, y borrar una
+       sesión de Correr limpia solo su propia entrada del registro
+       compartido sin tocar una entrada simulada de "bici".
+   v39: Hugo compartió lo que hizo el chat de Bici Indoor (v101) para
+       escribir del otro lado — formato exactamente compatible (id=su
+       campo date completo, fecha=los primeros 10 caracteres de eso
+       mismo). Probado con ese formato real (no solo el mío) contra
+       calcularSerieFormaCombinada y eliminarSesion: todo funciona sin
+       tocar nada del código de Correr. De paso revisé el criterio de
+       Bici Indoor de excluir sesiones mode:"tcx" del TSS — Correr ya
+       hace algo equivalente pero con una diferencia de diseño: no
+       excluye automático, le da al usuario la opción en el momento de
+       importar (botón "usar para zonas" = no cuenta, botón "guardar
+       como sesión" = si cuenta) — se lo señalé a Hugo por si quiere
+       unificar el criterio entre apps. Al revisar todo esto encontré
+       un vacío real: el backup general de Correr (v32) nunca incluía
+       el registro compartido de Forma — restaurar sesiones en un
+       teléfono nuevo no traía de vuelta su aporte al panel combinado.
+       Agregado formaCompartida al paquete de exportarBackupJSON (solo
+       las entradas propias, deporte:'correr', nunca las de otra app),
+       y fusión por id en procesarBackupJSON (mismo criterio que
+       sesiones: nunca reemplaza de golpe, no duplica si ya estaba, no
+       toca entradas de Bici Indoor que ya hubiera en el teléfono
+       destino). Verificado sobre el código real: el backup exportado
+       no incluye entradas ajenas, restaurar en un teléfono con datos
+       de bici ya cargados no pisa nada, y restaurar el mismo backup
+       dos veces no duplica.
+   v40: Hugo preguntó si convenía bajar el riesgo de marca (Garmin,
+       TrainingPeaks) en el texto visible. Categoricé las 17 menciones
+       que había: la mayoría son comentarios internos del código (nunca
+       llegan a pantalla) o las URLs del schema XML / MIME type que el
+       propio formato TCX exige para funcionar (xmlns=".../garmin/...",
+       "application/vnd.garmin.tcx+xml") — esas no se tocan, cambiarlas
+       rompería la exportación real. Las 4 que sí eran texto visible se
+       suavizaron: el botón/estado de conectar sensor pasó a describir
+       la capacidad (BLE RSC, banda de pecho "tipo HRM-Pro") en vez de
+       nombrar el producto Garmin como descriptor principal, y el
+       título "Importar TCX (Garmin Connect / TrainingPeaks)" quedó
+       como "Importar TCX" con un disclaimer de no afiliación debajo.
+       "TCX" en sí se dejó tal cual — es un nombre de formato de
+       archivo de uso genérico en toda la industria (como "PDF"), no
+       una marca en el sentido que importa acá. Confirmado con grep que
+       no queda ninguna mención de marca fuera de comentarios internos.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1485,7 +1558,7 @@ async function conectarRelojBLE() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
   try {
     const estadoEl = document.getElementById('estadoBLE');
-    estadoEl.textContent = 'Buscando sensor (reloj con Carrera Virtual activada, o banda HRM-Pro Plus)...';
+    estadoEl.textContent = 'Buscando sensor (reloj en modo carrera virtual/tapiz, o banda de pecho compatible)...';
     estadoEl.className = 'estado-conexion';
     const device = await navigator.bluetooth.requestDevice({
       filters: [{ services: ['running_speed_and_cadence'] }],
@@ -2883,9 +2956,20 @@ function guardarUmbralManual() {
    ============================================================ */
 function actualizarFormaCompartida(sesion) {
   const registro = lsGet(K_FORMA_COMPARTIDA, []);
-  registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss });
+  registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss, id: sesion.id });
   lsSet(K_FORMA_COMPARTIDA, registro);
 }
+// saca del registro compartido la entrada de ESTA sesión puntual (por id) — así al borrar una
+// sesión de Correr no le queda el TSS pegado para siempre en la forma combinada. Solo toca
+// entradas propias (deporte:'correr'), nunca las que puedan venir de Bici Indoor u otra app.
+function eliminarDeFormaCompartida(sesionId) {
+  const registro = lsGet(K_FORMA_COMPARTIDA, []);
+  lsSet(K_FORMA_COMPARTIDA, registro.filter(r => !(r.deporte === 'correr' && r.id === sesionId)));
+}
+// Cálculo de forma usando SOLO las sesiones de esta app — reemplazada como vista principal por
+// calcularSerieFormaCombinada() (ver abajo), que también suma lo que escriban otras apps
+// (Bici Indoor, etc.) en K_FORMA_COMPARTIDA. Se deja disponible por si hace falta un desglose de
+// "solo Correr" más adelante.
 function calcularSerieForma() {
   // Uso únicamente las sesiones de esta app (correr) para el gráfico local de "Historial".
   // El panel combinado (cuando se arme) va a leer K_FORMA_COMPARTIDA y sumar todos los deportes.
@@ -2910,6 +2994,33 @@ function calcularSerieForma() {
   }
   const ultimo = serie[serie.length - 1];
   return { serie, ctl: ultimo.ctl, atl: ultimo.atl, tsb: ultimo.tsb };
+}
+// pondera TODOS los deportes que escriben en K_FORMA_COMPARTIDA (Correr, Bici Indoor, y
+// cualquier otra app que use la misma clave) en un único CTL/ATL/TSB — para esto alcanza con que
+// las apps compartan dominio (profehugotdf.github.io), ya que localStorage se comparte por
+// origen, no por carpeta. Devuelve además el desglose de TSS acumulado por deporte, para poder
+// mostrar cuánto aportó cada uno.
+function calcularSerieFormaCombinada() {
+  const registro = [...lsGet(K_FORMA_COMPARTIDA, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  if (!registro.length) return { serie: [], ctl: 0, atl: 0, tsb: 0, porDeporte: {} };
+  const porDia = {}, porDeporte = {};
+  registro.forEach(r => {
+    porDia[r.fecha] = (porDia[r.fecha] || 0) + (r.tss || 0);
+    porDeporte[r.deporte] = (porDeporte[r.deporte] || 0) + (r.tss || 0);
+  });
+  const dias = Object.keys(porDia).sort();
+  const inicio = new Date(dias[0]);
+  const fin = new Date();
+  let ctl = 0, atl = 0;
+  const serie = [];
+  for (let d = new Date(inicio); d <= fin; d.setDate(d.getDate() + 1)) {
+    const key = d.toISOString().slice(0, 10);
+    const r = pasoEWMA(ctl, atl, porDia[key] || 0);
+    ctl = r.ctl; atl = r.atl;
+    serie.push({ fecha: key, ctl, atl, tsb: r.tsb });
+  }
+  const ultimo = serie[serie.length - 1];
+  return { serie, ctl: ultimo.ctl, atl: ultimo.atl, tsb: ultimo.tsb, porDeporte };
 }
 
 /* ============================================================
@@ -3028,11 +3139,15 @@ function renderHistorial() {
         '</div></div>';
     }).join('');
   }
-  const forma = calcularSerieForma();
+  const forma = calcularSerieFormaCombinada();
   document.getElementById('formaCTL').textContent = forma.ctl.toFixed(1);
   document.getElementById('formaATL').textContent = forma.atl.toFixed(1);
   document.getElementById('formaTSB').textContent = forma.tsb.toFixed(1);
   dibujarChartForma(forma.serie);
+  const deportes = Object.keys(forma.porDeporte || {}).sort((a, b) => forma.porDeporte[b] - forma.porDeporte[a]);
+  document.getElementById('formaDesglose').textContent = deportes.length
+    ? ('TSS acumulado por deporte (todo lo que haya en el navegador): ' + deportes.map(d => d + ' ' + Math.round(forma.porDeporte[d])).join(' · '))
+    : 'Todavía no hay TSS registrado de ninguna app.';
   renderEvolucionSesiones();
 }
 // promedios por sesión (ritmo/pulso/cadencia), en orden cronológico, para ver la tendencia
@@ -3218,6 +3333,7 @@ function eliminarSesion(id) {
   if (!confirm('¿Eliminar esta sesión? No se puede deshacer.')) return;
   const sesiones = lsGet(K_SESIONES, []).filter(x => x.id !== id);
   lsSet(K_SESIONES, sesiones);
+  eliminarDeFormaCompartida(id);
   renderHistorial();
   toast('Sesión eliminada');
 }
@@ -3226,6 +3342,8 @@ function borrarTodasLasSesiones() {
   if (!sesiones.length) { toast('No hay sesiones guardadas'); return; }
   if (!confirm('¿Borrar las ' + sesiones.length + ' sesiones guardadas? No se puede deshacer. Si querés conservarlas, primero tocá "Exportar todo".')) return;
   lsSet(K_SESIONES, []);
+  const registro = lsGet(K_FORMA_COMPARTIDA, []);
+  lsSet(K_FORMA_COMPARTIDA, registro.filter(r => r.deporte !== 'correr'));
   renderHistorial();
   toast('Se borraron todas las sesiones');
 }
@@ -3241,6 +3359,7 @@ function exportarBackupJSON() {
     zonas: lsGet(K_ZONAS, {}),
     mejoresEsfuerzos: lsGet(K_MEJORES, {}),
     editorKeyframes: lsGet('correr_editor_keyframes_v3', null),
+    formaCompartida: lsGet(K_FORMA_COMPARTIDA, []).filter(r => r.deporte === 'correr'),
   };
   const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -3279,6 +3398,14 @@ function procesarBackupJSON(texto) {
       editorDatos = null; // fuerza a releer de localStorage la próxima vez que se abra el editor
       editorRestaurado = true;
     }
+  }
+  // fusiono por id, igual criterio que las sesiones — nunca reemplazo de golpe, y nunca toco
+  // entradas que puedan haber quedado ahí de otra app (Bici Indoor u otra) en este mismo teléfono
+  if (Array.isArray(paquete.formaCompartida)) {
+    const registro = lsGet(K_FORMA_COMPARTIDA, []);
+    const idsForma = new Set(registro.map(r => r.id));
+    const nuevasForma = paquete.formaCompartida.filter(r => !idsForma.has(r.id));
+    lsSet(K_FORMA_COMPARTIDA, [...registro, ...nuevasForma]);
   }
   renderHistorial();
   toast('Backup importado: ' + nuevas.length + ' sesiones nuevas (' + (paquete.sesiones.length - nuevas.length) + ' ya existían)' + (editorRestaurado ? ' + edición del corredor restaurada' : ''));
