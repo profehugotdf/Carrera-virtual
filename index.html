@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v40</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v41</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1218,6 +1218,30 @@
        archivo de uso genérico en toda la industria (como "PDF"), no
        una marca en el sentido que importa acá. Confirmado con grep que
        no queda ninguna mención de marca fuera de comentarios internos.
+   v41: se integraron los 4 módulos de ANT+ Running Dynamics que armó y
+       verificó el chat dedicado a esto (parser de Data Page 0/1,
+       handshake de apertura de sesión, máquina de estados con
+       verificación de identidad + timeouts propios, acumulador de
+       step count con rollover). No fue un copy-paste directo: cada
+       pieza pasó por una revisión propia acá — bit-packing del parser
+       recalculado a mano en Python contra la tabla del PDF (no contra
+       el código), byte layout del handshake cruzado con conocimiento
+       propio de Common Data Pages, y los 6 casos de la máquina de
+       estados trazados a mano antes de confiar en que el test "pasó".
+       Encontré dos gaps reales que el otro chat corrigió con timeouts propios y
+       verificación de sessionLeaderId antes de asumir liderazgo.
+       IMPORTANTE — estado de la integración: estas funciones están
+       DEFINIDAS y PROBADAS (con datos sintéticos) pero TODAVÍA NO
+       conectadas a ningún flujo real de la app — no hay UI, no hay
+       botón, no se llaman desde ningún lado todavía. Falta la capa
+       que abre el segundo canal ANT+ de verdad por WebUSB, reusando
+       el código que ya existe en Bici Indoor para eso — decisión
+       consciente de dejar esa capa para el chat que tiene ese contexto
+       directo, en vez de intermediar entre chats más de lo necesario.
+       Verificado sobre el código real de correr.html (no solo los
+       archivos sueltos): las 4 piezas funcionan igual ya integradas,
+       en el mismo scope que el resto de la app, sin colisión de
+       nombres con nada existente.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3757,6 +3781,331 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     toast('Sesión importada y guardada · TSS ' + tss);
     mostrarResumenPost(sesion);
   };
+}
+
+/* ============================================================
+   ANT+ RUNNING DYNAMICS — parser, handshake y sesión
+   Fuente: ANT+ Device Profile - Running Dynamics Rev 1.1,
+           ANT+ Device Profile - Heart Rate Rev 2.5
+   Revisado y verificado a mano (byte por byte, y el trace completo de la
+   máquina de estados) contra las tablas del PDF antes de integrar acá.
+
+   ESTADO: verificado y probado standalone (con datos sintéticos), pero
+   TODAVÍA NO conectado a ningún flujo real de la app. Falta la capa que
+   abre el segundo canal ANT+ de verdad por WebUSB (reusando lo que ya
+   existe en Bici Indoor para eso) y lo conecta con RdSessionController
+   vía las acciones que devuelve: openRdChannelAsLeader/Follower,
+   sendAcked, sendBroadcast. Sin esa capa, estas funciones no se llaman
+   desde ningún lado todavía — es intencional, para no enganchar código
+   USB no probado (bien puede fallar distinto a lo que dice la spec,
+   como ya se vio en el foro de Garmin) por encima de código que sí
+   está confirmado.
+   ============================================================ */
+
+// Parser ANT+ Running Dynamics — Data Page 0 (0x00) y Data Page 1 (0x01)
+// Fuente: ANT+ Device Profile - Running Dynamics, Rev 1.1, secciones 6.4 y 6.5
+
+function parseRunningDynamicsPage0(bytes) {
+  if (bytes[0] !== 0x00) throw new Error('No es Data Page 0');
+  const b1 = bytes[1], b2 = bytes[2], b3 = bytes[3], b4 = bytes[4],
+        b5 = bytes[5], b6 = bytes[6], b7 = bytes[7];
+
+  const cadenceInt = b1;
+  const cadenceFracCode = b2 & 0x1F;              // bits0-4
+  const walkingFlag = (b2 >> 5) & 0x1;             // bit5
+  // bit6: "Bidirectional Channel Support". Confirmado en el PDF (Tabla 6-8), pero con
+  // esta nota textual: "This field is only used for Running Dynamics, not HR-Running
+  // Dynamics." La HRM-Pro Plus es HR-Running Dynamics -> este bit NO tiene significado
+  // definido para nuestro sensor. Se lee igual (por si algún día se usa un pod standalone),
+  // pero NO se debe mostrar en la UI de correr.html como un dato confiable.
+  const bidirectionalSupport = (b2 >> 6) & 0x1;
+
+  const verticalOscillationRaw = b3 | ((b4 & 0x07) << 8);        // 11 bits: byte3 + bits0-2 de byte4
+  const voFracCode = (b4 >> 3) & 0x03;                            // bits3-4 de byte4
+
+  const groundContactTimeRaw = ((b4 >> 5) & 0x07) | (b5 << 3);   // bits5-7 de byte4 (LSB) + byte5 (MSB)
+
+  const stanceTimeInt = b6 & 0x7F;                 // bits0-6 de byte6
+  const stanceFracLSBit = (b6 >> 7) & 0x1;         // bit7 de byte6
+  const stanceFracMSBit = b7 & 0x1;                // bit0 de byte7
+  const stanceFracCode = stanceFracLSBit | (stanceFracMSBit << 1);
+
+  const stepCount = (b7 >> 1) & 0x7F;              // bits1-7 de byte7
+
+  const cadenceValid = cadenceInt !== 0;
+  const vgtValid = !(verticalOscillationRaw === 0 && groundContactTimeRaw === 0);
+
+  return {
+    cadence: cadenceValid ? cadenceInt + cadenceFracCode * 0.03125 : null,
+    walking: !!walkingFlag,
+    bidirectionalSupport: !!bidirectionalSupport, // ver nota arriba: no definido para HR-RD, no mostrar en UI
+    verticalOscillationMm: verticalOscillationRaw === 0 ? null : verticalOscillationRaw + voFracCode * 0.25,
+    groundContactTimeMs: groundContactTimeRaw === 0 ? null : groundContactTimeRaw,
+    stanceTimePercent: (stanceTimeInt === 0 || stanceTimeInt > 100) ? null : stanceTimeInt + stanceFracCode * 0.25,
+    stepCount, // campo rollover, acumular en el llamador
+  };
+}
+
+function parseRunningDynamicsPage1(bytes) {
+  if (bytes[0] !== 0x01) throw new Error('No es Data Page 1');
+  const b1 = bytes[1], b2 = bytes[2], b3 = bytes[3], b4 = bytes[4], b5 = bytes[5];
+
+  const gcBalanceInt = b1 & 0x7F;                  // bits0-6 de byte1
+  const gcBalanceFracLSBit = (b1 >> 7) & 0x1;      // bit7 de byte1
+  const gcBalanceFrac4MSBits = b2 & 0x0F;          // bits0-3 de byte2
+  const gcBalanceFracCode = gcBalanceFracLSBit | (gcBalanceFrac4MSBits << 1);
+
+  const verticalRatioLSBits = (b2 >> 4) & 0x0F;    // bits4-7 de byte2
+  const verticalRatioMSBits = b3 & 0x07;           // bits0-2 de byte3
+  const verticalRatioInt = verticalRatioLSBits | (verticalRatioMSBits << 4);
+  const verticalRatioFracCode = (b3 >> 3) & 0x1F;  // bits3-7 de byte3
+
+  const stepLengthRaw = b4 | ((b5 & 0x1F) << 8);   // byte4 + bits0-4 de byte5 (13 bits)
+  const moduleUpsideDown = (b5 >> 5) & 0x1;        // bit5 de byte5
+
+  return {
+    groundContactBalancePercent: (gcBalanceInt === 0 || gcBalanceInt > 100) ? null : gcBalanceInt + gcBalanceFracCode * 0.03125,
+    verticalRatioPercent: (verticalRatioInt === 0 || verticalRatioInt > 100) ? null : verticalRatioInt + verticalRatioFracCode * 0.03125,
+    stepLengthMm: stepLengthRaw === 0 ? null : stepLengthRaw,
+    moduleUpsideDown: !!moduleUpsideDown,
+    // sessionLeaderID (bytes 6-7) intencionalmente ignorado: para HR-RD siempre es 0xFFFF (inválido)
+  };
+}
+
+const RD_FREQ_ENUM_TO_CHANNEL_CODE = { 1: 3, 2: 39, 3: 75, 4: 61 };
+const RD_CHANNEL_CODE_TO_FREQ_ENUM = { 3: 1, 39: 2, 75: 3, 61: 4 };
+const VALID_RD_CHANNEL_CODES = [3, 39, 61, 75];
+
+function buildOpenChannelCommand(sessionLeaderId3Bytes, channelFreqCode) {
+  if (sessionLeaderId3Bytes.length !== 3) throw new Error('sessionLeaderId3Bytes debe tener 3 bytes');
+  if (!VALID_RD_CHANNEL_CODES.includes(channelFreqCode)) throw new Error('channelFreqCode inválido: ' + channelFreqCode);
+  const period = 8070;
+  return [
+    0x4A,
+    sessionLeaderId3Bytes[0], sessionLeaderId3Bytes[1], sessionLeaderId3Bytes[2],
+    30,
+    channelFreqCode,
+    period & 0xFF, (period >> 8) & 0xFF,
+  ];
+}
+
+function parseOpenChannelCommand(bytes) {
+  if (bytes[0] !== 0x4A) throw new Error('No es Data Page 74');
+  return {
+    sessionLeaderId3Bytes: [bytes[1], bytes[2], bytes[3]],
+    deviceType: bytes[4],
+    channelFreqCode: bytes[5],
+    channelPeriod: bytes[6] | (bytes[7] << 8),
+  };
+}
+
+function buildBackChannelPing(speedMps) {
+  if (speedMps == null || speedMps < 0 || speedMps > 14) {
+    return [0x10, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+  }
+  const intPart = Math.floor(speedMps);
+  const fracRaw = Math.round((speedMps - intPart) * 256) & 0xFF;
+  const fracLSBits = fracRaw & 0x0F;
+  const fracMSBits = (fracRaw >> 4) & 0x0F;
+  const byte1 = (intPart & 0x0F) | (fracLSBits << 4);
+  const byte2 = fracMSBits | (0x0F << 4);
+  return [0x10, byte1, byte2, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+}
+
+function buildCloseSessionMessage() {
+  return [0x4B, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+}
+
+function parseHrmDataPage4RdFrequency(bytes) {
+  const pageNumber = bytes[0] & 0x7F;
+  if (pageNumber !== 4) return null;
+  const freqEnum = bytes[1];
+  if (freqEnum === 0 || freqEnum > 4) {
+    return { rdChannelOpen: false, channelFreqCode: null };
+  }
+  return { rdChannelOpen: true, channelFreqCode: RD_FREQ_ENUM_TO_CHANNEL_CODE[freqEnum] };
+}
+
+function buildRequestDataPage(pageNumber, opts = {}) {
+  const { transmitCount = 1, untilAck = false } = opts;
+  const responseByte = untilAck ? 0x80 : (transmitCount & 0x7F);
+  return [0x46, 0xFF, 0xFF, 0xFF, 0xFF, responseByte, pageNumber, 0x01];
+}
+
+const PING_INTERVAL_MS = 1000;
+const REQUEST_ACK_TIMEOUT_MS = 2000;
+const MAX_REQUEST_ATTEMPTS = 3;
+const STALL_TIMEOUT_MS = 12000;
+const VERIFY_LEADERSHIP_TIMEOUT_MS = 3000;
+const OPENING_CHANNEL_TIMEOUT_MS = 5000;
+
+const STATE = {
+  IDLE: 'idle',
+  REQUESTING: 'requesting',
+  VERIFYING_LEADERSHIP: 'verifyingLeadership',
+  OPENING_CHANNEL: 'openingChannel',
+  LEADER: 'leader',
+  FOLLOWER: 'follower',
+  UNSUPPORTED: 'unsupported',
+  STALLED: 'stalled',
+  TIMED_OUT: 'timedOut',
+};
+
+function idsEqual(a, b) {
+  return a.length === b.length && a.every((v, i) => v === b[i]);
+}
+
+class RdSessionController {
+  constructor({ myId3Bytes, speedMpsProvider = () => null }) {
+    this.myId3Bytes = myId3Bytes;
+    this.speedMpsProvider = speedMpsProvider;
+    this._setState(STATE.IDLE, null);
+    this.requestAttempts = 0;
+    this.lastRequestSentAt = null;
+    this.lastPingSentAt = null;
+    this.lastRdDataAt = null;
+    this.pendingChannelFreqCode = null;
+    this.pendingRole = null;
+  }
+
+  _setState(state, now) {
+    this.state = state;
+    this.stateEnteredAt = now;
+  }
+
+  onHrmDataPage4(bytes, now) {
+    const info = parseHrmDataPage4RdFrequency(bytes);
+    if (!info) return { action: null };
+
+    if (this.state === STATE.IDLE && info.rdChannelOpen) {
+      this.pendingChannelFreqCode = info.channelFreqCode;
+      this.pendingRole = 'follower';
+      this._setState(STATE.OPENING_CHANNEL, now);
+      return { action: 'openRdChannelAsFollower', channelFreqCode: info.channelFreqCode };
+    }
+
+    if (this.state === STATE.REQUESTING && info.rdChannelOpen) {
+      this.pendingChannelFreqCode = info.channelFreqCode;
+      this._setState(STATE.VERIFYING_LEADERSHIP, now);
+      return { action: 'requestOpenChannelStatus', bytes: buildRequestDataPage(74) };
+    }
+
+    return { action: null };
+  }
+
+  onOpenChannelStatusReceived(bytes, now) {
+    if (this.state !== STATE.VERIFYING_LEADERSHIP) return { action: null };
+    const info = parseOpenChannelCommand(bytes);
+    const iAmLeader = idsEqual(info.sessionLeaderId3Bytes, this.myId3Bytes);
+    this.pendingRole = iAmLeader ? 'leader' : 'follower';
+    this._setState(STATE.OPENING_CHANNEL, now);
+    return {
+      action: iAmLeader ? 'openRdChannelAsLeader' : 'openRdChannelAsFollower',
+      channelFreqCode: this.pendingChannelFreqCode,
+    };
+  }
+
+  requestSession(now) {
+    if (this.state !== STATE.IDLE) return { action: null };
+    this._setState(STATE.REQUESTING, now);
+    this.requestAttempts = 1;
+    this.lastRequestSentAt = now;
+    return { action: 'sendAcked', bytes: buildOpenChannelCommand(this.myId3Bytes, 3) };
+  }
+
+  onRdChannelOpened(now) {
+    if (this.state !== STATE.OPENING_CHANNEL) return;
+    const asLeader = this.pendingRole === 'leader';
+    this._setState(asLeader ? STATE.LEADER : STATE.FOLLOWER, now);
+    this.lastRdDataAt = now;
+    if (asLeader) this.lastPingSentAt = now;
+  }
+
+  onRdPageReceived(now) {
+    this.lastRdDataAt = now;
+    if (this.state === STATE.STALLED) {
+      this._setState(this.lastPingSentAt != null ? STATE.LEADER : STATE.FOLLOWER, now);
+    }
+  }
+
+  tick(now) {
+    if (this.state === STATE.REQUESTING) {
+      if (now - this.lastRequestSentAt >= REQUEST_ACK_TIMEOUT_MS) {
+        if (this.requestAttempts >= MAX_REQUEST_ATTEMPTS) {
+          this._setState(STATE.UNSUPPORTED, now);
+          return { action: 'giveUp' };
+        }
+        this.requestAttempts += 1;
+        this.lastRequestSentAt = now;
+        return { action: 'sendAcked', bytes: buildOpenChannelCommand(this.myId3Bytes, 3) };
+      }
+      return { action: null };
+    }
+
+    if (this.state === STATE.VERIFYING_LEADERSHIP) {
+      if (now - this.stateEnteredAt >= VERIFY_LEADERSHIP_TIMEOUT_MS) {
+        this._setState(STATE.TIMED_OUT, now);
+        return { action: 'timedOut', reason: 'noOpenChannelStatusResponse' };
+      }
+      return { action: null };
+    }
+
+    if (this.state === STATE.OPENING_CHANNEL) {
+      if (now - this.stateEnteredAt >= OPENING_CHANNEL_TIMEOUT_MS) {
+        this._setState(STATE.TIMED_OUT, now);
+        return { action: 'timedOut', reason: 'rdChannelNeverConfirmedOpen' };
+      }
+      return { action: null };
+    }
+
+    if (this.state === STATE.LEADER || this.state === STATE.FOLLOWER) {
+      if (this.lastRdDataAt != null && now - this.lastRdDataAt >= STALL_TIMEOUT_MS) {
+        this._setState(STATE.STALLED, now);
+        return { action: 'stalled' };
+      }
+      if (this.state === STATE.LEADER && now - this.lastPingSentAt >= PING_INTERVAL_MS) {
+        this.lastPingSentAt = now;
+        return { action: 'sendBroadcast', bytes: buildBackChannelPing(this.speedMpsProvider()) };
+      }
+      return { action: null };
+    }
+
+    return { action: null };
+  }
+
+  reset() {
+    this._setState(STATE.IDLE, null);
+    this.requestAttempts = 0;
+    this.lastRequestSentAt = null;
+    this.lastPingSentAt = null;
+    this.lastRdDataAt = null;
+    this.pendingChannelFreqCode = null;
+    this.pendingRole = null;
+  }
+}
+
+class StepCountAccumulator {
+  constructor() {
+    this.total = 0;
+    this.lastRaw = null;
+  }
+
+  ingest(bytes) {
+    const parsed = parseRunningDynamicsPage0(bytes);
+    if (this.lastRaw !== null) {
+      const delta = parsed.stepCount >= this.lastRaw
+        ? parsed.stepCount - this.lastRaw
+        : (parsed.stepCount + 128) - this.lastRaw;
+      this.total += delta;
+    }
+    this.lastRaw = parsed.stepCount;
+    return { ...parsed, totalStepCount: this.total };
+  }
+
+  reset() {
+    this.total = 0;
+    this.lastRaw = null;
+  }
 }
 
 /* ============================================================
