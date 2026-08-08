@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v41</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v43</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -187,6 +187,8 @@
         <button class="btn chico" id="btnConectarBandaAparte" onclick="conectarBandaHR()">+ Conectar banda de pulso aparte</button>
         <div class="estado-conexion" id="estadoBLE">Sin conectar.</div>
         <div class="estado-conexion" style="margin-top:6px;">Compatible con relojes en modo carrera virtual/tapiz y bandas de pecho tipo HRM-Pro que transmiten ritmo y distancia por acelerómetro (sin GPS) — ideal para gimnasio bajo techo sin cinta. La banda aparece en la búsqueda igual que el reloj; elegila directamente, no hace falta emparejarla primero con el reloj.</div>
+        <button class="btn chico" id="btnConectarRD" onclick="rdConnectAnt()" style="margin-top:10px;">+ Conectar Running Dynamics (ANT+ USB)</button>
+        <div class="estado-conexion" id="estadoRD">Sin conectar. Requiere dongle ANT+ USB y un pod/banda compatible con HR-Running Dynamics (ej. HRM-Pro Plus) — no disponible en iOS.</div>
       </div>
 
       <div id="panelManual" style="display:none;">
@@ -456,6 +458,30 @@
       <div id="chartDetPotenciaWrap" style="display:none;">
         <div style="font-size:12px;color:var(--muted);margin-top:12px;">Potencia (W)</div>
         <canvas id="chartDetPotencia" height="100"></canvas>
+      </div>
+      <div id="chartDetVoWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">Oscilación vertical (mm)</div>
+        <canvas id="chartDetVo" height="100"></canvas>
+      </div>
+      <div id="chartDetGctWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">Ground contact time (ms)</div>
+        <canvas id="chartDetGct" height="100"></canvas>
+      </div>
+      <div id="chartDetZancadaWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">Longitud de zancada (mm)</div>
+        <canvas id="chartDetZancada" height="100"></canvas>
+      </div>
+      <div id="chartDetVRatioWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">Vertical ratio (%)</div>
+        <canvas id="chartDetVRatio" height="100"></canvas>
+      </div>
+      <div id="chartDetBalanceWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">Balance de apoyo izq/der (%)</div>
+        <canvas id="chartDetBalance" height="100"></canvas>
+      </div>
+      <div id="chartDetStanceWrap" style="display:none;">
+        <div style="font-size:12px;color:var(--muted);margin-top:12px;">% tiempo de apoyo (stance)</div>
+        <canvas id="chartDetStance" height="100"></canvas>
       </div>
       <div class="scrub-info" id="scrubInfo">Tocá o arrastrá sobre cualquier gráfico para ver el detalle</div>
     </div>
@@ -1242,6 +1268,56 @@
        archivos sueltos): las 4 piezas funcionan igual ya integradas,
        en el mismo scope que el resto de la app, sin colisión de
        nombres con nada existente.
+   v42: primer punto de salida para los datos de Running Dynamics (el
+       trabajo de ANT+ RD pasó a seguirse en este chat). Se decidió NO
+       meterlos en el TCX exportado — el schema TPX de Garmin solo
+       define Watts/RunCadence, no hay campo estándar para oscilación
+       vertical/GCT/zancada/etc, y forzarlo con una extensión propia
+       arriesgaba romper el import en TrainingPeaks/Garmin Connect.
+       En cambio se sumaron 6 gráficas nuevas al detalle de sesión
+       (oscilación vertical, ground contact time, longitud de zancada,
+       vertical ratio, balance de apoyo izq/der, % tiempo de apoyo),
+       mismo patrón que ya usaba "potencia": oculta si la sesión no
+       tiene el dato. Los 6 campos se agregaron a actual.rd (que la
+       capa WebUSB todavía no escribe — sigue pendiente, ver v41),
+       a tick() para que los levante en cada muestra, y a
+       compactarPuntos/descomprimirPuntos/promediarBucket con el mismo
+       criterio de "0 = sin dato -> null" que ya usaban ritmo/pulso/
+       potencia. Sesiones grabadas antes de v42 no tienen estos campos
+       en absoluto (ni siquiera en 0) y se probó que eso no rompe nada:
+       descomprimirPuntos devuelve null limpio para las seis, no NaN.
+       HUD en vivo queda para después (decisión explícita: las gráficas
+       de detalle encajaban mejor con el código ya existente y no
+       dependen de que la capa WebUSB esté lista).
+   v43: capa WebUSB para Running Dynamics, portando y verificando el
+       framing ANT+ de Bici Indoor (index_bici_102.html) — no fue
+       copy-paste ciego: el checksum y el reensamblado de frames se
+       probaron aparte (test_ant_transport.js) contra casos concretos
+       (mensaje conocido con checksum calculado a mano, dos frames
+       pegados en un mismo paquete USB, basura antes del SYNC) antes
+       de traerlos. Todo identificador nuevo lleva prefijo rd/RD_ para
+       no colisionar con nada existente (correr.html no tenía ANT+
+       antes de esto, solo BLE).
+       Se agregó un despachador (rdHandleHrPage/rdHandleBackPage/
+       rdApplyAction) que conecta esos bytes con el RdSessionController
+       de v41 — antes no había NADA que lo instanciara. Se probó con
+       tests de integración (test_rd_dispatcher.js) que corren las
+       piezas REALES extraídas del archivo (no una reconstrucción):
+       negociación completa como follower (sensor anuncia sesión ya
+       abierta), como leader (pedimos sesión, el sensor confirma
+       nuestra identidad, abrimos el canal y mandamos el ping de
+       velocidad), el caso de perder el liderazgo frente a otro
+       dispositivo, y el caso de un sensor sin soporte RD agotando
+       reintentos hasta 'unsupported'.
+       Decisión: el pulso (actual.pulso) sigue viniendo solo de BLE,
+       como antes — el canal ANT+ nuevo se usa nada más para la
+       negociación de Running Dynamics, no reemplaza nada del flujo
+       de pulso ya probado.
+       Pendiente real (no se puede probar sin hardware): todo lo que
+       depende de navigator.usb.requestDevice/transferIn/transferOut
+       en el navegador — Hugo tiene que probarlo con el dongle ANT+ y
+       el HRM-Pro Plus conectados de verdad y mandar capturas/logs de
+       la consola si algo no anda.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1466,7 +1542,7 @@ let tiempoSubidaSeg = 0;
 let puntosSesion = []; // {t, ritmo, pulso, cadencia, pendiente, velocidad, distAcum}
 let pendienteActual = 0.0;
 
-let actual = { velocidad: 0, pulso: 0, cadencia: 0 }; // último dato crudo (BLE, manual o GPS)
+let actual = { velocidad: 0, pulso: 0, cadencia: 0, rd: { vo: null, gct: null, stance: null, zancada: null, vRatio: null, balance: null } }; // último dato crudo (BLE, manual o GPS); rd = Running Dynamics (ANT+), lo escribe la capa WebUSB cuando exista
 
 let dispositivoReloj = null, dispositivoBanda = null;
 
@@ -2698,7 +2774,9 @@ function tick() {
   const vamInst = vamInstantaneo(velocidad, pendienteActual);
   if (pendienteActual > 0) { vamAcumWh += vamInst * 1; tiempoSubidaSeg += 1; }
 
-  puntosSesion.push({ t, ritmo: ritmoSegKm, pulso, cadencia, pendiente: pendienteActual, velocidad, distAcum: distanciaAcumM });
+  const rd = actual.rd || {};
+  puntosSesion.push({ t, ritmo: ritmoSegKm, pulso, cadencia, pendiente: pendienteActual, velocidad, distAcum: distanciaAcumM,
+    vo: rd.vo ?? null, gct: rd.gct ?? null, stance: rd.stance ?? null, zancada: rd.zancada ?? null, vRatio: rd.vRatio ?? null, balance: rd.balance ?? null });
 
   // HUD
   document.getElementById('hudRitmo').textContent = ritmoSegKm ? segAMMSS(ritmoSegKm) : '--:--';
@@ -2785,18 +2863,31 @@ function promediarBucket(bucket) {
   const pulsos = bucket.filter(p => p.pulso).map(p => p.pulso);
   const cadencias = bucket.filter(p => p.cadencia).map(p => p.cadencia);
   const potencias = bucket.filter(p => p.potencia).map(p => p.potencia);
+  const vos = bucket.filter(p => p.vo).map(p => p.vo);
+  const gcts = bucket.filter(p => p.gct).map(p => p.gct);
+  const stances = bucket.filter(p => p.stance).map(p => p.stance);
+  const zancadas = bucket.filter(p => p.zancada).map(p => p.zancada);
+  const vRatios = bucket.filter(p => p.vRatio).map(p => p.vRatio);
+  const balances = bucket.filter(p => p.balance).map(p => p.balance);
   return {
     t: ultimo.t,
     ritmo: ritmos.length ? promedio(ritmos) : null,
     pulso: pulsos.length ? promedio(pulsos) : null,
     cadencia: cadencias.length ? promedio(cadencias) : null,
     potencia: potencias.length ? promedio(potencias) : null,
+    vo: vos.length ? promedio(vos) : null,
+    gct: gcts.length ? promedio(gcts) : null,
+    stance: stances.length ? promedio(stances) : null,
+    zancada: zancadas.length ? promedio(zancadas) : null,
+    vRatio: vRatios.length ? promedio(vRatios) : null,
+    balance: balances.length ? promedio(balances) : null,
     pendiente: ultimo.pendiente || 0,
     distAcum: ultimo.distAcum // acumulado real, no se promedia
   };
 }
 function compactarPuntos(puntos) {
   const t = [], ritmo = [], pulso = [], cadencia = [], potencia = [], pendiente = [], distAcum = [];
+  const vo = [], gct = [], stance = [], zancada = [], vRatio = [], balance = [];
   puntos.forEach(p => {
     t.push(Math.round(p.t));
     ritmo.push(p.ritmo ? Math.round(p.ritmo) : 0);
@@ -2805,8 +2896,16 @@ function compactarPuntos(puntos) {
     potencia.push(p.potencia ? Math.round(p.potencia) : 0);
     pendiente.push(p.pendiente ? Math.round(p.pendiente * 10) : 0);
     distAcum.push(Math.round(p.distAcum));
+    // Running Dynamics (ANT+): vo/gct/zancada en unidades enteras (mm/ms), stance/vRatio/balance
+    // son porcentajes con fracción -> mismo criterio que "pendiente", *10 para guardar un decimal.
+    vo.push(p.vo ? Math.round(p.vo) : 0);
+    gct.push(p.gct ? Math.round(p.gct) : 0);
+    stance.push(p.stance ? Math.round(p.stance * 10) : 0);
+    zancada.push(p.zancada ? Math.round(p.zancada) : 0);
+    vRatio.push(p.vRatio ? Math.round(p.vRatio * 10) : 0);
+    balance.push(p.balance ? Math.round(p.balance * 10) : 0);
   });
-  return { t, ritmo, pulso, cadencia, potencia, pendiente, distAcum };
+  return { t, ritmo, pulso, cadencia, potencia, pendiente, distAcum, vo, gct, stance, zancada, vRatio, balance };
 }
 function descomprimirPuntos(c) {
   if (!c || !c.t) return [];
@@ -2822,6 +2921,13 @@ function descomprimirPuntos(c) {
       pulso: c.pulso[i] || null,
       cadencia: c.cadencia[i] || null,
       potencia: c.potencia ? (c.potencia[i] || null) : null, // sesiones viejas sin este campo -> null
+      // sesiones viejas sin campos de Running Dynamics -> null (mismo criterio que potencia)
+      vo: c.vo ? (c.vo[i] || null) : null,
+      gct: c.gct ? (c.gct[i] || null) : null,
+      stance: c.stance ? (c.stance[i] ? c.stance[i] / 10 : null) : null,
+      zancada: c.zancada ? (c.zancada[i] || null) : null,
+      vRatio: c.vRatio ? (c.vRatio[i] ? c.vRatio[i] / 10 : null) : null,
+      balance: c.balance ? (c.balance[i] ? c.balance[i] / 10 : null) : null,
       pendiente: c.pendiente[i] / 10,
       velocidad,
       distAcum
@@ -3570,6 +3676,20 @@ function dibujarGraficasDetalle(s) {
     dibujarMiniChartSesion('chartDetCadencia', puntos, 'cadencia', '#818B95', false, v => Math.round(v), tMax, puntoMarcado);
     const hayPotencia = dibujarMiniChartSesion('chartDetPotencia', puntos, 'potencia', '#F5C542', false, v => Math.round(v), tMax, puntoMarcado);
     document.getElementById('chartDetPotenciaWrap').style.display = hayPotencia ? 'block' : 'none';
+    // Running Dynamics (ANT+) — mismo patrón que potencia: gráfico oculto si la sesión no tiene el dato
+    // (sesiones grabadas sin pod conectado, o viejas de antes de que existiera este campo).
+    const hayVo = dibujarMiniChartSesion('chartDetVo', puntos, 'vo', '#B57BEE', false, v => Math.round(v), tMax, puntoMarcado);
+    document.getElementById('chartDetVoWrap').style.display = hayVo ? 'block' : 'none';
+    const hayGct = dibujarMiniChartSesion('chartDetGct', puntos, 'gct', '#EE8B7B', true, v => Math.round(v), tMax, puntoMarcado);
+    document.getElementById('chartDetGctWrap').style.display = hayGct ? 'block' : 'none';
+    const hayZancada = dibujarMiniChartSesion('chartDetZancada', puntos, 'zancada', '#7BC4EE', false, v => Math.round(v), tMax, puntoMarcado);
+    document.getElementById('chartDetZancadaWrap').style.display = hayZancada ? 'block' : 'none';
+    const hayVRatio = dibujarMiniChartSesion('chartDetVRatio', puntos, 'vRatio', '#EEDD7B', true, v => v.toFixed(1), tMax, puntoMarcado);
+    document.getElementById('chartDetVRatioWrap').style.display = hayVRatio ? 'block' : 'none';
+    const hayBalance = dibujarMiniChartSesion('chartDetBalance', puntos, 'balance', '#9BEE7B', false, v => v.toFixed(1), tMax, puntoMarcado);
+    document.getElementById('chartDetBalanceWrap').style.display = hayBalance ? 'block' : 'none';
+    const hayStance = dibujarMiniChartSesion('chartDetStance', puntos, 'stance', '#EE7BC4', true, v => v.toFixed(1), tMax, puntoMarcado);
+    document.getElementById('chartDetStanceWrap').style.display = hayStance ? 'block' : 'none';
   }
   redibujar(null);
 
@@ -3586,7 +3706,7 @@ function dibujarGraficasDetalle(s) {
       (cercano.potencia ? (' · ' + cercano.potencia + ' W') : '');
     redibujar(cercano);
   }
-  ['chartDetRitmo', 'chartDetPulso', 'chartDetCadencia', 'chartDetPotencia'].forEach(id => {
+  ['chartDetRitmo', 'chartDetPulso', 'chartDetCadencia', 'chartDetPotencia', 'chartDetVo', 'chartDetGct', 'chartDetZancada', 'chartDetVRatio', 'chartDetBalance', 'chartDetStance'].forEach(id => {
     const cv = document.getElementById(id);
     cv.onpointerdown = e => { cv.setPointerCapture(e.pointerId); manejarScrub(e.clientX, cv); };
     cv.onpointermove = e => { if (e.pressure > 0 || e.buttons > 0) manejarScrub(e.clientX, cv); };
@@ -4106,6 +4226,250 @@ class StepCountAccumulator {
     this.total = 0;
     this.lastRaw = null;
   }
+}
+
+/* ============================================================
+   ANT+ / WebUSB — capa de transporte para Running Dynamics
+   Framing (antMsg / checksum / reensamblado de frames) portado y
+   verificado byte a byte contra el de Bici Indoor (index_bici_102.html,
+   líneas 638-762), que ya está en uso real hace tiempo. No es un
+   copy-paste ciego: se corrió con tests propios (test_ant_transport.js)
+   antes de traerlo acá, incluyendo el caso de dos frames pegados en
+   un mismo paquete USB y basura antes del SYNC.
+
+   Todo identificador nuevo lleva prefijo rd/RD_ a propósito, para no
+   colisionar con nada de la app existente (que no tenía ANT+ hasta
+   ahora, solo BLE) ni con los nombres cortos que usa Bici Indoor
+   (device, send, connect, M, CH, RF...) por si algún día se comparte
+   código entre las dos apps en el mismo scope.
+
+   Import HR-RD que usa la app: los datos de pulso siguen viniendo
+   SOLO de BLE (heart_rate service, ya existente) — el canal ANT+ acá
+   se usa nada más para la negociación de Running Dynamics. Decisión
+   consciente para no tocar el flujo de pulso ya probado.
+   ============================================================ */
+const RD_ANT_SYNC = 0xA4;
+const RD_ANTPLUS_KEY = [0xB9, 0xA5, 0x21, 0xFB, 0xBD, 0x72, 0xC3, 0x45];
+const RD_MSG = { RESET: 0x4A, KEY: 0x46, ASSIGN: 0x42, ID: 0x51, STO: 0x44, RF: 0x45, PER: 0x43, OPEN: 0x4B, CLOSE: 0x4C, BCAST: 0x4E, ACK: 0x4F, EVENT: 0x40 };
+const RD_NET = 0;
+const RD_HRCH = 0;    // canal de búsqueda al sensor HR-RD (HRM-Pro Plus u otro compatible)
+const RD_BACKCH = 1;  // "canal de vuelta" de Running Dynamics — freq/period los define la negociación, no son fijos
+const RD_HRDEV = 120; // device type HR estándar ANT+ (mismo valor verificado que usa Bici Indoor para el HRM-Pro Plus)
+const RD_HR_RF = 57, RD_HR_PERIOD = 8070;
+const RD_FILTERS = [{ vendorId: 0x0fcf, productId: 0x1008 }, { vendorId: 0x0fcf, productId: 0x1009 }, { vendorId: 0x0fcf }];
+
+function rdAntMsg(id, data) {
+  const l = data.length, b = new Uint8Array(4 + l);
+  b[0] = RD_ANT_SYNC; b[1] = l; b[2] = id; b.set(data, 3);
+  let cs = 0; for (let i = 0; i < 3 + l; i++) cs ^= b[i];
+  b[3 + l] = cs;
+  return b;
+}
+
+let rdUsbDevice = null, rdEpIn = null, rdEpOut = null, rdIfaceNum = null, rdInPacket = 64;
+let rdRxBuf = [];
+let rdConnected = false;
+let rdSession = null;      // instancia de RdSessionController
+let rdStepAcc = null;      // instancia de StepCountAccumulator
+let rdSawSensor = false;   // primer broadcast real del sensor HR-RD ya recibido
+let rdBackChannelOpening = false;
+let rdPumpTimer = null;
+
+function rdResetActualRd() {
+  actual.rd = { vo: null, gct: null, stance: null, zancada: null, vRatio: null, balance: null };
+}
+
+// ---- Despachador puro (testeable sin WebUSB real): decide qué hacer con cada frame ANT+ ----
+// sendFn(bytes) y openBackChannelFn(channelFreqCode) se inyectan para poder testear esta lógica
+// con un stub en vez de con navigator.usb real (que solo se puede probar en el navegador).
+function rdApplyAction(res, now, session, sendFn, openBackChannelFn) {
+  if (!res || !res.action) return;
+  if (res.action === 'sendAcked' || res.action === 'requestOpenChannelStatus') {
+    sendFn(rdAntMsg(RD_MSG.ACK, [RD_HRCH, ...res.bytes]));
+  } else if (res.action === 'sendBroadcast') {
+    sendFn(rdAntMsg(RD_MSG.BCAST, [RD_BACKCH, ...res.bytes]));
+  } else if (res.action === 'openRdChannelAsFollower' || res.action === 'openRdChannelAsLeader') {
+    openBackChannelFn(res.channelFreqCode).then(() => session.onRdChannelOpened(now));
+  }
+  // 'giveUp' / 'timedOut' / 'stalled': no requieren acción de transporte, son solo cambios de estado
+  // (el estado se refleja en la UI vía rdActualizarEstadoUI(), llamado aparte en cada estos casos).
+}
+
+function rdHandleHrPage(payload, now, session, sendFn, openBackChannelFn) {
+  const page = payload[0] & 0x7F; // bit7 es el "page toggle bit" de ANT+, no es parte del número de página
+  if (page === 4) {
+    const res = session.onHrmDataPage4(payload, now);
+    rdApplyAction(res, now, session, sendFn, openBackChannelFn);
+    return res;
+  }
+  if (page === 74) {
+    const res = session.onOpenChannelStatusReceived(payload, now);
+    rdApplyAction(res, now, session, sendFn, openBackChannelFn);
+    return res;
+  }
+  return { action: null };
+}
+
+function rdHandleBackPage(payload, now, session, stepAcc, applyRdFn) {
+  const page = payload[0] & 0x7F;
+  if (page === 0) {
+    const parsed = stepAcc.ingest(payload);
+    applyRdFn({ vo: parsed.verticalOscillationMm, gct: parsed.groundContactTimeMs, stance: parsed.stanceTimePercent });
+    session.onRdPageReceived(now);
+    return parsed;
+  }
+  if (page === 1) {
+    const parsed = parseRunningDynamicsPage1(payload);
+    applyRdFn({ zancada: parsed.stepLengthMm, vRatio: parsed.verticalRatioPercent, balance: parsed.groundContactBalancePercent });
+    session.onRdPageReceived(now);
+    return parsed;
+  }
+  return null;
+}
+
+// ---- Transporte WebUSB real (solo se puede probar en el navegador con el dongle conectado) ----
+async function rdSend(bytes) {
+  if (!rdUsbDevice) return;
+  try { await rdUsbDevice.transferOut(rdEpOut, bytes); }
+  catch (e) { rdLog('TX ' + e.message); rdOnLinkLost(); }
+}
+const rdSleep = ms => new Promise(r => setTimeout(r, ms));
+function rdLog(msg) { console.log('[RD]', msg); }
+
+async function rdOpenUsbDevice(dev) {
+  rdUsbDevice = dev;
+  await rdUsbDevice.open();
+  if (!rdUsbDevice.configuration) await rdUsbDevice.selectConfiguration(1);
+  let f = null;
+  for (const itf of rdUsbDevice.configuration.interfaces) {
+    const a = itf.alternate;
+    const i = a.endpoints.find(e => e.direction === 'in' && e.type === 'bulk');
+    const o = a.endpoints.find(e => e.direction === 'out' && e.type === 'bulk');
+    if (i && o) { f = { itf, i, o }; break; }
+  }
+  if (!f) throw new Error('sin endpoints bulk');
+  rdIfaceNum = f.itf.interfaceNumber; rdEpIn = f.i.endpointNumber; rdEpOut = f.o.endpointNumber; rdInPacket = f.i.packetSize || 64;
+  await rdUsbDevice.claimInterface(rdIfaceNum);
+  rdConnected = true;
+  rdLog('Stick ANT+ conectado, interfaz reclamada');
+  rdRxBuf = [];
+  rdReadLoop();
+}
+
+async function rdInitHrChannel() {
+  await rdSend(rdAntMsg(RD_MSG.RESET, [0]));               await rdSleep(600);
+  await rdSend(rdAntMsg(RD_MSG.KEY, [RD_NET, ...RD_ANTPLUS_KEY])); await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.ASSIGN, [RD_HRCH, 0x00, RD_NET]));  await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.ID, [RD_HRCH, 0, 0, RD_HRDEV, 0]));  await rdSleep(50); // device number 0 = búsqueda wildcard, mismo criterio que Bici Indoor
+  await rdSend(rdAntMsg(RD_MSG.STO, [RD_HRCH, 0xFF]));       await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.RF, [RD_HRCH, RD_HR_RF]));    await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.PER, [RD_HRCH, RD_HR_PERIOD & 0xFF, (RD_HR_PERIOD >> 8) & 0xFF])); await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.OPEN, [RD_HRCH]));
+  rdLog('Canal de búsqueda HR-RD abierto');
+}
+
+// Abre el "canal de vuelta" de Running Dynamics con la frecuencia que haya negociado RdSessionController.
+// No hay confirmación explícita de ANT+ de que el canal quedó abierto (igual que Bici Indoor con el
+// canal FE-C): se considera abierto en cuanto se termina de mandar la secuencia, y es el propio
+// RdSessionController el que detecta si nunca llegan datos (STALL_TIMEOUT_MS / OPENING_CHANNEL_TIMEOUT_MS).
+async function rdOpenBackChannel(channelFreqCode) {
+  rdBackChannelOpening = true;
+  await rdSend(rdAntMsg(RD_MSG.ASSIGN, [RD_BACKCH, 0x00, RD_NET])); await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.ID, [RD_BACKCH, 0, 0, 0, 0]));  await rdSleep(50); // device number/tipo 0 = wildcard, la RF ya identifica el canal
+  await rdSend(rdAntMsg(RD_MSG.STO, [RD_BACKCH, 0xFF]));       await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.RF, [RD_BACKCH, channelFreqCode])); await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.PER, [RD_BACKCH, 8070 & 0xFF, (8070 >> 8) & 0xFF])); await rdSleep(50);
+  await rdSend(rdAntMsg(RD_MSG.OPEN, [RD_BACKCH]));
+  rdBackChannelOpening = false;
+  rdLog('Canal de Running Dynamics abierto (RF ' + channelFreqCode + ')');
+}
+
+async function rdReadLoop() {
+  let fails = 0;
+  while (rdConnected) {
+    try {
+      const r = await rdUsbDevice.transferIn(rdEpIn, rdInPacket);
+      if (r.status === 'ok') { fails = 0; if (r.data && r.data.byteLength) rdIngest(new Uint8Array(r.data.buffer)); }
+      else if (r.status === 'stall') { await rdUsbDevice.clearHalt('in', rdEpIn); }
+    } catch (e) {
+      if (!rdConnected) break;
+      fails++; try { await rdUsbDevice.clearHalt('in', rdEpIn); } catch (_) {}
+      await rdSleep(150); if (fails >= 25) { rdLog('RX cortado'); break; }
+    }
+  }
+}
+function rdIngest(bytes) {
+  for (const b of bytes) rdRxBuf.push(b);
+  while (rdRxBuf.length >= 1) {
+    if (rdRxBuf[0] !== RD_ANT_SYNC) { rdRxBuf.shift(); continue; }
+    if (rdRxBuf.length < 2) return;
+    const len = rdRxBuf[1], tot = len + 4;
+    if (rdRxBuf.length < tot) return;
+    const fr = rdRxBuf.slice(0, tot); rdRxBuf = rdRxBuf.slice(tot);
+    rdFrame(fr);
+  }
+}
+function rdFrame(f) {
+  const id = f[2], d = f.slice(3, 3 + f[1]);
+  if (id !== RD_MSG.BCAST && id !== RD_MSG.ACK) return;
+  const ch = d[0], payload = d.slice(1);
+  const now = Date.now();
+  if (ch === RD_HRCH) {
+    if (!rdSawSensor) {
+      rdSawSensor = true;
+      rdLog('Sensor HR-RD detectado, pidiendo sesión de Running Dynamics');
+      const res = rdSession.requestSession(now);
+      rdApplyAction(res, now, rdSession, rdSend, rdOpenBackChannel);
+    }
+    rdHandleHrPage(payload, now, rdSession, rdSend, rdOpenBackChannel);
+  } else if (ch === RD_BACKCH) {
+    rdHandleBackPage(payload, now, rdSession, rdStepAcc, patch => Object.assign(actual.rd, patch));
+  }
+}
+
+async function rdConnectAnt() {
+  if (!('usb' in navigator)) { toast('Este navegador no soporta WebUSB (usá Brave/Chrome en Android). No disponible en iOS.'); return; }
+  document.getElementById('estadoRD').textContent = 'Conectando…';
+  rdResetActualRd();
+  rdSawSensor = false;
+  const myId3Bytes = [Math.floor(Math.random() * 256), Math.floor(Math.random() * 256), Math.floor(Math.random() * 256)];
+  rdSession = new RdSessionController({ myId3Bytes, speedMpsProvider: () => actual.velocidad || null });
+  rdStepAcc = new StepCountAccumulator();
+  try {
+    const dev = await navigator.usb.requestDevice({ filters: RD_FILTERS });
+    await rdOpenUsbDevice(dev);
+    await rdInitHrChannel();
+    document.getElementById('estadoRD').textContent = 'Buscando sensor HR-RD…';
+    if (rdPumpTimer) clearInterval(rdPumpTimer);
+    rdPumpTimer = setInterval(rdPump, 250);
+  } catch (e) {
+    rdLog('Conexión: ' + e.message);
+    document.getElementById('estadoRD').textContent = 'Error de conexión: ' + e.message;
+  }
+}
+function rdOnLinkLost() {
+  rdConnected = false;
+  document.getElementById('estadoRD').textContent = 'Enlace ANT+ perdido.';
+  rdResetActualRd();
+}
+function rdPump() {
+  if (!rdSession) return;
+  const now = Date.now();
+  const res = rdSession.tick(now);
+  rdApplyAction(res, now, rdSession, rdSend, rdOpenBackChannel);
+  rdActualizarEstadoUI();
+}
+function rdActualizarEstadoUI() {
+  const el = document.getElementById('estadoRD');
+  if (!el || !rdSession) return;
+  const textos = {
+    idle: 'Esperando sensor…', requesting: 'Pidiendo sesión de Running Dynamics…',
+    verifyingLeadership: 'Verificando quién lidera la sesión…', openingChannel: 'Abriendo canal de Running Dynamics…',
+    leader: 'Running Dynamics conectado (líder)', follower: 'Running Dynamics conectado',
+    unsupported: 'El sensor no confirmó Running Dynamics', stalled: 'Sin datos de Running Dynamics hace rato…',
+    timedOut: 'No se pudo abrir el canal de Running Dynamics',
+  };
+  el.textContent = textos[rdSession.state] || rdSession.state;
 }
 
 /* ============================================================
