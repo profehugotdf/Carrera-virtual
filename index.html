@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v43</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v45</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -228,6 +228,11 @@
         <option value="sendero">Sendero / vereda</option>
       </select>
 
+      <div class="hud-item grande ritmo" id="tileMeta" style="display:none; margin-top:12px;">
+        <div class="val" id="hudMeta">--</div>
+        <div class="lbl" id="lblMeta">Restante</div>
+      </div>
+
       <div id="wrapEscena" style="display:none; margin-top:12px;">
         <div id="lineaVueltaEscena" class="estado-conexion" style="text-align:center; margin-bottom:6px;"></div>
         <div style="position:relative;">
@@ -236,7 +241,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="cardMeta">
       <h2>Meta de la sesión</h2>
       <div class="modo-btns" id="metaBtns">
         <button id="btnMetaLibre" onclick="seleccionarMeta('libre')">Libre</button>
@@ -281,10 +286,6 @@
         <div class="hud-item grande fantasma" id="tileFantasma" style="display:none;">
           <div class="val" id="hudFantasma">--</div>
           <div class="lbl" id="lblFantasma">vs Fantasma</div>
-        </div>
-        <div class="hud-item grande ritmo" id="tileMeta" style="display:none;">
-          <div class="val" id="hudMeta">--</div>
-          <div class="lbl" id="lblMeta">Restante</div>
         </div>
         <div class="hud-item" id="tileVAM">
           <div class="val" id="hudVAM">0</div>
@@ -346,6 +347,7 @@
         <div>TSB<br><b id="formaTSB" style="font-size:16px;">0</b></div>
       </div>
       <div class="estado-conexion" id="formaDesglose" style="margin-top:8px;"></div>
+      <div class="estado-conexion" id="formaScrubInfo" style="margin-top:4px;">Tocá o arrastrá el gráfico para ver un día puntual</div>
     </div>
     <div class="card" id="cardEvolucion">
       <button class="card-cerrar" onclick="document.getElementById('cardEvolucion').style.display='none'">✕</button>
@@ -1318,6 +1320,42 @@
        en el navegador — Hugo tiene que probarlo con el dongle ANT+ y
        el HRM-Pro Plus conectados de verdad y mandar capturas/logs de
        la consola si algo no anda.
+   v44: Bici Indoor ya mostraba su panel de Forma combinada con scrub
+       táctil (pmcScrub); acá el gráfico de Forma del Historial
+       (dibujarChartForma) no lo tenía, y era la vista de la que se
+       venía hablando en el chat — se agregó el mismo patrón de scrub
+       que ya usan las gráficas de detalle de sesión (línea vertical
+       punteada + marcador, lectura de fecha/CTL/ATL/TSB debajo del
+       gráfico al tocar o arrastrar). Ojo con un detalle de husos
+       horarios: la fecha del punto tocado se arma partiendo el string
+       "AAAA-MM-DD" a mano en vez de pasar por new Date(...).toLocale-
+       DateString(...), porque eso corre el día un día para atrás en
+       UTC-3 (Ushuaia) — probado con fechas de fin de año/fin de mes
+       para el caso límite.
+   v45: dos pedidos de Hugo sobre la sesión con meta (por tiempo o por
+       distancia). Primero, auto-finalizar: hasta ahora, al alcanzar
+       la meta solo se mostraba un toast y había que tocar "Finalizar"
+       a mano. finalizarSesion() pasó a aceptar un parámetro
+       (automatica) que saltea el confirm() cuando el disparo es solo
+       — el botón manual sigue mostrando el confirm de siempre. El
+       disparo se hace con setTimeout(...,0) desde tick() al detectar
+       progresoMeta.alcanzada, para no cortar el resto de tick() a
+       mitad de camino (finalizarSesion cambia de vista). Probado el
+       límite exacto de "alcanzada" (no se dispara un tick antes, sí
+       en el que cruza el valor) y que el modo libre / meta sin valor
+       cargado nunca dispara nada.
+       Segundo, reordenamiento de pantalla: el tile de Meta (que
+       vivía adentro de la grilla de "Sesión en vivo", bien abajo)
+       se movió arriba del canvas del escenario, dentro de la tarjeta
+       "Fantasma/Escenario visual" — mismo elemento con el mismo id
+       (hudMeta/tileMeta), solo cambió su lugar en el HTML, la lógica
+       de tick() que lo actualiza no se tocó. La tarjeta "Meta de la
+       sesión" (los botones para elegir tiempo/distancia, que de
+       todos modos no se pueden tocar con la sesión en marcha) ahora
+       se oculta al iniciar la sesión, igual que ya hacía "Fuente de
+       datos" — así el escenario y los datos en vivo quedan más cerca
+       en la pantalla, con menos que scrollear de por medio mientras
+       corrés.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2744,6 +2782,7 @@ function iniciarSesion() {
   document.getElementById('btnFinalizar').disabled = false;
   document.getElementById('cardNotas').style.display = 'block';
   document.getElementById('cardModo').style.display = 'none';
+  document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
   intervaloMuestreo = setInterval(tick, 1000);
   toast('Sesión iniciada');
 }
@@ -2791,7 +2830,11 @@ function tick() {
     document.getElementById('lblMeta').textContent = (metaTipo === 'tiempo' ? 'Restante' : 'Restante km') + ' (' + Math.round(progresoMeta.pct) + '%)';
     if (progresoMeta.alcanzada && !metaAlcanzada) {
       metaAlcanzada = true;
-      toast('¡Meta alcanzada! Podés seguir o finalizar cuando quieras');
+      toast('¡Meta alcanzada! Finalizando y guardando la sesión…');
+      // Diferido con setTimeout para no interrumpir el resto de tick() a mitad de camino
+      // (finalizarSesion cambia de vista, limpia el HUD, etc.) — se ejecuta apenas termina
+      // este ciclo del muestreo, no en el próximo (no hay que esperar 1 segundo más).
+      setTimeout(() => finalizarSesion(true), 0);
     }
   }
   if (modo === 'aire_libre') {
@@ -2942,8 +2985,8 @@ function puntosDeSesion(sesion) {
   return Array.isArray(sesion.puntos) ? sesion.puntos : descomprimirPuntos(sesion.puntos);
 }
 
-function finalizarSesion() {
-  if (!confirm('¿Finalizar y guardar la sesión?')) return;
+function finalizarSesion(automatica) {
+  if (!automatica && !confirm('¿Finalizar y guardar la sesión?')) return;
   clearInterval(intervaloMuestreo);
   detenerGPS();
   sesionActiva = false;
@@ -3008,6 +3051,7 @@ function resetearHUD() {
   document.getElementById('btnFinalizar').disabled = true;
   document.getElementById('cardNotas').style.display = 'none';
   document.getElementById('cardModo').style.display = 'block';
+  document.getElementById('cardMeta').style.display = 'block';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudPulso').textContent = '--';
@@ -3273,11 +3317,36 @@ function renderHistorial() {
   document.getElementById('formaCTL').textContent = forma.ctl.toFixed(1);
   document.getElementById('formaATL').textContent = forma.atl.toFixed(1);
   document.getElementById('formaTSB').textContent = forma.tsb.toFixed(1);
-  dibujarChartForma(forma.serie);
   const deportes = Object.keys(forma.porDeporte || {}).sort((a, b) => forma.porDeporte[b] - forma.porDeporte[a]);
   document.getElementById('formaDesglose').textContent = deportes.length
     ? ('TSS acumulado por deporte (todo lo que haya en el navegador): ' + deportes.map(d => d + ' ' + Math.round(forma.porDeporte[d])).join(' · '))
     : 'Todavía no hay TSS registrado de ninguna app.';
+  // ---- scrub táctil del gráfico de Forma: tocar/arrastrar muestra el CTL/ATL/TSB de ese día puntual ----
+  const formaScrubInfo = document.getElementById('formaScrubInfo');
+  const cvForma = document.getElementById('chartForma');
+  function redibujarForma(idxMarcado) {
+    dibujarChartForma(forma.serie, idxMarcado);
+    if (idxMarcado == null || !forma.serie[idxMarcado]) {
+      formaScrubInfo.textContent = 'Tocá o arrastrá el gráfico para ver un día puntual';
+      return;
+    }
+    const p = forma.serie[idxMarcado];
+    // fecha es "AAAA-MM-DD": se arma el texto a mano en vez de pasar por Date/timeZone local,
+    // para no correr el riesgo de mostrar el día anterior en husos horarios negativos (UTC-3 acá).
+    const [anio, mes, dia] = p.fecha.split('-');
+    formaScrubInfo.textContent = dia + '/' + mes + '/' + anio + ' · CTL ' + p.ctl.toFixed(1) + ' · ATL ' + p.atl.toFixed(1) +
+      ' · TSB ' + (p.tsb >= 0 ? '+' : '') + p.tsb.toFixed(1);
+  }
+  redibujarForma(null);
+  if (forma.serie.length) {
+    const manejarScrubForma = clientX => {
+      const rect = cvForma.getBoundingClientRect();
+      const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      redibujarForma(Math.round(frac * (forma.serie.length - 1)));
+    };
+    cvForma.onpointerdown = e => { cvForma.setPointerCapture(e.pointerId); manejarScrubForma(e.clientX); };
+    cvForma.onpointermove = e => { if (e.pressure > 0 || e.buttons > 0) manejarScrubForma(e.clientX); };
+  }
   renderEvolucionSesiones();
 }
 // promedios por sesión (ritmo/pulso/cadencia), en orden cronológico, para ver la tendencia
@@ -3313,7 +3382,7 @@ function renderEvolucionSesiones() {
   dibujarLineaSimple('chartEvolCadencia', d.cadencia, '#818B95', false);
 }
 
-function dibujarChartForma(serie) {
+function dibujarChartForma(serie, idxMarcado) {
   const canvas = document.getElementById('chartForma');
   const ctx = canvas.getContext('2d');
   const w = canvas.clientWidth, h = canvas.clientHeight || 140;
@@ -3337,6 +3406,25 @@ function dibujarChartForma(serie) {
   linea('#4FD8C4', 'ctl');
   linea('#FF6B57', 'atl');
   linea('#818B95', 'tsb');
+
+  // marcador del punto tocado (scrub): línea vertical punteada + un punto por serie (ctl/atl/tsb),
+  // mismo criterio visual que dibujarMiniChartSesion en el detalle de sesión.
+  if (idxMarcado != null && serie[idxMarcado]) {
+    const p = serie[idxMarcado];
+    const mx = escalaX(idxMarcado);
+    ctx.save();
+    ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.beginPath(); ctx.moveTo(mx, 0); ctx.lineTo(mx, h); ctx.stroke();
+    ctx.setLineDash([]);
+    [['ctl', '#4FD8C4'], ['atl', '#FF6B57'], ['tsb', '#818B95']].forEach(([key, color]) => {
+      const my = escalaY(p[key]);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath(); ctx.ellipse(mx, my, 4, 4, 0, 0, 7); ctx.fill();
+      ctx.fillStyle = color;
+      ctx.beginPath(); ctx.ellipse(mx, my, 2.3, 2.3, 0, 0, 7); ctx.fill();
+    });
+    ctx.restore();
+  }
 }
 
 /* ============================================================
