@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v45</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v46</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -266,6 +266,7 @@
         <div class="hud-item grande ritmo">
           <div class="val" id="hudRitmo">--:--</div>
           <div class="lbl">Ritmo /km</div>
+          <div class="lbl" id="hudKmh" style="font-size:11px; margin-top:2px; opacity:0.75;">-- km/h</div>
         </div>
         <div class="hud-item pulso">
           <div class="val" id="hudPulso">--</div>
@@ -1356,6 +1357,10 @@
        datos" — así el escenario y los datos en vivo quedan más cerca
        en la pantalla, con menos que scrollear de por medio mientras
        corrés.
+   v46: se sumó el km/h como dato secundario, chico, dentro del mismo
+       tile del ritmo (id hudKmh) — pedido puntual de Hugo para ver
+       las dos unidades juntas sin agregar un tile aparte que le
+       compita en tamaño al ritmo, que sigue siendo el dato grande.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2819,6 +2824,7 @@ function tick() {
 
   // HUD
   document.getElementById('hudRitmo').textContent = ritmoSegKm ? segAMMSS(ritmoSegKm) : '--:--';
+  document.getElementById('hudKmh').textContent = velocidad > 0.1 ? (velocidad * 3.6).toFixed(1) + ' km/h' : '-- km/h';
   document.getElementById('hudPulso').textContent = pulso || '--';
   document.getElementById('hudCadencia').textContent = cadencia || '--';
   document.getElementById('hudDistancia').textContent = (distanciaAcumM / 1000).toFixed(2);
@@ -3054,6 +3060,7 @@ function resetearHUD() {
   document.getElementById('cardMeta').style.display = 'block';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
+  document.getElementById('hudKmh').textContent = '-- km/h';
   document.getElementById('hudPulso').textContent = '--';
   document.getElementById('hudCadencia').textContent = '--';
   document.getElementById('hudDistancia').textContent = '0.00';
