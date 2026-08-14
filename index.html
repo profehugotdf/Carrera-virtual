@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v46</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v47</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -231,6 +231,15 @@
       <div class="hud-item grande ritmo" id="tileMeta" style="display:none; margin-top:12px;">
         <div class="val" id="hudMeta">--</div>
         <div class="lbl" id="lblMeta">Restante</div>
+      </div>
+
+      <div class="hud-item pendiente" id="tileVelocidadManual" style="display:none; margin-top:12px;">
+        <div class="lbl" style="margin-bottom:2px;">Velocidad cinta (manual)</div>
+        <div class="pendiente-ctrl">
+          <button onclick="ajustarVelocidadManual(-0.1)">−</button>
+          <div class="val" id="hudVelocidadManual">0.0 km/h</div>
+          <button onclick="ajustarVelocidadManual(0.1)">+</button>
+        </div>
       </div>
 
       <div id="wrapEscena" style="display:none; margin-top:12px;">
@@ -1361,6 +1370,29 @@
        tile del ritmo (id hudKmh) — pedido puntual de Hugo para ver
        las dos unidades juntas sin agregar un tile aparte que le
        compita en tamaño al ritmo, que sigue siendo el dato grande.
+   v47: control de velocidad manual en vivo (+/- 0.1 km/h), pensado
+       para "correr contra el fantasma cambiando la velocidad de la
+       cinta como estrategia" — la cinta de Hugo no tiene teclado
+       numérico, solo botones de +/-0.1, así que el control de la app
+       imita exactamente eso en vez de pedirle tipear un ritmo en
+       MM:SS a mitad de carrera (que además vive en panelManual,
+       adentro de cardModo, oculto durante toda la sesión — no era
+       usable en vivo ni de haber querido tipear).
+       Antes de este cambio, en modo manual actual.velocidad quedaba
+       congelado en lo que fuera que tenía al arrancar (el panel que
+       lo actualiza se oculta en iniciarSesion()) — no había forma de
+       cambiar la velocidad durante la sesión en modo manual.
+       Mismo patrón visual y de código que ajustarPendiente() (botones
+       redondos de 44px, redondeo a un decimal para no arrastrar error
+       de coma flotante en +0.1 repetidos, piso en 0). El tile vive
+       arriba del escenario junto con la meta (mismo criterio de v45:
+       todo lo que hay que mirar/tocar en vivo, en una sola pantalla),
+       visible solo si modo==='manual'. Arranca desde el valor que
+       tenía actual.velocidad al iniciar la sesión (lo que se haya
+       cargado en el panel de setup), no desde 0 — si no, el primer
+       toque de +/- pegaría un salto desde una velocidad que no es la
+       real. Probado el redondeo (diez +0.1 seguidos dan exactamente
+       1.0, no 0.9999999...) y el piso en 0.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1848,6 +1880,12 @@ function procesarPosicionGPS(pos) {
 }
 
 /* ---------------- Modo manual ---------------- */
+let velocidadManualKmh = 0;
+function ajustarVelocidadManual(delta) {
+  velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
+  actual.velocidad = velocidadManualKmh / 3.6; // km/h -> m/s, mismo dato que usa tick() para ritmo/distancia
+  document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+}
 function actualizarManual() {
   const ritmoTxt = document.getElementById('manualRitmo').value;
   const ritmoSeg = parseMMSS(ritmoTxt);
@@ -2788,6 +2826,13 @@ function iniciarSesion() {
   document.getElementById('cardNotas').style.display = 'block';
   document.getElementById('cardModo').style.display = 'none';
   document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
+  if (modo === 'manual') {
+    // arranca desde lo que ya haya en actual.velocidad (cargado con actualizarManual() antes de iniciar),
+    // no en 0 — si no, el primer toque de +/- saltaría desde una velocidad que no es la real.
+    velocidadManualKmh = Math.round((actual.velocidad || 0) * 3.6 * 10) / 10;
+    document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+    document.getElementById('tileVelocidadManual').style.display = 'block';
+  }
   intervaloMuestreo = setInterval(tick, 1000);
   toast('Sesión iniciada');
 }
@@ -3058,6 +3103,7 @@ function resetearHUD() {
   document.getElementById('cardNotas').style.display = 'none';
   document.getElementById('cardModo').style.display = 'block';
   document.getElementById('cardMeta').style.display = 'block';
+  document.getElementById('tileVelocidadManual').style.display = 'none';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
