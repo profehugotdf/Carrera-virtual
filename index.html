@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v47</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v49</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -180,6 +180,7 @@
         <button id="btnModoBLE" onclick="seleccionarModo('ble')">Sensor BLE</button>
         <button id="btnModoManual" onclick="seleccionarModo('manual')">Manual</button>
         <button id="btnModoAireLibre" onclick="seleccionarModo('aire_libre')">Aire libre</button>
+        <button id="btnModoCalibracion" onclick="seleccionarModo('calibracion')">Calibración</button>
       </div>
 
       <div id="panelBLE" style="display:none;">
@@ -202,14 +203,25 @@
             <input type="number" id="manualCadencia" placeholder="170" onchange="actualizarManual()">
           </div>
         </div>
-        <button class="btn chico" id="btnConectarBandaManual" onclick="conectarBandaHR()">Conectar banda de pulso (BLE)</button>
-        <div class="estado-conexion" id="estadoBandaManual">Pulso: sin banda conectada.</div>
+        <button class="btn chico" id="btnConectarBandaManual" onclick="conectarRelojBLE()">Conectar banda (cadencia real + pulso, BLE)</button>
+        <div class="estado-conexion" id="estadoBandaManual">Sin conectar. La velocidad la manejás con los botones +/- de arriba; la cadencia y el pulso, si conectás la banda, se toman en vivo del sensor en vez del número de acá abajo.</div>
       </div>
 
       <div id="panelAireLibre" style="display:none;">
         <button class="btn" id="btnActivarGPS" onclick="iniciarGPS()">Activar GPS</button>
         <button class="btn chico" id="btnConectarBandaGPS" onclick="conectarBandaHR()">+ Conectar banda de pulso (BLE)</button>
         <div class="estado-conexion" id="estadoGPS">GPS sin activar.</div>
+      </div>
+
+      <div id="panelCalibracion" style="display:none;">
+        <div class="estado-conexion" style="margin-bottom:8px;">Conectá el sensor BLE (reloj en carrera virtual o la banda) y corré marcando la velocidad real con los botones +/- que aparecen arriba del escenario, igual que en modo Manual — esos botones manejan el HUD acá también. El sensor sigue escuchándose de fondo, pero solo para ir juntando pares (lo que marcás vos vs. lo que reporta) — no mueve ningún número en vivo.</div>
+        <button class="btn" id="btnConectarRelojCalib" onclick="conectarRelojBLE()">Conectar sensor BLE (RSC)</button>
+        <div class="estado-conexion" id="estadoBLECalib">Sin conectar.</div>
+        <div class="estado-conexion" id="resumenCalibracion" style="margin-top:8px;">Sin muestras guardadas todavía.</div>
+        <div class="fila" style="margin-top:8px;">
+          <button class="btn chico" onclick="exportarMuestrasCalibracion()">Exportar CSV</button>
+          <button class="btn chico" onclick="borrarMuestrasCalibracion()">Borrar todo</button>
+        </div>
       </div>
     </div>
 
@@ -1393,6 +1405,48 @@
        toque de +/- pegaría un salto desde una velocidad que no es la
        real. Probado el redondeo (diez +0.1 seguidos dan exactamente
        1.0, no 0.9999999...) y el piso en 0.
+   v48: modo "Calibración" nuevo, cuarta opción de Fuente de datos.
+       Objetivo: juntar pares (velocidad real marcada a mano con los
+       botones de v47, velocidad + cadencia que reporta el sensor BLE
+       al mismo tiempo) para más adelante poder armar una corrección
+       automática de dos variables (velocidad Y cadencia — no solo
+       velocidad, porque el error real depende de cómo cambia el largo
+       de zancada, según lo que notó Hugo con la cadencia "engañando"
+       al sensor).
+       El HUD en vivo lo maneja el botón +/- (igual que modo manual,
+       reusa tileVelocidadManual/ajustarVelocidadManual sin tocarlos)
+       — el sensor BLE se sigue escuchando de fondo (handleRSC ahora
+       revisa `modo` y en calibración escribe a actual.velocidadBLE/
+       cadenciaBLE en vez de actual.velocidad/cadencia, así no compite
+       con el botón por manejar el HUD).
+       Una sesión de calibración NO es una sesión de entrenamiento:
+       finalizarSesion() la desvía a un camino aparte que NUNCA toca
+       K_SESIONES, TSS, Forma combinada ni historial — solo acumula
+       en K_CALIBRACION (clave propia, con tope de 5000 muestras FIFO,
+       ~80 minutos de muestreo). Se acumula entre sesiones (Hugo dijo
+       que va a ir calibrando "cada tanto"), nunca se pisa. Se agregó
+       exportar a CSV y borrar todo, para que el dato juntado no quede
+       atrapado sin forma de revisarlo — la aplicación de la corrección
+       en modo BLE automático queda para más adelante, cuando haya
+       suficientes muestras.
+       Probado: acumulación entre sesiones sin pisar lo anterior, tope
+       FIFO descartando lo más viejo primero, y que no se loguea nada
+       si la cinta está en 0 (pausa de hecho) o si no hay señal real
+       del sensor — para no ensuciar el dataset con ceros.
+   v49: en modo manual, la cadencia ahora se toma en vivo de la banda
+       HRM-Pro+ (BLE RSC) en vez del número tipeado en el setup, que
+       quedaba congelado toda la sesión. handleRSC() suma una tercera
+       rama: en modo === 'manual' actualiza actual.cadencia con la real
+       del sensor pero NO toca actual.velocidad (esa la sigue marcando
+       el botón +/- de v47 — si el sensor también la pisara, se
+       perdería el sentido de tener la velocidad real de la cinta).
+       El botón de conectar banda en el panel manual pasó de llamar
+       conectarBandaHR() (solo pulso) a conectarRelojBLE() (RSC+HR
+       juntos en la misma conexión, igual que modo BLE) — una sola
+       conexión da cadencia real Y pulso, no hace falta conectar dos
+       veces. conectarRelojBLE() ahora enruta su texto de estado a
+       tres elementos posibles según el modo (ble/calibración/manual),
+       no dos.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1400,6 +1454,8 @@ const LS_PREFIX = 'correr_';
 const K_SESIONES = LS_PREFIX + 'sesiones';
 const K_ZONAS = LS_PREFIX + 'zonas';
 const K_MEJORES = LS_PREFIX + 'mejores_esfuerzos';
+const K_CALIBRACION = LS_PREFIX + 'calibracion_muestras'; // pares {velocidadRealKmh, velocidadBLE, cadenciaBLE} del modo Calibración, ver v48
+const CALIBRACION_MAX_MUESTRAS = 5000; // ~80 min de muestreo a 1/seg; se recorta por FIFO si se pasa
 // Clave compartida entre apps (Bici Indoor / Correr / Natación) para el panel de forma combinada futuro.
 // OJO Hugo: confirmar que este nombre coincide con el que ya usa (o va a usar) Bici Indoor, sino
 // el panel combinado no va a poder juntar los registros de las dos apps. Fácil de renombrar acá abajo.
@@ -1617,7 +1673,8 @@ let tiempoSubidaSeg = 0;
 let puntosSesion = []; // {t, ritmo, pulso, cadencia, pendiente, velocidad, distAcum}
 let pendienteActual = 0.0;
 
-let actual = { velocidad: 0, pulso: 0, cadencia: 0, rd: { vo: null, gct: null, stance: null, zancada: null, vRatio: null, balance: null } }; // último dato crudo (BLE, manual o GPS); rd = Running Dynamics (ANT+), lo escribe la capa WebUSB cuando exista
+let actual = { velocidad: 0, pulso: 0, cadencia: 0, velocidadBLE: null, cadenciaBLE: null, rd: { vo: null, gct: null, stance: null, zancada: null, vRatio: null, balance: null } }; // último dato crudo (BLE, manual o GPS); velocidadBLE/cadenciaBLE: solo se usan en modo calibración (ver v48), el sensor sigue escuchándose pero no maneja el HUD; rd = Running Dynamics (ANT+), lo escribe la capa WebUSB cuando exista
+let muestrasCalibracionSesion = []; // pares {velocidadRealKmh, velocidadBLE, cadenciaBLE} juntados en la sesión de calibración en curso, se persisten recién al finalizar
 
 let dispositivoReloj = null, dispositivoBanda = null;
 
@@ -1686,9 +1743,12 @@ function seleccionarModo(m) {
   document.getElementById('btnModoBLE').classList.toggle('sel', m === 'ble');
   document.getElementById('btnModoManual').classList.toggle('sel', m === 'manual');
   document.getElementById('btnModoAireLibre').classList.toggle('sel', m === 'aire_libre');
+  document.getElementById('btnModoCalibracion').classList.toggle('sel', m === 'calibracion');
   document.getElementById('panelBLE').style.display = m === 'ble' ? 'block' : 'none';
   document.getElementById('panelManual').style.display = m === 'manual' ? 'block' : 'none';
   document.getElementById('panelAireLibre').style.display = m === 'aire_libre' ? 'block' : 'none';
+  document.getElementById('panelCalibracion').style.display = m === 'calibracion' ? 'block' : 'none';
+  if (m === 'calibracion') actualizarResumenCalibracion();
   // en aire libre no hay pendiente controlable ni desnivel/hora de cinta; en cambio mostramos desnivel GPS
   document.getElementById('cardPendiente').style.display = m === 'aire_libre' ? 'none' : 'block';
   document.getElementById('tileVAM').style.display = m === 'aire_libre' ? 'none' : 'block';
@@ -1731,8 +1791,10 @@ function calcularProgresoMeta(tSeg, distanciaAcumM) {
    ============================================================ */
 async function conectarRelojBLE() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+  const estadoEl = modo === 'calibracion' ? document.getElementById('estadoBLECalib')
+    : modo === 'manual' ? document.getElementById('estadoBandaManual')
+    : document.getElementById('estadoBLE');
   try {
-    const estadoEl = document.getElementById('estadoBLE');
     estadoEl.textContent = 'Buscando sensor (reloj en modo carrera virtual/tapiz, o banda de pecho compatible)...';
     estadoEl.className = 'estado-conexion';
     const device = await navigator.bluetooth.requestDevice({
@@ -1741,8 +1803,8 @@ async function conectarRelojBLE() {
     });
     dispositivoReloj = device;
     device.addEventListener('gattserverdisconnected', () => {
-      document.getElementById('estadoBLE').textContent = 'Reloj desconectado.';
-      document.getElementById('estadoBLE').className = 'estado-conexion err';
+      estadoEl.textContent = 'Reloj desconectado.';
+      estadoEl.className = 'estado-conexion err';
     });
     const server = await device.gatt.connect();
 
@@ -1765,8 +1827,8 @@ async function conectarRelojBLE() {
     estadoEl.textContent = 'Sensor conectado (' + device.name + ')' + (hrOk ? ' — HR incluido' : ' — sin HR, conectá la banda aparte');
     estadoEl.className = 'estado-conexion ok';
   } catch (e) {
-    document.getElementById('estadoBLE').textContent = 'No se pudo conectar: ' + e.message;
-    document.getElementById('estadoBLE').className = 'estado-conexion err';
+    estadoEl.textContent = 'No se pudo conectar: ' + e.message;
+    estadoEl.className = 'estado-conexion err';
   }
 }
 function handleRSC(event) {
@@ -1781,8 +1843,20 @@ function handleRSC(event) {
   // TOTALES por minuto (ambos pies contados). Por eso se multiplica x2 acá, en el único lugar
   // donde entra el dato crudo — así "cadencia" significa lo mismo en toda la app.
   const cadence = v.getUint8(idx) * 2; idx += 1; // pasos/min totales (BLE manda zancadas/min)
-  actual.velocidad = speed;
-  actual.cadencia = cadence;
+  if (modo === 'calibracion') {
+    // en calibración el HUD lo maneja el botón +/- (igual que modo manual) — el sensor
+    // solo alimenta el par de referencia que se compara contra ese valor real en tick().
+    actual.velocidadBLE = speed;
+    actual.cadenciaBLE = cadence;
+  } else if (modo === 'manual') {
+    // en manual la velocidad la marca el botón +/- (la real, la que pusiste en la cinta) — pero
+    // la cadencia sí conviene tomarla en vivo del sensor en vez del número tipeado, que queda
+    // congelado. No se toca actual.velocidad acá: si no, el sensor le ganaría la pulseada al botón.
+    actual.cadencia = cadence;
+  } else {
+    actual.velocidad = speed;
+    actual.cadencia = cadence;
+  }
 }
 async function conectarBandaHR() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
@@ -2803,6 +2877,7 @@ function iniciarSesion() {
   elevGanadaAcumM = 0;
   puntosSesion = [];
   metaAlcanzada = false;
+  muestrasCalibracionSesion = [];
 
   fantasmaId = document.getElementById('selectFantasma').value || null;
   puntosFantasma = null;
@@ -2826,7 +2901,7 @@ function iniciarSesion() {
   document.getElementById('cardNotas').style.display = 'block';
   document.getElementById('cardModo').style.display = 'none';
   document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
-  if (modo === 'manual') {
+  if (modo === 'manual' || modo === 'calibracion') {
     // arranca desde lo que ya haya en actual.velocidad (cargado con actualizarManual() antes de iniciar),
     // no en 0 — si no, el primer toque de +/- saltaría desde una velocidad que no es la real.
     velocidadManualKmh = Math.round((actual.velocidad || 0) * 3.6 * 10) / 10;
@@ -2866,6 +2941,17 @@ function tick() {
   const rd = actual.rd || {};
   puntosSesion.push({ t, ritmo: ritmoSegKm, pulso, cadencia, pendiente: pendienteActual, velocidad, distAcum: distanciaAcumM,
     vo: rd.vo ?? null, gct: rd.gct ?? null, stance: rd.stance ?? null, zancada: rd.zancada ?? null, vRatio: rd.vRatio ?? null, balance: rd.balance ?? null });
+
+  // Modo calibración: guarda el par (velocidad real que marcaste vos, lo que reporta el sensor)
+  // cada segundo. Solo si hay señal de sensor de verdad y la cinta no está en 0 (parado/pausa
+  // de hecho) — una muestra con la cinta detenida no aporta nada a la curva de corrección.
+  if (modo === 'calibracion' && actual.velocidadBLE != null && actual.velocidadBLE > 0.1 && velocidadManualKmh > 0) {
+    muestrasCalibracionSesion.push({
+      velocidadRealKmh: velocidadManualKmh,
+      velocidadBLE: Math.round(actual.velocidadBLE * 1000) / 1000,
+      cadenciaBLE: actual.cadenciaBLE || null
+    });
+  }
 
   // HUD
   document.getElementById('hudRitmo').textContent = ritmoSegKm ? segAMMSS(ritmoSegKm) : '--:--';
@@ -3042,6 +3128,22 @@ function finalizarSesion(automatica) {
   detenerGPS();
   sesionActiva = false;
   const duracionSeg = tiempoTranscurridoSeg();
+
+  if (modo === 'calibracion') {
+    // no es una sesión de entrenamiento: no se guarda en K_SESIONES, no suma TSS, no entra a la
+    // Forma combinada ni al historial — solo se acumulan los pares en K_CALIBRACION.
+    if (duracionSeg < 30 || muestrasCalibracionSesion.length < 5) {
+      toast('Calibración muy corta, no se guardó');
+    } else {
+      const nuevas = muestrasCalibracionSesion.length;
+      const total = guardarMuestrasCalibracion();
+      toast('Calibración guardada: ' + nuevas + ' muestras nuevas (' + total + ' en total)');
+    }
+    muestrasCalibracionSesion = [];
+    resetearHUD();
+    return;
+  }
+
   if (duracionSeg < 30 || puntosSesion.length < 5) {
     toast('Sesión muy corta, no se guardó');
     resetearHUD();
@@ -3121,6 +3223,46 @@ function resetearHUD() {
   document.getElementById('hudFantasma').classList.remove('adelante', 'atras');
   puntosFantasma = null;
   renderSelectorFantasma();
+}
+
+/* ============================================================
+   MODO CALIBRACIÓN — junta pares (velocidad real marcada a mano,
+   lo que reporta el sensor BLE) para más adelante poder corregir
+   automáticamente el modo BLE. Ver v48.
+   ============================================================ */
+function guardarMuestrasCalibracion() {
+  const previas = lsGet(K_CALIBRACION, []);
+  let todas = previas.concat(muestrasCalibracionSesion);
+  if (todas.length > CALIBRACION_MAX_MUESTRAS) todas = todas.slice(todas.length - CALIBRACION_MAX_MUESTRAS); // FIFO, se descartan las más viejas
+  lsSet(K_CALIBRACION, todas);
+  actualizarResumenCalibracion();
+  return todas.length;
+}
+function actualizarResumenCalibracion() {
+  const el = document.getElementById('resumenCalibracion');
+  if (!el) return;
+  const total = lsGet(K_CALIBRACION, []).length;
+  el.textContent = total
+    ? (total + ' muestras guardadas en total (de todas las sesiones de calibración hasta ahora).')
+    : 'Sin muestras guardadas todavía.';
+}
+function exportarMuestrasCalibracion() {
+  const datos = lsGet(K_CALIBRACION, []);
+  if (!datos.length) { toast('No hay muestras de calibración guardadas'); return; }
+  const filas = ['velocidadRealKmh,velocidadBLE_ms,cadenciaBLE'];
+  datos.forEach(m => filas.push([m.velocidadRealKmh, m.velocidadBLE, m.cadenciaBLE ?? ''].join(',')));
+  const blob = new Blob([filas.join('\n')], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'calibracion_correr_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+function borrarMuestrasCalibracion() {
+  if (!confirm('¿Borrar todas las muestras de calibración guardadas? No se puede deshacer.')) return;
+  lsSet(K_CALIBRACION, []);
+  actualizarResumenCalibracion();
+  toast('Muestras de calibración borradas');
 }
 
 /* ============================================================
