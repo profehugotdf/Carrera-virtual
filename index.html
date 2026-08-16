@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v49</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v51</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1447,6 +1447,41 @@
        veces. conectarRelojBLE() ahora enruta su texto de estado a
        tres elementos posibles según el modo (ble/calibración/manual),
        no dos.
+   v50: el control de velocidad manual (+/- 0.1 km/h) pasó a mostrarse
+       apenas se elige el modo Manual o Calibración, no recién al
+       apretar Iniciar — pedido de Hugo para poder cargar la velocidad
+       de salida de la cinta ANTES de arrancar la sesión, no a ciegas.
+       Vive fuera de cardModo/cardMeta (esas sí se ocultan durante la
+       sesión), así que su visibilidad ahora depende solo de `modo`
+       (seleccionarModo() la muestra/oculta) en vez de depender de
+       sesionActiva. resetearHUD() ya no la oculta a ciegas al
+       terminar — si seguís en modo manual/calibración, queda visible
+       lista para la próxima. iniciarSesion() sigue re-sincronizando
+       velocidadManualKmh con actual.velocidad al arrancar, por las
+       dudas, pero ya no es lo único que la muestra.
+   v51: watchdog de "canal zombi", portado de Bici Indoor a pedido de
+       Hugo — una notificación BLE puede dejar de llegar sin disparar
+       gattserverdisconnected: la conexión queda "viva" a los ojos de
+       la app mientras el dato real dejó de fluir, y el HUD se queda
+       mostrando el último valor congelado sin que nada se entere.
+       No había ninguna función de reconexión previa que reusar (a
+       diferencia de Bici Indoor) — se extrajo manejarDesconexionReloj()/
+       manejarDesconexionBandaHR() de lo que ya hacía cada
+       gattserverdisconnected (poner el estado en pantalla), compartidas
+       ahora entre el evento real y el watchdog. También se sacó la
+       lógica de a qué elemento de estado escribir (dependía de `modo`,
+       estaba duplicada en dos lugares) a estadoElReloj()/estadoElBanda().
+       Cubre los DOS canales BLE en vivo de esta app, no solo pulso como
+       pidió Hugo textualmente — acá también está el RSC (ritmo/cadencia
+       del reloj o la banda en modo BLE/Manual/Calibración), que es
+       plausiblemente más crítico que el pulso porque maneja toda la
+       sesión (distancia, fantasma, meta). Umbral 6s sin dato nuevo,
+       chequeo cada 2s, solo con sesión activa. Probado con casos a
+       mano (sin sesión activa no dispara, no dispara antes del umbral,
+       dispara justo al pasarlo, no repite el aviso en bucle mientras
+       sigue colgado, vuelve a poder disparar tras una reconexión
+       exitosa, y una cadencia de datos normal de ~1/seg nunca da falso
+       positivo).
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1677,6 +1712,12 @@ let actual = { velocidad: 0, pulso: 0, cadencia: 0, velocidadBLE: null, cadencia
 let muestrasCalibracionSesion = []; // pares {velocidadRealKmh, velocidadBLE, cadenciaBLE} juntados en la sesión de calibración en curso, se persisten recién al finalizar
 
 let dispositivoReloj = null, dispositivoBanda = null;
+// Watchdog de "canal zombi" (portado de Bici Indoor): una notificación BLE puede dejar de llegar
+// sin disparar gattserverdisconnected — la conexión queda "viva" mientras el dato real dejó de
+// fluir, y el HUD se queda mostrando el último valor congelado sin que nada lo detecte.
+let ultimoDatoRelojAt = 0, ultimoDatoBandaAt = 0; // Date.now() del último dato real recibido de cada canal
+let relojColgado = false, bandaColgada = false;   // "ya se avisó" — evita repetir el aviso cada 2s
+const WATCHDOG_UMBRAL_MS = 6000; // una banda/RSC típica notifica ~1/seg; 6s sin nada ya es zombi
 
 // ---- GPS (modo Aire libre) ----
 let watchIdGPS = null;
@@ -1749,6 +1790,11 @@ function seleccionarModo(m) {
   document.getElementById('panelAireLibre').style.display = m === 'aire_libre' ? 'block' : 'none';
   document.getElementById('panelCalibracion').style.display = m === 'calibracion' ? 'block' : 'none';
   if (m === 'calibracion') actualizarResumenCalibracion();
+  // el control de velocidad manual (+/- 0.1 km/h) tiene que poder tocarse ANTES de arrancar,
+  // para cargar la velocidad de salida de la cinta — no solo durante la sesión. Vive fuera de
+  // cardModo/cardMeta (que sí se ocultan al iniciar), así que se muestra en cuanto se elige el
+  // modo, no recién en iniciarSesion().
+  document.getElementById('tileVelocidadManual').style.display = (m === 'manual' || m === 'calibracion') ? 'block' : 'none';
   // en aire libre no hay pendiente controlable ni desnivel/hora de cinta; en cambio mostramos desnivel GPS
   document.getElementById('cardPendiente').style.display = m === 'aire_libre' ? 'none' : 'block';
   document.getElementById('tileVAM').style.display = m === 'aire_libre' ? 'none' : 'block';
@@ -1789,11 +1835,51 @@ function calcularProgresoMeta(tSeg, distanciaAcumM) {
    BLUETOOTH — reloj (Carrera Virtual) o banda HRM-Pro Plus: mismo estándar RSC 0x1814 + HR 0x180D,
    así que la conexión es idéntica sea cual sea el dispositivo elegido en la búsqueda.
    ============================================================ */
-async function conectarRelojBLE() {
-  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
-  const estadoEl = modo === 'calibracion' ? document.getElementById('estadoBLECalib')
+function estadoElReloj() {
+  return modo === 'calibracion' ? document.getElementById('estadoBLECalib')
     : modo === 'manual' ? document.getElementById('estadoBandaManual')
     : document.getElementById('estadoBLE');
+}
+function estadoElBanda() {
+  return modo === 'manual' ? document.getElementById('estadoBandaManual') : document.getElementById('estadoBLE');
+}
+// Condición pura del watchdog — sin DOM ni BLE, se prueba aislada con valores a mano.
+function debeDispararWatchdog(sesionActivaFlag, ultimoDatoAt, ahoraMs, yaManejado, umbralMs) {
+  return sesionActivaFlag && !yaManejado && (ahoraMs - ultimoDatoAt) > umbralMs;
+}
+function manejarDesconexionReloj(motivo) {
+  if (relojColgado) return; // ya avisado — no repetir cada 2s mientras sigue sin datos
+  relojColgado = true;
+  const estadoEl = estadoElReloj();
+  estadoEl.textContent = motivo === 'watchdog'
+    ? 'Sensor sin datos nuevos hace un rato (¿se colgó la conexión?). Reconectá si hace falta.'
+    : 'Reloj desconectado.';
+  estadoEl.className = 'estado-conexion err';
+  if (sesionActiva) toast('Se cortó el dato del sensor de ritmo/cadencia');
+}
+function manejarDesconexionBandaHR(motivo) {
+  if (bandaColgada) return;
+  bandaColgada = true;
+  const estadoEl = estadoElBanda();
+  estadoEl.textContent = motivo === 'watchdog'
+    ? 'Banda sin datos nuevos hace un rato (¿se colgó la conexión?). Reconectá si hace falta.'
+    : 'Banda desconectada.';
+  estadoEl.className = 'estado-conexion err';
+  if (sesionActiva) toast('Se cortó el dato de pulso');
+}
+setInterval(() => {
+  const ahora = Date.now();
+  if (dispositivoReloj && debeDispararWatchdog(sesionActiva, ultimoDatoRelojAt, ahora, relojColgado, WATCHDOG_UMBRAL_MS)) {
+    manejarDesconexionReloj('watchdog');
+  }
+  if (ultimoDatoBandaAt > 0 && debeDispararWatchdog(sesionActiva, ultimoDatoBandaAt, ahora, bandaColgada, WATCHDOG_UMBRAL_MS)) {
+    manejarDesconexionBandaHR('watchdog');
+  }
+}, 2000);
+
+async function conectarRelojBLE() {
+  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+  const estadoEl = estadoElReloj();
   try {
     estadoEl.textContent = 'Buscando sensor (reloj en modo carrera virtual/tapiz, o banda de pecho compatible)...';
     estadoEl.className = 'estado-conexion';
@@ -1802,16 +1888,15 @@ async function conectarRelojBLE() {
       optionalServices: ['heart_rate']
     });
     dispositivoReloj = device;
-    device.addEventListener('gattserverdisconnected', () => {
-      estadoEl.textContent = 'Reloj desconectado.';
-      estadoEl.className = 'estado-conexion err';
-    });
+    device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita'));
     const server = await device.gatt.connect();
 
     const rscService = await server.getPrimaryService('running_speed_and_cadence');
     const rscChar = await rscService.getCharacteristic('rsc_measurement');
     rscChar.addEventListener('characteristicvaluechanged', handleRSC);
     await rscChar.startNotifications();
+    ultimoDatoRelojAt = Date.now(); relojColgado = false; // recién ahora, no antes: si no, el watchdog podría
+    // dispararse por el rato que tardó la búsqueda/conexión, antes de que llegara ningún dato real.
 
     let hrOk = false;
     try {
@@ -1819,6 +1904,7 @@ async function conectarRelojBLE() {
       const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
       hrChar.addEventListener('characteristicvaluechanged', handleHR);
       await hrChar.startNotifications();
+      ultimoDatoBandaAt = Date.now(); bandaColgada = false;
       hrOk = true;
     } catch (e) {
       // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado) — se puede
@@ -1832,6 +1918,7 @@ async function conectarRelojBLE() {
   }
 }
 function handleRSC(event) {
+  ultimoDatoRelojAt = Date.now();
   const v = event.target.value;
   const flags = v.getUint8(0);
   let idx = 1;
@@ -1860,7 +1947,7 @@ function handleRSC(event) {
 }
 async function conectarBandaHR() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
-  const estadoEl = modo === 'manual' ? document.getElementById('estadoBandaManual') : document.getElementById('estadoBLE');
+  const estadoEl = estadoElBanda();
   try {
     estadoEl.textContent = 'Buscando banda de pulso...';
     estadoEl.className = 'estado-conexion';
@@ -1868,15 +1955,13 @@ async function conectarBandaHR() {
       filters: [{ services: ['heart_rate'] }]
     });
     dispositivoBanda = device;
-    device.addEventListener('gattserverdisconnected', () => {
-      estadoEl.textContent = 'Banda desconectada.';
-      estadoEl.className = 'estado-conexion err';
-    });
+    device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
     const server = await device.gatt.connect();
     const hrService = await server.getPrimaryService('heart_rate');
     const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
     hrChar.addEventListener('characteristicvaluechanged', handleHR);
     await hrChar.startNotifications();
+    ultimoDatoBandaAt = Date.now(); bandaColgada = false;
     estadoEl.textContent = 'Banda conectada (' + device.name + ')';
     estadoEl.className = 'estado-conexion ok';
   } catch (e) {
@@ -1885,6 +1970,7 @@ async function conectarBandaHR() {
   }
 }
 function handleHR(event) {
+  ultimoDatoBandaAt = Date.now();
   const v = event.target.value;
   const flags = v.getUint8(0);
   let hr;
@@ -3205,7 +3291,9 @@ function resetearHUD() {
   document.getElementById('cardNotas').style.display = 'none';
   document.getElementById('cardModo').style.display = 'block';
   document.getElementById('cardMeta').style.display = 'block';
-  document.getElementById('tileVelocidadManual').style.display = 'none';
+  // no se oculta a ciegas: si seguís en modo manual/calibración, el control de velocidad tiene
+  // que quedar visible para cargar la velocidad de la próxima sesión (mismo criterio que arriba).
+  document.getElementById('tileVelocidadManual').style.display = (modo === 'manual' || modo === 'calibracion') ? 'block' : 'none';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
