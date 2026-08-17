@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v51</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v52</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -204,6 +204,7 @@
           </div>
         </div>
         <button class="btn chico" id="btnConectarBandaManual" onclick="conectarRelojBLE()">Conectar banda (cadencia real + pulso, BLE)</button>
+        <button class="btn chico" id="btnConectarSoloPulsoManual" onclick="conectarBandaHR()" style="margin-top:6px;">Conectar solo pulso (si el de arriba no encuentra la banda)</button>
         <div class="estado-conexion" id="estadoBandaManual">Sin conectar. La velocidad la manejás con los botones +/- de arriba; la cadencia y el pulso, si conectás la banda, se toman en vivo del sensor en vez del número de acá abajo.</div>
       </div>
 
@@ -1482,6 +1483,26 @@
        sigue colgado, vuelve a poder disparar tras una reconexión
        exitosa, y una cadencia de datos normal de ~1/seg nunca da falso
        positivo).
+   v52: Hugo reportó (con video) que en modo Manual el botón de
+       "conectar banda" no encontraba la HRM-Pro+ — ni pulso ni
+       cadencia. Sospecha: desde v49 ese botón llama a
+       conectarRelojBLE(), que exige `running_speed_and_cadence` como
+       filtro OBLIGATORIO — si la banda no está anunciando ese
+       servicio en ese momento (necesita estar puesta y en movimiento
+       en algunos firmwares), el selector de Bluetooth no la muestra
+       NI PARA PULSO, que antes andaba solo con el filtro de
+       `heart_rate` de conectarBandaHR(). Se agregó de vuelta un botón
+       de respaldo "Conectar solo pulso" en el panel manual, que llama
+       a conectarBandaHR() (filtro liviano, sin exigir RSC) — así el
+       pulso no quede rehén de que la banda esté anunciando RSC.
+       De paso, para la otra pregunta de Hugo (estado de la batería):
+       se agregó leerBateria(server), que intenta el servicio BLE
+       estándar `battery_service`/`battery_level` (opcional, no todos
+       los dispositivos lo exponen) y nunca tira error si no está —
+       devuelve null y sigue. El % se suma al texto de estado al
+       conectar, en las dos funciones de conexión. Probado que no
+       rompe nada cuando el dispositivo no tiene el servicio, ni
+       cuando lo tiene pero falla la lectura.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1877,6 +1898,18 @@ setInterval(() => {
   }
 }, 2000);
 
+// Batería del sensor (servicio BLE estándar, opcional — no todos los dispositivos lo exponen).
+// Devuelve el % o null si no está disponible; nunca tira excepción hacia arriba.
+async function leerBateria(server) {
+  try {
+    const battService = await server.getPrimaryService('battery_service');
+    const battChar = await battService.getCharacteristic('battery_level');
+    const v = await battChar.readValue();
+    return v.getUint8(0);
+  } catch (e) {
+    return null; // el dispositivo no expone este servicio, o no lo permite leer — no es un error real
+  }
+}
 async function conectarRelojBLE() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
   const estadoEl = estadoElReloj();
@@ -1885,7 +1918,7 @@ async function conectarRelojBLE() {
     estadoEl.className = 'estado-conexion';
     const device = await navigator.bluetooth.requestDevice({
       filters: [{ services: ['running_speed_and_cadence'] }],
-      optionalServices: ['heart_rate']
+      optionalServices: ['heart_rate', 'battery_service']
     });
     dispositivoReloj = device;
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita'));
@@ -1910,7 +1943,9 @@ async function conectarRelojBLE() {
       // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado) — se puede
       // conectar la banda aparte con el botón de abajo.
     }
-    estadoEl.textContent = 'Sensor conectado (' + device.name + ')' + (hrOk ? ' — HR incluido' : ' — sin HR, conectá la banda aparte');
+    const bateria = await leerBateria(server);
+    estadoEl.textContent = 'Sensor conectado (' + device.name + ')' + (hrOk ? ' — HR incluido' : ' — sin HR, conectá la banda aparte')
+      + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
   } catch (e) {
     estadoEl.textContent = 'No se pudo conectar: ' + e.message;
@@ -1952,7 +1987,8 @@ async function conectarBandaHR() {
     estadoEl.textContent = 'Buscando banda de pulso...';
     estadoEl.className = 'estado-conexion';
     const device = await navigator.bluetooth.requestDevice({
-      filters: [{ services: ['heart_rate'] }]
+      filters: [{ services: ['heart_rate'] }],
+      optionalServices: ['battery_service']
     });
     dispositivoBanda = device;
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
@@ -1962,7 +1998,8 @@ async function conectarBandaHR() {
     hrChar.addEventListener('characteristicvaluechanged', handleHR);
     await hrChar.startNotifications();
     ultimoDatoBandaAt = Date.now(); bandaColgada = false;
-    estadoEl.textContent = 'Banda conectada (' + device.name + ')';
+    const bateria = await leerBateria(server);
+    estadoEl.textContent = 'Banda conectada (' + device.name + ')' + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
   } catch (e) {
     estadoEl.textContent = 'No se pudo conectar: ' + e.message;
