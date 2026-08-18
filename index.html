@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v53</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v54</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1524,6 +1524,27 @@
        mensaje del timeout; si la promesa original falla ANTES del
        timeout con su propio error real, se propaga ese error y no el
        genérico de timeout.
+   v54: Hugo notó bien que el aviso del watchdog (v51) era ambiguo —
+       "Sensor sin datos nuevos" (cadencia/RSC) y "Banda sin datos
+       nuevos" (pulso) suenan parecido, y peor: en modo manual (y en
+       modo BLE cuando el reloj trae RSC+HR en la misma conexión) los
+       DOS escriben al mismo cartel de texto, así que si se colgaban
+       los dos a la vez, el segundo tapaba el mensaje del primero — se
+       veía como si solo hubiera un problema cuando en realidad eran
+       los dos canales. renderEstadoCanalesColgados() ahora arma el
+       texto según cuáles de los dos (relojColgado/bandaColgada) estén
+       realmente activos, combinándolos si comparten cartel ("Sin
+       datos nuevos de cadencia/ritmo ni de pulso...") o escribiendo
+       cada uno en el suyo si tienen carteles separados. El motivo
+       'explicita' (gattserverdisconnected real) no cambia — sigue
+       igual que antes, esto solo afecta el aviso del watchdog.
+       Probado con los 4 casos: solo cadencia, solo pulso, los dos
+       juntos compartiendo cartel (ninguno tapa al otro), y carteles
+       separados (cada uno recibe solo su mensaje, sin mezclarse).
+       Pendiente sin resolver todavía: por qué la banda deja de mandar
+       pulso en la sesión real de Hugo — el próximo paso es que pruebe
+       en movimiento (no parado tocando la pantalla) y que la próxima
+       captura ya diga explícitamente cuál de los dos canales fue.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1889,24 +1910,49 @@ function estadoElBanda() {
 function debeDispararWatchdog(sesionActivaFlag, ultimoDatoAt, ahoraMs, yaManejado, umbralMs) {
   return sesionActivaFlag && !yaManejado && (ahoraMs - ultimoDatoAt) > umbralMs;
 }
+// En modo manual (y en modo BLE cuando el reloj trae RSC+HR en la misma conexión), cadencia y
+// pulso comparten el mismo cartel de texto — si escribo cada uno por separado, el que se cuelga
+// segundo tapa el mensaje del primero, y quedás sin saber que en realidad son los DOS los que
+// están sin datos. Esta función arma el texto combinado según qué haya colgado en cada momento.
+function renderEstadoCanalesColgados() {
+  const elReloj = estadoElReloj(), elBanda = estadoElBanda();
+  const mismoElemento = elReloj === elBanda;
+  const txtReloj = 'Cadencia/ritmo sin datos nuevos hace un rato (¿se colgó la conexión?). Reconectá si hace falta.';
+  const txtBanda = 'Pulso sin datos nuevos hace un rato (¿se colgó la conexión?). Reconectá si hace falta.';
+  if (mismoElemento) {
+    const partes = [];
+    if (relojColgado) partes.push('cadencia/ritmo');
+    if (bandaColgada) partes.push('pulso');
+    if (!partes.length) return;
+    elReloj.textContent = 'Sin datos nuevos de ' + partes.join(' ni de ') + ' hace un rato (¿se colgó la conexión?). Reconectá si hace falta.';
+    elReloj.className = 'estado-conexion err';
+  } else {
+    if (relojColgado) { elReloj.textContent = txtReloj; elReloj.className = 'estado-conexion err'; }
+    if (bandaColgada) { elBanda.textContent = txtBanda; elBanda.className = 'estado-conexion err'; }
+  }
+}
 function manejarDesconexionReloj(motivo) {
   if (relojColgado) return; // ya avisado — no repetir cada 2s mientras sigue sin datos
   relojColgado = true;
-  const estadoEl = estadoElReloj();
-  estadoEl.textContent = motivo === 'watchdog'
-    ? 'Sensor sin datos nuevos hace un rato (¿se colgó la conexión?). Reconectá si hace falta.'
-    : 'Reloj desconectado.';
-  estadoEl.className = 'estado-conexion err';
+  if (motivo === 'watchdog') {
+    renderEstadoCanalesColgados();
+  } else {
+    const estadoEl = estadoElReloj();
+    estadoEl.textContent = 'Reloj desconectado.';
+    estadoEl.className = 'estado-conexion err';
+  }
   if (sesionActiva) toast('Se cortó el dato del sensor de ritmo/cadencia');
 }
 function manejarDesconexionBandaHR(motivo) {
   if (bandaColgada) return;
   bandaColgada = true;
-  const estadoEl = estadoElBanda();
-  estadoEl.textContent = motivo === 'watchdog'
-    ? 'Banda sin datos nuevos hace un rato (¿se colgó la conexión?). Reconectá si hace falta.'
-    : 'Banda desconectada.';
-  estadoEl.className = 'estado-conexion err';
+  if (motivo === 'watchdog') {
+    renderEstadoCanalesColgados();
+  } else {
+    const estadoEl = estadoElBanda();
+    estadoEl.textContent = 'Banda desconectada.';
+    estadoEl.className = 'estado-conexion err';
+  }
   if (sesionActiva) toast('Se cortó el dato de pulso');
 }
 setInterval(() => {
