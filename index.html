@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v52</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v53</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1503,6 +1503,27 @@
        conectar, en las dos funciones de conexión. Probado que no
        rompe nada cuando el dispositivo no tiene el servicio, ni
        cuando lo tiene pero falla la lectura.
+   v53: v52 no alcanzó — Hugo mandó captura mostrando la banda
+       detectada en el selector de Bluetooth, pero la app se quedó
+       pegada en "Buscando sensor..." para siempre, sin pulso ni
+       cadencia. Causa: Web Bluetooth no tiene timeout propio —
+       device.gatt.connect() y startNotifications() pueden colgarse
+       sin resolver NI rechazar nunca (conocido en Android, sobre todo
+       con dispositivos ya emparejados por el sistema operativo), y
+       sin un timeout el try/catch nunca se entera de que hay que
+       avisar el error. Se agregó conTimeout(promise, ms, mensaje) —
+       Promise.race contra un setTimeout que rechaza — envolviendo los
+       4 puntos que pueden colgarse (gatt.connect y startNotifications,
+       en las dos funciones de conexión): 10s para conectar, 8s para
+       que arranquen las notificaciones. Ahora, en vez de quedarse
+       pegado en silencio, avisa con un mensaje accionable (sugiere
+       revisar si el dispositivo ya está emparejado a nivel sistema
+       operativo y "olvidarlo" antes de reintentar).
+       Probado: si la promesa resuelve antes del timeout, no se nota
+       ningún cambio; si se cuelga para siempre, rechaza con el
+       mensaje del timeout; si la promesa original falla ANTES del
+       timeout con su propio error real, se propaga ese error y no el
+       genérico de timeout.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1900,6 +1921,16 @@ setInterval(() => {
 
 // Batería del sensor (servicio BLE estándar, opcional — no todos los dispositivos lo exponen).
 // Devuelve el % o null si no está disponible; nunca tira excepción hacia arriba.
+// Web Bluetooth no tiene timeout propio: si gatt.connect() o startNotifications() se cuelgan
+// (pasa en Android, sobre todo con dispositivos ya emparejados por el sistema operativo), la
+// promesa se queda esperando para siempre sin resolver NI fallar — la app quedaba pegada en
+// "Buscando sensor..." sin ningún aviso. Con esto, al menos se entera y puede reintentar.
+function conTimeout(promise, ms, mensaje) {
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error(mensaje)), ms))
+  ]);
+}
 async function leerBateria(server) {
   try {
     const battService = await server.getPrimaryService('battery_service');
@@ -1922,12 +1953,12 @@ async function conectarRelojBLE() {
     });
     dispositivoReloj = device;
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita'));
-    const server = await device.gatt.connect();
+    const server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
 
     const rscService = await server.getPrimaryService('running_speed_and_cadence');
     const rscChar = await rscService.getCharacteristic('rsc_measurement');
     rscChar.addEventListener('characteristicvaluechanged', handleRSC);
-    await rscChar.startNotifications();
+    await conTimeout(rscChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
     ultimoDatoRelojAt = Date.now(); relojColgado = false; // recién ahora, no antes: si no, el watchdog podría
     // dispararse por el rato que tardó la búsqueda/conexión, antes de que llegara ningún dato real.
 
@@ -1936,12 +1967,12 @@ async function conectarRelojBLE() {
       const hrService = await server.getPrimaryService('heart_rate');
       const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
       hrChar.addEventListener('characteristicvaluechanged', handleHR);
-      await hrChar.startNotifications();
+      await conTimeout(hrChar.startNotifications(), 8000, 'timeout HR');
       ultimoDatoBandaAt = Date.now(); bandaColgada = false;
       hrOk = true;
     } catch (e) {
-      // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado) — se puede
-      // conectar la banda aparte con el botón de abajo.
+      // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado), o tardó
+      // demasiado — se puede conectar la banda aparte con el botón de abajo.
     }
     const bateria = await leerBateria(server);
     estadoEl.textContent = 'Sensor conectado (' + device.name + ')' + (hrOk ? ' — HR incluido' : ' — sin HR, conectá la banda aparte')
@@ -1992,11 +2023,11 @@ async function conectarBandaHR() {
     });
     dispositivoBanda = device;
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
-    const server = await device.gatt.connect();
+    const server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
     const hrService = await server.getPrimaryService('heart_rate');
     const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
     hrChar.addEventListener('characteristicvaluechanged', handleHR);
-    await hrChar.startNotifications();
+    await conTimeout(hrChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
     ultimoDatoBandaAt = Date.now(); bandaColgada = false;
     const bateria = await leerBateria(server);
     estadoEl.textContent = 'Banda conectada (' + device.name + ')' + (bateria != null ? ' — batería ' + bateria + '%' : '');
