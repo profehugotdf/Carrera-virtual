@@ -48,6 +48,12 @@
     color:var(--texto); font-weight:700; font-size:13px;}
   .modo-btns button.sel{border-color:var(--ritmo); color:var(--ritmo); background:#12201E;}
   .estado-conexion{font-size:12px; color:var(--muted); margin-top:6px; font-family:var(--mono);}
+  /* Consola de eventos con timestamps, portada de Bici Indoor — a diferencia del texto de estado
+     (que se pisa a sí mismo y solo muestra el último), acá queda el historial completo de la
+     conexión, así una sola captura de pantalla cuenta toda la secuencia. */
+  pre#logBLE{background:#0a0d12; border:1px solid var(--borde); border-radius:12px; padding:10px;
+    font-size:11px; line-height:1.5; max-height:120px; overflow:auto; white-space:pre-wrap;
+    word-break:break-word; margin:10px 0 0; color:var(--muted); font-family:var(--mono);}
   .estado-conexion.ok{color:var(--z2);}
   .estado-conexion.err{color:var(--pulso);}
   .btn{display:block; width:100%; padding:12px; border-radius:10px; border:1px solid var(--borde);
@@ -165,7 +171,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v56</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v57</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -224,6 +230,8 @@
           <button class="btn chico" onclick="borrarMuestrasCalibracion()">Borrar todo</button>
         </div>
       </div>
+
+      <pre id="logBLE"></pre>
     </div>
 
     <div class="card">
@@ -1601,6 +1609,32 @@
        conectado de verdad, 6s sin dato sigue disparando como antes (no
        se rompió la detección real); un reintento después de un fallo
        no hereda el estado colgado del intento anterior.
+   v57: idea de Hugo — portar la consola de eventos con timestamps que
+       ya tiene Bici Indoor abajo de todo (log(m,c) + pre#log). El
+       problema con el texto de estado suelto es que se pisa a sí mismo
+       y solo muestra el último mensaje: en varias rondas de capturas
+       se perdió justamente la secuencia de lo que pasó antes. Con la
+       consola, UNA sola captura de Hugo cuenta toda la historia.
+       logBLE(mensaje, color) + pre#logBLE al final de la tarjeta de
+       Fuente de datos (visible en los cuatro modos). Instrumentados
+       los puntos clave de las dos funciones de conexión: abrir el
+       selector, dispositivo elegido (con nombre), GATT conectado,
+       servicio+característica OK, notificaciones activadas, batería,
+       y cualquier error con su mensaje. Lo más importante para el
+       diagnóstico pendiente: se loguea el PRIMER dato real de cada
+       canal por separado ("PRIMER DATO de pulso recibido" / "de
+       cadencia/ritmo"), con banderas que se resetean en cada intento
+       nuevo — así queda claro de una si el canal llegó a transmitir
+       alguna vez o nunca arrancó, que es exactamente la pregunta que
+       no pudimos contestar en todas las rondas anteriores. También se
+       loguean las desconexiones distinguiendo watchdog de desconexión
+       real del dispositivo.
+       Las banderas primerDatoRscLogueado/primerDatoHrLogueado se
+       declararon arriba junto al resto del estado BLE, no al lado de
+       handleRSC — se usan en conectarRelojBLE(), que está definida
+       antes en el archivo, y aunque en la práctica funciona (las
+       funciones corren después de que carga todo el script), dejarlo
+       así era frágil y confuso de leer.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1836,6 +1870,7 @@ let dispositivoReloj = null, dispositivoBanda = null;
 // fluir, y el HUD se queda mostrando el último valor congelado sin que nada lo detecte.
 let ultimoDatoRelojAt = 0, ultimoDatoBandaAt = 0; // Date.now() del último dato real recibido de cada canal
 let relojColgado = false, bandaColgada = false;   // "ya se avisó" — evita repetir el aviso cada 2s
+let primerDatoRscLogueado = false, primerDatoHrLogueado = false; // loguear solo la PRIMERA notificación de cada canal, no las ~1/seg siguientes
 let relojConectado = false, bandaConectada = false; // recién en true cuando el handshake terminó bien —
 // el watchdog vigila DESPUÉS de eso, no durante la conexión en sí (eso ya lo cubre conTimeout con
 // su propio aviso). Sin esta bandera, un handshake lento pero normal (hasta 10s, ver v53) podía
@@ -1958,6 +1993,19 @@ function calcularProgresoMeta(tSeg, distanciaAcumM) {
    BLUETOOTH — reloj (Carrera Virtual) o banda HRM-Pro Plus: mismo estándar RSC 0x1814 + HR 0x180D,
    así que la conexión es idéntica sea cual sea el dispositivo elegido en la búsqueda.
    ============================================================ */
+// Consola de eventos con timestamps (portada de Bici Indoor). El texto de estado muestra solo el
+// último mensaje y se pisa a sí mismo — acá queda el historial completo, así una captura sola
+// cuenta toda la secuencia de la conexión en vez de un estado suelto.
+function logBLE(mensaje, color) {
+  const el = document.getElementById('logBLE');
+  if (!el) return;
+  const t = new Date().toTimeString().slice(0, 8);
+  const linea = document.createElement('div');
+  if (color) linea.style.color = color;
+  linea.textContent = t + '  ' + mensaje;
+  el.appendChild(linea);
+  el.scrollTop = el.scrollHeight;
+}
 function estadoElReloj() {
   return modo === 'calibracion' ? document.getElementById('estadoBLECalib')
     : modo === 'manual' ? document.getElementById('estadoBandaManual')
@@ -1994,6 +2042,7 @@ function renderEstadoCanalesColgados() {
 function manejarDesconexionReloj(motivo) {
   if (relojColgado) return; // ya avisado — no repetir cada 2s mientras sigue sin datos
   relojColgado = true;
+  logBLE(motivo === 'watchdog' ? 'Cadencia/ritmo: sin datos nuevos hace 6s (watchdog)' : 'Cadencia/ritmo: desconexión del dispositivo', '#f85149');
   if (motivo === 'watchdog') {
     renderEstadoCanalesColgados();
   } else {
@@ -2006,6 +2055,7 @@ function manejarDesconexionReloj(motivo) {
 function manejarDesconexionBandaHR(motivo) {
   if (bandaColgada) return;
   bandaColgada = true;
+  logBLE(motivo === 'watchdog' ? 'Pulso: sin datos nuevos hace 6s (watchdog)' : 'Pulso: desconexión del dispositivo', '#f85149');
   if (motivo === 'watchdog') {
     renderEstadoCanalesColgados();
   } else {
@@ -2062,12 +2112,15 @@ async function conectarRelojBLE() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
   const estadoEl = estadoElReloj();
   try {
+    logBLE('— Conectar banda (RSC + pulso): abriendo selector…');
+    primerDatoRscLogueado = false; primerDatoHrLogueado = false; // así un reintento vuelve a loguear el primer dato
     estadoEl.textContent = 'Buscando sensor (reloj en modo carrera virtual/tapiz, o banda de pecho compatible)...';
     estadoEl.className = 'estado-conexion';
     const device = await navigator.bluetooth.requestDevice({
       filters: [{ services: ['running_speed_and_cadence'] }],
       optionalServices: ['heart_rate', 'battery_service']
     });
+    logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
     dispositivoReloj = device;
     ultimoDatoRelojAt = Date.now(); relojColgado = false; relojConectado = false; // reseteo AL EMPEZAR el intento (no al
     // terminar) — si no, dispositivoReloj queda "verdadero" desde acá pero el timestamp se queda
@@ -2079,14 +2132,17 @@ async function conectarRelojBLE() {
     try {
       server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
     } finally { clearInterval(iv); }
+    logBLE('GATT conectado', '#3fb950');
 
     const rscService = await server.getPrimaryService('running_speed_and_cadence');
     const rscChar = await rscService.getCharacteristic('rsc_measurement');
+    logBLE('Servicio RSC + característica OK');
     rscChar.addEventListener('characteristicvaluechanged', handleRSC);
     iv = conProgreso(estadoEl, 'Conectado, esperando el primer dato');
     try {
       await conTimeout(rscChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
     } finally { clearInterval(iv); }
+    logBLE('Notificaciones RSC activadas — esperando datos de cadencia', '#3fb950');
     ultimoDatoRelojAt = Date.now(); relojColgado = false; relojConectado = true; // ya se reseteó al empezar el intento (arriba);
     // esto lo vuelve a ajustar al momento exacto del primer dato real confirmado, y recién ACÁ
     // arranca a vigilar el watchdog — el handshake en sí ya lo cubre el timeout de conTimeout.
@@ -2098,8 +2154,10 @@ async function conectarRelojBLE() {
       hrChar.addEventListener('characteristicvaluechanged', handleHR);
       await conTimeout(hrChar.startNotifications(), 8000, 'timeout HR');
       ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = true;
+      logBLE('Notificaciones de pulso activadas — esperando latidos', '#3fb950');
       hrOk = true;
     } catch (e) {
+      logBLE('Sin canal de pulso en este dispositivo (' + e.message + ') — usá "Conectar solo pulso"', '#d29922');
       // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado), o tardó
       // demasiado — se puede conectar la banda aparte con el botón de abajo.
     }
@@ -2107,13 +2165,16 @@ async function conectarRelojBLE() {
     estadoEl.textContent = 'Sensor conectado (' + device.name + ')' + (hrOk ? ' — HR incluido' : ' — sin HR, conectá la banda aparte')
       + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
+    logBLE('Sensor conectado' + (bateria != null ? ' — batería ' + bateria + '%' : ''), '#3fb950');
   } catch (e) {
     estadoEl.textContent = 'No se pudo conectar: ' + e.message;
     estadoEl.className = 'estado-conexion err';
+    logBLE('ERROR: ' + e.message, '#f85149');
   }
 }
 function handleRSC(event) {
   ultimoDatoRelojAt = Date.now();
+  if (!primerDatoRscLogueado) { primerDatoRscLogueado = true; logBLE('PRIMER DATO de cadencia/ritmo recibido', '#3fb950'); }
   const v = event.target.value;
   const flags = v.getUint8(0);
   let idx = 1;
@@ -2144,12 +2205,15 @@ async function conectarBandaHR() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
   const estadoEl = estadoElBanda();
   try {
+    logBLE('— Conectar solo pulso: abriendo selector…');
+    primerDatoHrLogueado = false;
     estadoEl.textContent = 'Buscando banda de pulso...';
     estadoEl.className = 'estado-conexion';
     const device = await navigator.bluetooth.requestDevice({
       filters: [{ services: ['heart_rate'] }],
       optionalServices: ['battery_service']
     });
+    logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
     dispositivoBanda = device;
     ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = false; // mismo criterio que en conectarRelojBLE — reseteo al empezar, no al terminar
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
@@ -2158,24 +2222,30 @@ async function conectarBandaHR() {
     try {
       server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
     } finally { clearInterval(iv); }
+    logBLE('GATT conectado', '#3fb950');
     const hrService = await server.getPrimaryService('heart_rate');
     const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
+    logBLE('Servicio de pulso + característica OK');
     hrChar.addEventListener('characteristicvaluechanged', handleHR);
     iv = conProgreso(estadoEl, 'Conectado, esperando el primer latido');
     try {
       await conTimeout(hrChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
     } finally { clearInterval(iv); }
     ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = true; // recién acá arranca a vigilar el watchdog
+    logBLE('Notificaciones de pulso activadas — esperando latidos', '#3fb950');
     const bateria = await leerBateria(server);
     estadoEl.textContent = 'Banda conectada (' + device.name + ')' + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
+    logBLE('Banda conectada' + (bateria != null ? ' — batería ' + bateria + '%' : ''), '#3fb950');
   } catch (e) {
     estadoEl.textContent = 'No se pudo conectar: ' + e.message;
     estadoEl.className = 'estado-conexion err';
+    logBLE('ERROR: ' + e.message, '#f85149');
   }
 }
 function handleHR(event) {
   ultimoDatoBandaAt = Date.now();
+  if (!primerDatoHrLogueado) { primerDatoHrLogueado = true; logBLE('PRIMER DATO de pulso recibido', '#3fb950'); }
   const v = event.target.value;
   const flags = v.getUint8(0);
   let hr;
