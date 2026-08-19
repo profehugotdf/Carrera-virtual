@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v54</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v55</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1545,6 +1545,28 @@
        pulso en la sesión real de Hugo — el próximo paso es que pruebe
        en movimiento (no parado tocando la pantalla) y que la próxima
        captura ya diga explícitamente cuál de los dos canales fue.
+   v55: tras varias rondas de capturas, ninguna mostró nunca un mensaje
+       de éxito NI de error — siempre "Buscando sensor..." estático.
+       Cayó la ficha: ese texto se pone ANTES de mostrar el selector
+       de Bluetooth y no se vuelve a tocar hasta el resultado final
+       (éxito, error, o el timeout de v53 a los 10s) — así que aunque
+       todo funcione bien por dentro, en pantalla se ve exactamente
+       igual mientras conecta que si estuviera trabado de verdad. Muy
+       probablemente Hugo estaba sacando la captura dentro de esa
+       ventana normal de espera, no después. Se agregó conProgreso()
+       — un contador visible de segundos ("Conectando (3s)...") que
+       arranca apenas se elige el dispositivo y se apaga con
+       clearInterval() en un finally así el resultado final (éxito,
+       error o timeout) siempre lo reemplaza. Con esto la próxima
+       captura es autodiagnóstica: si el contador sigue subiendo,
+       sigue vivo; si quedó pegado en un número fijo sin ningún
+       mensaje de error después de pasado el timeout correspondiente
+       (10s para conectar, 8s para el primer dato), ahí sí es un
+       problema real y no una captura tomada demasiado pronto.
+       Probado: arranca en 0s inmediatamente (no espera el primer
+       tick), cuenta cada segundo, y clearInterval() realmente frena
+       el conteo (no sigue de fondo aunque el elemento no se vuelva a
+       tocar).
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1977,6 +1999,14 @@ function conTimeout(promise, ms, mensaje) {
     new Promise((_, reject) => setTimeout(() => reject(new Error(mensaje)), ms))
   ]);
 }
+// El texto de estado no cambiaba entre "Buscando sensor..." y el resultado final — durante todo
+// el tramo de gatt.connect()/startNotifications() (hasta 10s) se veía igual estuviera trabajando
+// o realmente trabado, sin forma de diferenciarlos a simple vista. Esto pone un contador visible.
+function conProgreso(estadoEl, base) {
+  let seg = 0;
+  estadoEl.textContent = base + ' (0s)';
+  return setInterval(() => { seg++; estadoEl.textContent = base + ' (' + seg + 's)'; }, 1000);
+}
 async function leerBateria(server) {
   try {
     const battService = await server.getPrimaryService('battery_service');
@@ -1999,12 +2029,19 @@ async function conectarRelojBLE() {
     });
     dispositivoReloj = device;
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita'));
-    const server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
+    let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
+    let server;
+    try {
+      server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
+    } finally { clearInterval(iv); }
 
     const rscService = await server.getPrimaryService('running_speed_and_cadence');
     const rscChar = await rscService.getCharacteristic('rsc_measurement');
     rscChar.addEventListener('characteristicvaluechanged', handleRSC);
-    await conTimeout(rscChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
+    iv = conProgreso(estadoEl, 'Conectado, esperando el primer dato');
+    try {
+      await conTimeout(rscChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
+    } finally { clearInterval(iv); }
     ultimoDatoRelojAt = Date.now(); relojColgado = false; // recién ahora, no antes: si no, el watchdog podría
     // dispararse por el rato que tardó la búsqueda/conexión, antes de que llegara ningún dato real.
 
@@ -2069,11 +2106,18 @@ async function conectarBandaHR() {
     });
     dispositivoBanda = device;
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
-    const server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
+    let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
+    let server;
+    try {
+      server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
+    } finally { clearInterval(iv); }
     const hrService = await server.getPrimaryService('heart_rate');
     const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
     hrChar.addEventListener('characteristicvaluechanged', handleHR);
-    await conTimeout(hrChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
+    iv = conProgreso(estadoEl, 'Conectado, esperando el primer latido');
+    try {
+      await conTimeout(hrChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
+    } finally { clearInterval(iv); }
     ultimoDatoBandaAt = Date.now(); bandaColgada = false;
     const bateria = await leerBateria(server);
     estadoEl.textContent = 'Banda conectada (' + device.name + ')' + (bateria != null ? ' — batería ' + bateria + '%' : '');
