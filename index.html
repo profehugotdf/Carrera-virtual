@@ -165,7 +165,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v55</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v56</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1567,6 +1567,40 @@
        tick), cuenta cada segundo, y clearInterval() realmente frena
        el conteo (no sigue de fondo aunque el elemento no se vuelva a
        tocar).
+   v56: Hugo insistió en que el watchdog de v51 podía ser la causa real
+       del problema de conexión, no solo un mensajero confuso — y tenía
+       razón, encontré un bug de verdad. Volví a leer su instrucción
+       original ("se resetea lastRxAt al momento exacto de conectar o
+       reconectar") y la había implementado al revés: yo reseteaba
+       ultimoDatoRelojAt/ultimoDatoBandaAt recién cuando el handshake
+       terminaba con éxito, no al empezar. Efecto real: dispositivoReloj
+       quedaba "verdadero" apenas se elegía el dispositivo (antes de
+       gatt.connect() siquiera arrancar), pero el timestamp se quedaba
+       viejo durante TODO el handshake — que con el timeout de v53
+       puede tardar legítimamente hasta 10s — así que si ya había
+       sesión activa (varias capturas de Hugo mostraban la sesión ya
+       corriendo cuando probaba conectar), el watchdog de 6s podía
+       dispararse sobre una conexión que todavía estaba en curso, no
+       colgada de verdad. Encima el gate del reloj usaba `dispositivoReloj`
+       (truthy) en vez del timestamp como el de banda — asimetría que
+       agravaba lo mismo.
+       Primer intento de arreglo (resetear el timestamp al EMPEZAR el
+       intento en vez de al terminar) no alcanzó solo: un test lo
+       reprodujo — un handshake legítimo de 7-9s sigue siendo más largo
+       que el umbral de 6s del watchdog, así que igual disparaba en
+       falso. El arreglo real: dos banderas nuevas (relojConectado/
+       bandaConectada), en false mientras dura el handshake y recién en
+       true cuando termina bien — el watchdog ahora exige esa bandera
+       además del timestamp, así que directamente no vigila nada
+       mientras la conexión todavía se está estableciendo (eso ya lo
+       cubre conTimeout con su propio timeout/aviso). Recién empieza a
+       vigilar una vez que el canal está realmente vivo, que es
+       exactamente el escenario que describió Hugo de Bici Indoor
+       (conexión que andaba y after se queda muda).
+       Probado: handshake largo pero normal (9s) ya no dispara; una vez
+       conectado de verdad, 6s sin dato sigue disparando como antes (no
+       se rompió la detección real); un reintento después de un fallo
+       no hereda el estado colgado del intento anterior.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1802,6 +1836,10 @@ let dispositivoReloj = null, dispositivoBanda = null;
 // fluir, y el HUD se queda mostrando el último valor congelado sin que nada lo detecte.
 let ultimoDatoRelojAt = 0, ultimoDatoBandaAt = 0; // Date.now() del último dato real recibido de cada canal
 let relojColgado = false, bandaColgada = false;   // "ya se avisó" — evita repetir el aviso cada 2s
+let relojConectado = false, bandaConectada = false; // recién en true cuando el handshake terminó bien —
+// el watchdog vigila DESPUÉS de eso, no durante la conexión en sí (eso ya lo cubre conTimeout con
+// su propio aviso). Sin esta bandera, un handshake lento pero normal (hasta 10s, ver v53) podía
+// disparar el watchdog de 6s sobre una conexión que todavía estaba en curso, no colgada de verdad.
 const WATCHDOG_UMBRAL_MS = 6000; // una banda/RSC típica notifica ~1/seg; 6s sin nada ya es zombi
 
 // ---- GPS (modo Aire libre) ----
@@ -1979,10 +2017,13 @@ function manejarDesconexionBandaHR(motivo) {
 }
 setInterval(() => {
   const ahora = Date.now();
-  if (dispositivoReloj && debeDispararWatchdog(sesionActiva, ultimoDatoRelojAt, ahora, relojColgado, WATCHDOG_UMBRAL_MS)) {
+  // mismo criterio para los dos canales: el timestamp (>0 = hubo al menos un intento de conexión
+  // que llegó a resetearlo) es la señal de "vigilar este canal", no la referencia al dispositivo
+  // (esa queda truthy desde que se elige el dispositivo, mucho antes de que la conexión exista).
+  if (ultimoDatoRelojAt > 0 && relojConectado && debeDispararWatchdog(sesionActiva, ultimoDatoRelojAt, ahora, relojColgado, WATCHDOG_UMBRAL_MS)) {
     manejarDesconexionReloj('watchdog');
   }
-  if (ultimoDatoBandaAt > 0 && debeDispararWatchdog(sesionActiva, ultimoDatoBandaAt, ahora, bandaColgada, WATCHDOG_UMBRAL_MS)) {
+  if (ultimoDatoBandaAt > 0 && bandaConectada && debeDispararWatchdog(sesionActiva, ultimoDatoBandaAt, ahora, bandaColgada, WATCHDOG_UMBRAL_MS)) {
     manejarDesconexionBandaHR('watchdog');
   }
 }, 2000);
@@ -2028,6 +2069,10 @@ async function conectarRelojBLE() {
       optionalServices: ['heart_rate', 'battery_service']
     });
     dispositivoReloj = device;
+    ultimoDatoRelojAt = Date.now(); relojColgado = false; relojConectado = false; // reseteo AL EMPEZAR el intento (no al
+    // terminar) — si no, dispositivoReloj queda "verdadero" desde acá pero el timestamp se queda
+    // viejo durante todo el handshake (hasta 10s con el timeout de v53), y el watchdog puede
+    // dispararse sobre una conexión que todavía está en curso, no realmente colgada.
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita'));
     let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
     let server;
@@ -2042,8 +2087,9 @@ async function conectarRelojBLE() {
     try {
       await conTimeout(rscChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
     } finally { clearInterval(iv); }
-    ultimoDatoRelojAt = Date.now(); relojColgado = false; // recién ahora, no antes: si no, el watchdog podría
-    // dispararse por el rato que tardó la búsqueda/conexión, antes de que llegara ningún dato real.
+    ultimoDatoRelojAt = Date.now(); relojColgado = false; relojConectado = true; // ya se reseteó al empezar el intento (arriba);
+    // esto lo vuelve a ajustar al momento exacto del primer dato real confirmado, y recién ACÁ
+    // arranca a vigilar el watchdog — el handshake en sí ya lo cubre el timeout de conTimeout.
 
     let hrOk = false;
     try {
@@ -2051,7 +2097,7 @@ async function conectarRelojBLE() {
       const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
       hrChar.addEventListener('characteristicvaluechanged', handleHR);
       await conTimeout(hrChar.startNotifications(), 8000, 'timeout HR');
-      ultimoDatoBandaAt = Date.now(); bandaColgada = false;
+      ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = true;
       hrOk = true;
     } catch (e) {
       // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado), o tardó
@@ -2105,6 +2151,7 @@ async function conectarBandaHR() {
       optionalServices: ['battery_service']
     });
     dispositivoBanda = device;
+    ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = false; // mismo criterio que en conectarRelojBLE — reseteo al empezar, no al terminar
     device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
     let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
     let server;
@@ -2118,7 +2165,7 @@ async function conectarBandaHR() {
     try {
       await conTimeout(hrChar.startNotifications(), 8000, 'El sensor no empezó a mandar datos en 8s — reintentá la conexión.');
     } finally { clearInterval(iv); }
-    ultimoDatoBandaAt = Date.now(); bandaColgada = false;
+    ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = true; // recién acá arranca a vigilar el watchdog
     const bateria = await leerBateria(server);
     estadoEl.textContent = 'Banda conectada (' + device.name + ')' + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
