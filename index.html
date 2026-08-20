@@ -52,7 +52,7 @@
      (que se pisa a sí mismo y solo muestra el último), acá queda el historial completo de la
      conexión, así una sola captura de pantalla cuenta toda la secuencia. */
   pre#logBLE{background:#0a0d12; border:1px solid var(--borde); border-radius:12px; padding:10px;
-    font-size:11px; line-height:1.5; max-height:120px; overflow:auto; white-space:pre-wrap;
+    font-size:11px; line-height:1.5; max-height:160px; overflow:auto; white-space:pre-wrap;
     word-break:break-word; margin:10px 0 0; color:var(--muted); font-family:var(--mono);}
   .estado-conexion.ok{color:var(--z2);}
   .estado-conexion.err{color:var(--pulso);}
@@ -78,6 +78,9 @@
   .hud-item.grande{grid-column:1/-1;}
   .hud-item.grande .val{font-size:44px;}
 
+  .ritmo-ctrl{display:flex; align-items:center; justify-content:center; gap:12px;}
+  .ritmo-btn{width:52px; height:52px; border-radius:50%; border:1px solid var(--borde);
+    background:var(--panel); color:var(--pendiente); font-size:26px; font-weight:700; flex:none;}
   .pendiente-ctrl{display:flex; align-items:center; justify-content:center; gap:14px; margin-top:6px;}
   .pendiente-ctrl button{width:44px; height:44px; border-radius:50%; border:1px solid var(--borde);
     background:var(--panel); color:var(--pendiente); font-size:20px; font-weight:800;}
@@ -171,7 +174,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v57</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v59</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -230,7 +233,13 @@
           <button class="btn chico" onclick="borrarMuestrasCalibracion()">Borrar todo</button>
         </div>
       </div>
+    </div>
 
+    <!-- El log vive en su PROPIA tarjeta, fuera de cardModo — esa se oculta al iniciar la sesión
+         (ver v45), y justo durante la sesión es cuando más sirve ver los eventos en vivo (p.ej.
+         para cazar un corte de sensor a mitad de carrera). -->
+    <div class="card" id="cardLogBLE">
+      <h2>Registro de sensores</h2>
       <pre id="logBLE"></pre>
     </div>
 
@@ -294,9 +303,19 @@
 
       <div class="hud-grid">
         <div class="hud-item grande ritmo">
-          <div class="val" id="hudRitmo">--:--</div>
-          <div class="lbl">Ritmo /km</div>
-          <div class="lbl" id="hudKmh" style="font-size:11px; margin-top:2px; opacity:0.75;">-- km/h</div>
+          <!-- En modo manual/calibración los botones +/- aparecen FLANQUEANDO el ritmo, para poder
+               cambiar la velocidad de la cinta sin scrollear hasta el control de arriba mientras
+               se está corriendo. Llaman a la misma ajustarVelocidadManual() de v47 — es el mismo
+               control, mostrado en dos lugares, no una lógica nueva. -->
+          <div class="ritmo-ctrl">
+            <button class="ritmo-btn" id="btnVelMenosHud" onclick="ajustarVelocidadManual(-0.1)" style="display:none;">−</button>
+            <div>
+              <div class="val" id="hudRitmo">--:--</div>
+              <div class="lbl">Ritmo /km</div>
+              <div class="lbl" id="hudKmh" style="font-size:11px; margin-top:2px; opacity:0.75;">-- km/h</div>
+            </div>
+            <button class="ritmo-btn" id="btnVelMasHud" onclick="ajustarVelocidadManual(0.1)" style="display:none;">+</button>
+          </div>
         </div>
         <div class="hud-item pulso">
           <div class="val" id="hudPulso">--</div>
@@ -1635,6 +1654,45 @@
        antes en el archivo, y aunque en la práctica funciona (las
        funciones corren después de que carga todo el script), dejarlo
        así era frágil y confuso de leer.
+   v58: RESUELTO el problema de conexión BLE que veníamos persiguiendo
+       desde v51 — no era el código. Hugo reinició el teléfono y la
+       conexión funcionó perfecta a la primera: el log de v57 mostró la
+       secuencia completa (GATT conectado -> notificaciones RSC ->
+       PRIMER DATO de cadencia -> notificaciones de pulso -> batería
+       85% -> PRIMER DATO de pulso). Era el stack Bluetooth de Android
+       que se había quedado en mal estado, lo que explica por qué el
+       código era idéntico en Correr/Kayak/Bici y aun así una andaba y
+       otra no de forma aparentemente arbitraria — dependía de cuál
+       agarrara el adaptador en qué momento. Nota para el futuro: si
+       vuelve a pasar algo así, reiniciar el teléfono ANTES de sospechar
+       del código.
+       Cambio de esta versión: el log salió de cardModo (que se oculta
+       al iniciar la sesión, ver v45) a su propia tarjeta cardLogBLE,
+       que no se oculta nunca — Hugo marcó que justo durante la sesión
+       es cuando más sirve, para cazar un corte de sensor a mitad de
+       carrera. Se le subió un poco la altura máxima (120 -> 160px)
+       ahora que es un panel de monitoreo en vivo y no solo una
+       herramienta de debug de la conexión inicial.
+   v59: pedido de Hugo — botones +/- de velocidad TAMBIÉN flanqueando
+       el ritmo en el HUD de la sesión en vivo, no solo en el control
+       de arriba del escenario (v47/v50). Motivo: corriendo, llegar
+       hasta ese control implica scrollear, y el tile del ritmo es lo
+       que ya estás mirando. Es el MISMO control en dos lugares —
+       ambos llaman a ajustarVelocidadManual(), no hay estado nuevo ni
+       lógica duplicada; mostrarBotonesVelocidadHud() los sincroniza
+       con la visibilidad de tileVelocidadManual en los tres puntos
+       donde esa se decide (seleccionarModo, iniciarSesion, resetearHUD).
+       De paso se tapó un hueco: ajustarVelocidadManual() solo
+       actualizaba el texto del control de arriba, así que tocando los
+       botones ANTES de iniciar la sesión (cuando tick() todavía no
+       corre) el tile del ritmo se quedaba en "--:--" aunque la
+       velocidad ya estuviera cargada. Ahora también refresca hudRitmo
+       y hudKmh; con la sesión en marcha el próximo tick lo pisa igual,
+       así que no hay conflicto.
+       Probado: los dos botones se muestran/ocultan juntos, tocar +
+       antes de iniciar ya muestra el ritmo correcto (6.0 km/h ->
+       10:00 /km), los dos controles muestran siempre lo mismo, y
+       bajar a 0 vuelve a los guiones en vez de un ritmo absurdo.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1953,6 +2011,7 @@ function seleccionarModo(m) {
   // cardModo/cardMeta (que sí se ocultan al iniciar), así que se muestra en cuanto se elige el
   // modo, no recién en iniciarSesion().
   document.getElementById('tileVelocidadManual').style.display = (m === 'manual' || m === 'calibracion') ? 'block' : 'none';
+  mostrarBotonesVelocidadHud(m === 'manual' || m === 'calibracion');
   // en aire libre no hay pendiente controlable ni desnivel/hora de cinta; en cambio mostramos desnivel GPS
   document.getElementById('cardPendiente').style.display = m === 'aire_libre' ? 'none' : 'block';
   document.getElementById('tileVAM').style.display = m === 'aire_libre' ? 'none' : 'block';
@@ -2316,10 +2375,24 @@ function procesarPosicionGPS(pos) {
 
 /* ---------------- Modo manual ---------------- */
 let velocidadManualKmh = 0;
+// Muestra/oculta los botones +/- que flanquean el ritmo en el HUD. Van siempre en el mismo estado
+// que tileVelocidadManual (el control de arriba): son el mismo control en dos lugares.
+function mostrarBotonesVelocidadHud(visible) {
+  const d = visible ? 'block' : 'none';
+  const menos = document.getElementById('btnVelMenosHud'), mas = document.getElementById('btnVelMasHud');
+  if (menos) menos.style.display = d;
+  if (mas) mas.style.display = d;
+}
 function ajustarVelocidadManual(delta) {
   velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
   actual.velocidad = velocidadManualKmh / 3.6; // km/h -> m/s, mismo dato que usa tick() para ritmo/distancia
   document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+  // Reflejarlo también en el tile grande del ritmo: si la sesión todavía no arrancó, tick() no
+  // corre y ese tile quedaría en "--:--" mientras cargás la velocidad de salida con los botones.
+  // Con la sesión en marcha esto igual se pisa en el próximo tick, así que no hay conflicto.
+  const v = actual.velocidad;
+  document.getElementById('hudRitmo').textContent = v > 0.1 ? segAMMSS(1000 / v) : '--:--';
+  document.getElementById('hudKmh').textContent = v > 0.1 ? velocidadManualKmh.toFixed(1) + ' km/h' : '-- km/h';
 }
 function actualizarManual() {
   const ritmoTxt = document.getElementById('manualRitmo').value;
@@ -3268,6 +3341,7 @@ function iniciarSesion() {
     velocidadManualKmh = Math.round((actual.velocidad || 0) * 3.6 * 10) / 10;
     document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
     document.getElementById('tileVelocidadManual').style.display = 'block';
+    mostrarBotonesVelocidadHud(true);
   }
   intervaloMuestreo = setInterval(tick, 1000);
   toast('Sesión iniciada');
@@ -3569,6 +3643,7 @@ function resetearHUD() {
   // no se oculta a ciegas: si seguís en modo manual/calibración, el control de velocidad tiene
   // que quedar visible para cargar la velocidad de la próxima sesión (mismo criterio que arriba).
   document.getElementById('tileVelocidadManual').style.display = (modo === 'manual' || modo === 'calibracion') ? 'block' : 'none';
+  mostrarBotonesVelocidadHud(modo === 'manual' || modo === 'calibracion');
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
