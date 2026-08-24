@@ -174,7 +174,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v59</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v60</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -215,6 +215,28 @@
         <button class="btn chico" id="btnConectarBandaManual" onclick="conectarRelojBLE()">Conectar banda (cadencia real + pulso, BLE)</button>
         <button class="btn chico" id="btnConectarSoloPulsoManual" onclick="conectarBandaHR()" style="margin-top:6px;">Conectar solo pulso (si el de arriba no encuentra la banda)</button>
         <div class="estado-conexion" id="estadoBandaManual">Sin conectar. La velocidad la manejás con los botones +/- de arriba; la cadencia y el pulso, si conectás la banda, se toman en vivo del sensor en vez del número de acá abajo.</div>
+
+        <div style="border-top:1px solid var(--borde); margin-top:12px; padding-top:10px;">
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="chkTestVma" onchange="toggleTestVma()" style="width:auto;">
+            <span>Test incremental de VMA</span>
+          </label>
+          <div id="cfgTestVma" style="display:none; margin-top:8px;">
+            <div class="fila">
+              <div>
+                <label>Velocidad inicial (km/h)</label>
+                <input type="number" id="vmaVelInicial" value="8" step="0.5" min="4">
+              </div>
+              <div>
+                <label>Incremento (km/h)</label>
+                <input type="number" id="vmaIncremento" value="0.5" step="0.1" min="0.1">
+              </div>
+            </div>
+            <label style="margin-top:8px;">Duración de cada escalón (seg)</label>
+            <input type="number" id="vmaDuracionEscalon" value="60" step="30" min="30">
+            <div class="estado-conexion" style="margin-top:8px;">Al iniciar la sesión, la app sube sola su velocidad en cada escalón y te avisa 5 segundos antes para que subas la cinta a tiempo. Corré hasta no poder más y tocá Finalizar: la VMA sale de la última velocidad completada, interpolando el escalón que quedó a medias. Ojo con el tope de tu cinta — si te quedás sin velocidad disponible, el test se corta antes de tu VMA real.</div>
+          </div>
+        </div>
       </div>
 
       <div id="panelAireLibre" style="display:none;">
@@ -261,6 +283,13 @@
       <div class="hud-item grande ritmo" id="tileMeta" style="display:none; margin-top:12px;">
         <div class="val" id="hudMeta">--</div>
         <div class="lbl" id="lblMeta">Restante</div>
+      </div>
+
+      <!-- Guía del test incremental de VMA (v60): escalón actual, velocidad a la que hay que poner
+           la cinta, y cuenta regresiva. Va arriba de todo para verlo sin scrollear mientras corrés. -->
+      <div class="hud-item grande ritmo" id="tileTestVma" style="display:none; margin-top:12px;">
+        <div class="val" id="vmaObjetivo">--</div>
+        <div class="lbl" id="vmaDetalle">Test VMA</div>
       </div>
 
       <div class="hud-item pendiente" id="tileVelocidadManual" style="display:none; margin-top:12px;">
@@ -469,7 +498,7 @@
       <h2>Velocidad Aeróbica Máxima</h2>
       <div class="estado-conexion" id="resumenVMA" style="margin-bottom:8px;"></div>
       <table class="tabla-zonas" id="tablaVMA"></table>
-      <div class="estado-conexion" style="margin-top:6px;">Para prescribir ritmos de series (no reemplaza las 5 zonas de arriba, que son para fondo/umbral). Estimada de tu mejor esfuerzo de 5min (o 8min si no hay), no de un test incremental específico.</div>
+      <div class="estado-conexion" style="margin-top:6px;">Para prescribir ritmos de series (no reemplaza las 5 zonas de arriba, que son para fondo/umbral). Sale del test incremental si lo hiciste; si no, se estima de tu mejor esfuerzo de 5 min (u 8 min).</div>
     </div>
 
     <div class="card">
@@ -1693,6 +1722,38 @@
        antes de iniciar ya muestra el ritmo correcto (6.0 km/h ->
        10:00 /km), los dos controles muestran siempre lo mismo, y
        bajar a 0 vuelve a los guiones en vez de un ritmo absurdo.
+   v60: test incremental de VMA en modo manual (protocolo tipo VAM-EVAL).
+       Llenaba un hueco real: la tarjeta "Velocidad Aeróbica Máxima"
+       solo INFERÍA la VMA del mejor esfuerzo de 5/8 min (el propio
+       texto aclaraba "no de un test incremental específico"), y el
+       umbral es carga 100% manual.
+       Protocolo configurable (default 8 km/h, +0.5 cada 60s). Decisión
+       de diseño: la app maneja SU propia velocidad en cada escalón
+       (así lo grabado refleja el protocolo exacto) y avisa 5s antes
+       del cambio para subir la cinta física a tiempo — un solo botón
+       que tocar, el de la cinta, en vez de sincronizar los dos a mano.
+       El cálculo se hace en tick() ANTES de leer la velocidad, para que
+       la muestra de ese segundo ya refleje el escalón nuevo.
+       VMA = última velocidad completada + fracción del escalón que
+       quedó a medias × incremento (interpolación estándar de VAM-EVAL).
+       Si no completó ni un escalón entero devuelve null (test inválido)
+       en vez de un número absurdo. El resultado se guarda en
+       K_VMA_TEST y le GANA a estimarVMA() en la tarjeta de zonas —
+       es medición directa, no inferencia — mostrando de dónde salió
+       y con qué fecha. La sesión igual se guarda como cualquier otra
+       (historial, gráficas, TSS).
+       Bug propio atajado al escribirlo: la validación de la config
+       estaba DESPUÉS de deshabilitar el botón "Iniciar", así que una
+       config inválida abortaba la sesión y te dejaba trabado sin poder
+       arrancar. Se movió al principio de iniciarSesion(), antes de
+       tocar cualquier estado.
+       Probado (test_vma_incremental.js): el escalón cambia justo al
+       cumplirse el minuto y no antes, la velocidad sube sin arrastre
+       de coma flotante (8+7×0.5 = 11.5 exacto), la cuenta regresiva
+       llega a 5s, cortar al terminar el escalón 5 da esa velocidad,
+       cortar a mitad del siguiente interpola medio incremento,
+       abandonar antes del primer escalón da null, y una config
+       alternativa (2 min, +1 km/h) también da resultados coherentes.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1701,6 +1762,7 @@ const K_SESIONES = LS_PREFIX + 'sesiones';
 const K_ZONAS = LS_PREFIX + 'zonas';
 const K_MEJORES = LS_PREFIX + 'mejores_esfuerzos';
 const K_CALIBRACION = LS_PREFIX + 'calibracion_muestras'; // pares {velocidadRealKmh, velocidadBLE, cadenciaBLE} del modo Calibración, ver v48
+const K_VMA_TEST = LS_PREFIX + 'vma_test'; // resultado MEDIDO del test incremental (v60) — distinto de estimarVMA(), que infiere del mejor esfuerzo
 const CALIBRACION_MAX_MUESTRAS = 5000; // ~80 min de muestreo a 1/seg; se recorta por FIFO si se pasa
 // Clave compartida entre apps (Bici Indoor / Correr / Natación) para el panel de forma combinada futuro.
 // OJO Hugo: confirmar que este nombre coincide con el que ya usa (o va a usar) Bici Indoor, sino
@@ -2382,6 +2444,64 @@ function mostrarBotonesVelocidadHud(visible) {
   const menos = document.getElementById('btnVelMenosHud'), mas = document.getElementById('btnVelMasHud');
   if (menos) menos.style.display = d;
   if (mas) mas.style.display = d;
+}
+/* ============================================================
+   TEST INCREMENTAL DE VMA (v60) — protocolo tipo VAM-EVAL sobre la cinta, en modo manual.
+   La app maneja SU propia velocidad en cada escalón (así lo grabado refleja el protocolo exacto)
+   y avisa antes del cambio para que Hugo suba la cinta física a tiempo — un solo botón que tocar,
+   el de la cinta, en vez de tener que sincronizar los dos a mano.
+   ============================================================ */
+let testVmaActivo = false, testVmaCfg = null, testVmaEscalonPrevio = -1, testVmaAvisado = false;
+// Escalón 0 = primer escalón, a velInicial. En el escalón k se corre a velInicial + k*incremento.
+function estadoEscalonVma(tSeg, cfg) {
+  const idx = Math.floor(tSeg / cfg.duracionEscalonSeg);
+  return {
+    escalonIndex: idx,
+    numeroEscalon: idx + 1,
+    velocidadObjetivo: Math.round((cfg.velInicialKmh + idx * cfg.incrementoKmh) * 10) / 10,
+    segundosEnEscalon: tSeg % cfg.duracionEscalonSeg,
+    segundosRestantes: cfg.duracionEscalonSeg - (tSeg % cfg.duracionEscalonSeg),
+  };
+}
+// VMA = última velocidad COMPLETADA + fracción del escalón incompleto * incremento (interpolación
+// estándar de VAM-EVAL). Sin un escalón entero completado el test no es válido.
+function calcularVmaTest(tSeg, cfg) {
+  const idx = Math.floor(tSeg / cfg.duracionEscalonSeg);
+  if (idx < 1) return null;
+  const parcial = (tSeg % cfg.duracionEscalonSeg) / cfg.duracionEscalonSeg;
+  const vma = cfg.velInicialKmh + (idx - 1) * cfg.incrementoKmh + parcial * cfg.incrementoKmh;
+  return Math.round(vma * 100) / 100;
+}
+function toggleTestVma() {
+  const on = document.getElementById('chkTestVma').checked;
+  document.getElementById('cfgTestVma').style.display = on ? 'block' : 'none';
+}
+function leerCfgTestVma() {
+  const vi = parseFloat(document.getElementById('vmaVelInicial').value);
+  const inc = parseFloat(document.getElementById('vmaIncremento').value);
+  const dur = parseInt(document.getElementById('vmaDuracionEscalon').value, 10);
+  if (!(vi > 0) || !(inc > 0) || !(dur >= 30)) return null;
+  return { velInicialKmh: vi, incrementoKmh: inc, duracionEscalonSeg: dur };
+}
+// Corre en cada tick() mientras el test está activo: cambia de escalón, sube la velocidad de la
+// app, avisa antes del cambio y actualiza el tile guía.
+function actualizarTestVma(tSeg) {
+  const e = estadoEscalonVma(tSeg, testVmaCfg);
+  if (e.escalonIndex !== testVmaEscalonPrevio) {
+    testVmaEscalonPrevio = e.escalonIndex;
+    testVmaAvisado = false;
+    velocidadManualKmh = e.velocidadObjetivo;
+    actual.velocidad = velocidadManualKmh / 3.6;
+    document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+    toast('Escalón ' + e.numeroEscalon + ': subí la cinta a ' + e.velocidadObjetivo.toFixed(1) + ' km/h');
+    logBLE('Test VMA — escalón ' + e.numeroEscalon + ' a ' + e.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
+  } else if (!testVmaAvisado && e.segundosRestantes <= 5) {
+    testVmaAvisado = true;
+    const proxima = Math.round((e.velocidadObjetivo + testVmaCfg.incrementoKmh) * 10) / 10;
+    toast('En ' + e.segundosRestantes + 's: ' + proxima.toFixed(1) + ' km/h');
+  }
+  document.getElementById('vmaObjetivo').textContent = e.velocidadObjetivo.toFixed(1) + ' km/h';
+  document.getElementById('vmaDetalle').textContent = 'Test VMA · escalón ' + e.numeroEscalon + ' · faltan ' + e.segundosRestantes + 's';
 }
 function ajustarVelocidadManual(delta) {
   velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
@@ -3301,6 +3421,12 @@ function procesarArchivoEdicion(texto) {
    ============================================================ */
 function iniciarSesion() {
   if (!modo) { toast('Elegí primero el modo (Sensor BLE, Manual o Aire libre)'); return; }
+  // Test incremental de VMA: se valida ANTES de tocar nada del estado de la sesión — si la config
+  // es inválida hay que poder salir sin dejar la sesión a medio arrancar ni el botón deshabilitado.
+  const haceTestVma = (modo === 'manual' && document.getElementById('chkTestVma').checked);
+  const cfgVma = haceTestVma ? leerCfgTestVma() : null;
+  if (haceTestVma && !cfgVma) { toast('Revisá la configuración del test de VMA (valores inválidos)'); return; }
+
   sesionActiva = true;
   sesionPausada = false;
   cronometro.inicio = Date.now();
@@ -3335,6 +3461,14 @@ function iniciarSesion() {
   document.getElementById('cardNotas').style.display = 'block';
   document.getElementById('cardModo').style.display = 'none';
   document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
+  testVmaActivo = false; testVmaCfg = null; testVmaEscalonPrevio = -1; testVmaAvisado = false;
+  document.getElementById('tileTestVma').style.display = 'none';
+  if (haceTestVma) {
+    testVmaActivo = true; testVmaCfg = cfgVma;
+    document.getElementById('tileTestVma').style.display = 'block';
+    logBLE('Test VMA iniciado — ' + cfgVma.velInicialKmh + ' km/h, +' + cfgVma.incrementoKmh + ' cada ' + cfgVma.duracionEscalonSeg + 's', '#4FD8C4');
+  }
+
   if (modo === 'manual' || modo === 'calibracion') {
     // arranca desde lo que ya haya en actual.velocidad (cargado con actualizarManual() antes de iniciar),
     // no en 0 — si no, el primer toque de +/- saltaría desde una velocidad que no es la real.
@@ -3362,6 +3496,9 @@ function tiempoTranscurridoSeg() {
 function tick() {
   if (!sesionActiva || sesionPausada) return;
   const t = tiempoTranscurridoSeg();
+  // antes de leer la velocidad: si hay test de VMA en curso, puede que este tick cambie de escalón
+  // y suba actual.velocidad — así la muestra que se guarda abajo ya refleja la velocidad nueva.
+  if (testVmaActivo && testVmaCfg) actualizarTestVma(t);
   const velocidad = actual.velocidad || 0; // m/s
   const ritmoSegKm = velocidad > 0.1 ? (1000 / velocidad) : null;
   const pulso = actual.pulso || 0;
@@ -3579,6 +3716,21 @@ function finalizarSesion(automatica) {
     return;
   }
 
+  // Resultado del test de VMA (se calcula antes del guardado normal; la sesión igual se guarda
+  // como cualquier otra, así queda en el historial con sus gráficas y su TSS).
+  if (testVmaActivo && testVmaCfg) {
+    const vmaKmh = calcularVmaTest(duracionSeg, testVmaCfg);
+    if (vmaKmh == null) {
+      toast('Test de VMA muy corto: no completaste ni un escalón entero');
+      logBLE('Test VMA inválido — menos de un escalón completo', '#f85149');
+    } else {
+      lsSet(K_VMA_TEST, { fecha: new Date().toISOString().slice(0, 10), velocidadKmh: vmaKmh, cfg: testVmaCfg, duracionSeg: Math.round(duracionSeg) });
+      toast('VMA medida: ' + vmaKmh.toFixed(1) + ' km/h (' + segAMMSS(1000 / (vmaKmh / 3.6)) + '/km)');
+      logBLE('Test VMA terminado — VMA ' + vmaKmh.toFixed(1) + ' km/h', '#3fb950');
+    }
+    testVmaActivo = false; testVmaCfg = null;
+  }
+
   if (duracionSeg < 30 || puntosSesion.length < 5) {
     toast('Sesión muy corta, no se guardó');
     resetearHUD();
@@ -3644,6 +3796,7 @@ function resetearHUD() {
   // que quedar visible para cargar la velocidad de la próxima sesión (mismo criterio que arriba).
   document.getElementById('tileVelocidadManual').style.display = (modo === 'manual' || modo === 'calibracion') ? 'block' : 'none';
   mostrarBotonesVelocidadHud(modo === 'manual' || modo === 'calibracion');
+  document.getElementById('tileTestVma').style.display = 'none';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
@@ -3883,12 +4036,22 @@ function renderZonas() {
 
   const resumenVMAEl = document.getElementById('resumenVMA');
   const tVMA = document.getElementById('tablaVMA');
-  const vma = estimarVMA(mejores);
+  // La VMA MEDIDA con el test incremental (v60) le gana a la estimada del mejor esfuerzo: es una
+  // medición directa del protocolo, no una inferencia. Si no hay test hecho, se cae a la estimada.
+  const vmaTest = lsGet(K_VMA_TEST, null);
+  let vma = estimarVMA(mejores);
+  let origenVMA = vma ? ('estimada de tu mejor esfuerzo de ' + vma.duracionUsadaMin + ' min') : null;
+  if (vmaTest && vmaTest.velocidadKmh) {
+    const vMS = vmaTest.velocidadKmh / 3.6;
+    vma = { velocidadKmh: vmaTest.velocidadKmh, ritmoSegKm: 1000 / vMS, duracionUsadaMin: null };
+    const [anio, mes, dia] = vmaTest.fecha.split('-');
+    origenVMA = 'medida con el test incremental del ' + dia + '/' + mes + '/' + anio;
+  }
   if (!vma) {
-    resumenVMAEl.textContent = 'Necesitás un esfuerzo de 5 u 8 min registrado (viene de "Mejores esfuerzos" arriba) para estimarla.';
+    resumenVMAEl.textContent = 'Hacé el test incremental (modo Manual) o registrá un esfuerzo de 5 u 8 min para tenerla.';
     tVMA.innerHTML = '';
   } else {
-    resumenVMAEl.textContent = 'VMA estimada: ' + vma.velocidadKmh.toFixed(1) + ' km/h (' + segAMMSS(vma.ritmoSegKm) + '/km) — de tu mejor esfuerzo de ' + vma.duracionUsadaMin + ' min.';
+    resumenVMAEl.textContent = 'VMA: ' + vma.velocidadKmh.toFixed(1) + ' km/h (' + segAMMSS(vma.ritmoSegKm) + '/km) — ' + origenVMA + '.';
     let html = '<tr><th>% VMA</th><th>Ritmo</th></tr>';
     zonasPorcentajeVMA(vma.ritmoSegKm).forEach(z => {
       html += '<tr><td>' + z.pct + '%</td><td>' + segAMMSS(z.ritmoSegKm) + '/km</td></tr>';
