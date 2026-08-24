@@ -174,7 +174,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v60</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v61</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -528,6 +528,12 @@
       <h2 id="detalleTitulo">Sesión</h2>
       <div id="detalleResumen"></div>
     </div>
+    <div class="card" id="cardTestVmaDetalle" style="display:none;">
+      <h2>Test incremental de VMA</h2>
+      <div class="estado-conexion" id="testVmaResumenDetalle" style="margin-bottom:8px;"></div>
+      <table class="tabla-zonas" id="tablaTestVmaDetalle"></table>
+    </div>
+
     <div class="card">
       <h2>Gráficas</h2>
       <div style="font-size:12px;color:var(--muted);">Ritmo (min/km)</div>
@@ -1754,6 +1760,27 @@
        cortar a mitad del siguiente interpola medio incremento,
        abandonar antes del primer escalón da null, y una config
        alternativa (2 min, +1 km/h) también da resultados coherentes.
+   v61: el test queda identificado en el historial y con desglose.
+       Antes la sesión de test se guardaba como una sesión de cinta más
+       — el resultado de VMA quedaba en su clave aparte, pero en la
+       lista del historial no había forma de distinguirla salvo por la
+       forma escalonada del gráfico. Ahora se le adjunta s.testVma
+       {velocidadKmh, cfg, desglose} al objeto de la sesión, y la lista
+       muestra "🎯 TEST VMA · 15.5 KM/H" (o "(INVÁLIDO)" si no completó
+       ni un escalón, para no mostrar un número que no existe). El tag
+       de reto sigue teniendo prioridad sobre el de test.
+       Desglose: tarjeta nueva en el detalle con una fila por escalón
+       (número, km/h, pulso medio/máximo, cadencia media), marcando
+       entre paréntesis los segundos del escalón que quedó a medias.
+       Se calcula sobre puntosSesion a 1s ANTES de compactar a
+       INTERVALO_GUARDADO_SEG=5s — con escalones de 60s, compactar
+       primero perdería resolución en el pulso de cada escalón.
+       Compatibilidad hacia atrás probada: las sesiones guardadas antes
+       de v61 no tienen s.testVma, así que conservan su tag de siempre
+       (CINTA / AIRE LIBRE / TCX IMPORTADO) y la tarjeta de desglose
+       queda oculta; también se probó que un escalón sin pulso (banda
+       desconectada) da null y no 0 ni NaN, y que la tarjeta solo
+       aparece si el desglose tiene filas de verdad.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2471,6 +2498,32 @@ function calcularVmaTest(tSeg, cfg) {
   const parcial = (tSeg % cfg.duracionEscalonSeg) / cfg.duracionEscalonSeg;
   const vma = cfg.velInicialKmh + (idx - 1) * cfg.incrementoKmh + parcial * cfg.incrementoKmh;
   return Math.round(vma * 100) / 100;
+}
+// Desglose escalón por escalón. Se calcula sobre los puntos a 1s (ANTES de compactar a
+// INTERVALO_GUARDADO_SEG=5s), para no perder resolución en escalones cortos.
+function desgloseEscalonesVma(puntos, cfg) {
+  const porEscalon = new Map();
+  puntos.forEach(p => {
+    const idx = Math.floor(p.t / cfg.duracionEscalonSeg);
+    if (!porEscalon.has(idx)) porEscalon.set(idx, []);
+    porEscalon.get(idx).push(p);
+  });
+  const filas = [];
+  [...porEscalon.keys()].sort((a, b) => a - b).forEach(idx => {
+    const ps = porEscalon.get(idx);
+    const pulsos = ps.map(p => p.pulso).filter(v => v > 0);
+    const cads = ps.map(p => p.cadencia).filter(v => v > 0);
+    filas.push({
+      numeroEscalon: idx + 1,
+      velocidadKmh: Math.round((cfg.velInicialKmh + idx * cfg.incrementoKmh) * 10) / 10,
+      segundos: ps.length,
+      completo: ps.length >= cfg.duracionEscalonSeg,
+      pulsoMedio: pulsos.length ? Math.round(pulsos.reduce((a, b) => a + b, 0) / pulsos.length) : null,
+      pulsoMax: pulsos.length ? Math.max(...pulsos) : null,
+      cadenciaMedia: cads.length ? Math.round(cads.reduce((a, b) => a + b, 0) / cads.length) : null,
+    });
+  });
+  return filas;
 }
 function toggleTestVma() {
   const on = document.getElementById('chkTestVma').checked;
@@ -3718,8 +3771,12 @@ function finalizarSesion(automatica) {
 
   // Resultado del test de VMA (se calcula antes del guardado normal; la sesión igual se guarda
   // como cualquier otra, así queda en el historial con sus gráficas y su TSS).
+  let datosTestVma = null; // se adjunta a la sesión más abajo, para que quede identificada como test
   if (testVmaActivo && testVmaCfg) {
     const vmaKmh = calcularVmaTest(duracionSeg, testVmaCfg);
+    // el desglose se calcula sobre puntosSesion (1s), no sobre los puntos ya compactados a 5s
+    const desglose = desgloseEscalonesVma(puntosSesion, testVmaCfg);
+    datosTestVma = { velocidadKmh: vmaKmh, cfg: testVmaCfg, desglose };
     if (vmaKmh == null) {
       toast('Test de VMA muy corto: no completaste ni un escalón entero');
       logBLE('Test VMA inválido — menos de un escalón completo', '#f85149');
@@ -3768,6 +3825,7 @@ function finalizarSesion(automatica) {
     fantasmaId: fantasmaId || null,
     fantasmaDeltaFinalSeg: fantasmaId ? deltaFantasmaUltimo : null,
     puntos: compactarPuntos(reducirResolucion(puntosSesion, INTERVALO_GUARDADO_SEG)),
+    testVma: datosTestVma, // null en una sesión normal; con datos si fue un test incremental (v61)
     notas: document.getElementById('notasSesion').value || ''
   };
 
@@ -4095,7 +4153,8 @@ function renderHistorial() {
         new Date(s.fecha).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
       const km = (s.distanciaM / 1000).toFixed(2);
       const tag = s.esReto ? ('🏁 RETO DE ' + (s.nombreReto || 'un conocido').toUpperCase()) :
-        (s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA'));
+        (s.testVma ? ('🎯 TEST VMA' + (s.testVma.velocidadKmh ? (' · ' + s.testVma.velocidadKmh.toFixed(1) + ' KM/H') : ' (INVÁLIDO)')) :
+        (s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA')));
       const pulsoTxt = s.pulsoPromedio ? ('♥ ' + s.pulsoPromedio + (s.pulsoMax ? '/' + s.pulsoMax : '')) : '';
       return '<div class="sesion-item" style="display:block;" onclick="abrirDetalle(\'' + s.id + '\')">' +
         '<div class="sesion-tag">' + tag + '</div>' +
@@ -4280,9 +4339,31 @@ function abrirDetalle(id) {
   document.getElementById('rpeDetalleSlider').value = s.rpe || 5;
   document.getElementById('lblRpeDetalle').textContent = s.rpe != null ? s.rpe : '--';
   document.getElementById('descRpeDetalle').textContent = RPE_DESCRIPCIONES[s.rpe || 5];
+  renderTestVmaDetalle(s);
   document.getElementById('overlayDetalle').classList.add('activa');
   document.getElementById('overlayDetalle').scrollTop = 0;
   requestAnimationFrame(() => dibujarGraficasDetalle(s));
+}
+// Tabla escalón por escalón del test de VMA. Solo aparece si la sesión fue un test (v61);
+// sesiones normales y las guardadas antes de v61 no tienen s.testVma y la tarjeta queda oculta.
+function renderTestVmaDetalle(s) {
+  const card = document.getElementById('cardTestVmaDetalle');
+  if (!s.testVma || !s.testVma.desglose || !s.testVma.desglose.length) { card.style.display = 'none'; return; }
+  card.style.display = 'block';
+  const tv = s.testVma;
+  const resumen = document.getElementById('testVmaResumenDetalle');
+  const cfgTxt = tv.cfg ? (tv.cfg.velInicialKmh + ' km/h, +' + tv.cfg.incrementoKmh + ' cada ' + tv.cfg.duracionEscalonSeg + 's') : '';
+  resumen.textContent = (tv.velocidadKmh
+    ? ('VMA: ' + tv.velocidadKmh.toFixed(1) + ' km/h (' + segAMMSS(1000 / (tv.velocidadKmh / 3.6)) + '/km)')
+    : 'Test inválido: no se completó ningún escalón entero') + (cfgTxt ? (' · protocolo: ' + cfgTxt) : '');
+  let html = '<tr><th>Escalón</th><th>km/h</th><th>Pulso med/máx</th><th>Cad.</th></tr>';
+  tv.desglose.forEach(f => {
+    const pulsoTxt = f.pulsoMedio ? (f.pulsoMedio + '/' + f.pulsoMax) : '--';
+    const marca = f.completo ? '' : ' <span style="color:var(--muted);">(' + f.segundos + 's)</span>';
+    html += '<tr><td>' + f.numeroEscalon + marca + '</td><td>' + f.velocidadKmh.toFixed(1) + '</td><td>' +
+      pulsoTxt + '</td><td>' + (f.cadenciaMedia || '--') + '</td></tr>';
+  });
+  document.getElementById('tablaTestVmaDetalle').innerHTML = html;
 }
 function guardarNotasDetalle() {
   if (!sesionDetalleActual) return;
