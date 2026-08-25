@@ -174,7 +174,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v61</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v63</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -1781,6 +1781,60 @@
        queda oculta; también se probó que un escalón sin pulso (banda
        desconectada) da null y no 0 ni NaN, y que la tarjeta solo
        aparece si el desglose tiene filas de verdad.
+   v62: dos correcciones en el desglose del test, a partir del primer
+       test real de Hugo (VMA 9.6 km/h, 6 km/h +0.5 cada 60s).
+       (a) El escalón 1 figuraba como "(59s)" incompleto cuando en
+       realidad se había completado. Causa: "completo" se decidía
+       contando MUESTRAS (ps.length >= duracionEscalonSeg), pero el
+       muestreo arranca en t=1 — el primer tick del setInterval de 1s,
+       no en t=0 — así que un escalón de 60s recibía 59 muestras.
+       Ahora se decide por el TIEMPO real de la sesión
+       (duracionTotalSeg >= fin del escalón), que es el dato verdadero
+       y no depende de cómo caiga el muestreo; desgloseEscalonesVma()
+       pasó a recibir duracionSeg. Los segundos del escalón incompleto
+       también salen del tiempo, no del conteo de muestras.
+       (b) Encontrado por el propio test al escribirlo: la muestra que
+       cae JUSTO en el límite de un escalón (t=300 con escalones de
+       60s) se agrupaba en el escalón siguiente, generando un escalón
+       fantasma de 0 segundos al final de cualquier test cortado justo
+       en un múltiplo exacto. Ahora esas filas se descartan.
+       Probado con el caso real de Hugo (492s = 8 escalones completos +
+       12s del noveno): el escalón 1 da completo, los 8 primeros dan
+       completos, el noveno da 12s, y las velocidades siguen siendo
+       6.0 a 10.0.
+   v63: causa raíz del umbral y la previsión subestimados — idea de
+       Hugo: usar el RPE que ya se carga por sesión.
+       El problema: el modelo de velocidad crítica asume que cada
+       "mejor esfuerzo" es MÁXIMO para esa duración, pero un rodaje
+       suave de 26 min produce el mejor esfuerzo de 20 min simplemente
+       por ser el único de esa duración. Ese punto entraba como si
+       fuera máximo y arrastraba hacia abajo el umbral (9:28/km con una
+       VMA medida de 9.6 km/h = 66%, cuando debería rondar 85-90%) Y
+       las previsiones de carrera, porque las dos salen del mismo set.
+       esfuerzosParaModelo() filtra por el RPE de la sesión de origen
+       (los récords ya guardan sesionId). Decisiones de Hugo: mínimo
+       RPE 7 (incluye sesiones duras de umbral, no solo tests), y las
+       sesiones sin RPE cargado se incluyen hasta que se les cargue,
+       para no perder datos viejos de golpe.
+       El filtro se aplica al RECALCULAR, no al guardar, porque el RPE
+       se carga después de terminar la sesión — con la ventaja de que
+       corregir el RPE de una sesión vieja recalcula las zonas solo
+       (actualizarRpeSesion() ahora llama a recalcularZonasDesdeMejores).
+       Se aplica el MISMO set filtrado a las zonas y a la previsión de
+       carrera: antes el umbral podía salir de un conjunto de esfuerzos
+       y la previsión de otro, dando dos respuestas para lo mismo.
+       Respaldo importante: si el filtro deja menos de 2 puntos no se
+       puede ajustar el modelo, así que vuelve al set completo y lo
+       avisa en el estado del umbral — mejor un umbral impreciso que
+       ningún umbral. Los esfuerzos excluidos se siguen mostrando en la
+       tabla (son marcas reales) pero atenuados y con el motivo.
+       Probado: descarta el rodaje suave y conserva los duros, RPE 7
+       justo entra y 6 queda afuera, las sesiones sin RPE se incluyen,
+       el respaldo se activa con menos de 2 puntos, y un esfuerzo de una
+       sesión ya borrada se incluye porque no se puede saber su RPE.
+       PENDIENTE relacionado: el pulso umbral sigue saliendo del
+       promedio de TODA la sesión de origen (incluye entrada en calor),
+       no de la ventana del esfuerzo en sí — sería el próximo refinamiento.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -1880,6 +1934,26 @@ function zonaPorPulso(pulso, umbralPulso) {
   const ratio = pulso / umbralPulso;
   for (const zdef of HR_ZONAS) if (ratio >= zdef.min && ratio < zdef.max) return zdef.z;
   return 3;
+}
+const RPE_MINIMO_MAXIMAL = 7; // desde qué RPE se considera que un esfuerzo fue realmente exigente (v63)
+// Filtra los mejores esfuerzos dejando solo los que salieron de sesiones exigentes. Sin esto, un
+// rodaje suave produce un "mejor esfuerzo" de 20 min simplemente por ser el ÚNICO de esa duración,
+// y el modelo lo toma como si fuera máximo — eso arrastraba hacia abajo tanto el umbral como la
+// previsión de carrera (las dos salen del mismo set de puntos).
+function esfuerzosParaModelo(mejores) {
+  const sesiones = lsGet(K_SESIONES, []);
+  const califica = m => {
+    const s = sesiones.find(x => x.id === m.sesionId);
+    if (!s) return true;            // sesión ya borrada: no se puede saber su RPE, se deja pasar
+    if (s.rpe == null) return true; // RPE sin cargar todavía: se incluye hasta que se cargue
+    return s.rpe >= RPE_MINIMO_MAXIMAL;
+  };
+  const usados = mejores.filter(califica);
+  const excluidos = mejores.filter(m => !califica(m));
+  // Respaldo: con menos de 2 puntos no se puede ajustar el modelo, así que si el filtro deja
+  // menos de 2 se vuelve al set completo — mejor un umbral impreciso que ningún umbral.
+  const filtroAplicado = usados.length >= 2;
+  return { usados: filtroAplicado ? usados : mejores, excluidos: filtroAplicado ? excluidos : [], filtroAplicado };
 }
 function ajustarModeloCV(mejores) {
   const ordenado = [...mejores].sort((a, b) => b.duracionSeg - a.duracionSeg);
@@ -2501,7 +2575,7 @@ function calcularVmaTest(tSeg, cfg) {
 }
 // Desglose escalón por escalón. Se calcula sobre los puntos a 1s (ANTES de compactar a
 // INTERVALO_GUARDADO_SEG=5s), para no perder resolución en escalones cortos.
-function desgloseEscalonesVma(puntos, cfg) {
+function desgloseEscalonesVma(puntos, cfg, duracionTotalSeg) {
   const porEscalon = new Map();
   puntos.forEach(p => {
     const idx = Math.floor(p.t / cfg.duracionEscalonSeg);
@@ -2513,11 +2587,19 @@ function desgloseEscalonesVma(puntos, cfg) {
     const ps = porEscalon.get(idx);
     const pulsos = ps.map(p => p.pulso).filter(v => v > 0);
     const cads = ps.map(p => p.cadencia).filter(v => v > 0);
+    const transcurrido = duracionTotalSeg - idx * cfg.duracionEscalonSeg;
+    // La muestra que cae JUSTO en el límite pertenece al escalón siguiente, que nunca empezó —
+    // sin esto aparecía un escalón fantasma de 0 segundos al final.
+    if (transcurrido <= 0) return;
+    // "completo" se decide por el TIEMPO de la sesión, no por cuántas muestras entraron: el
+    // muestreo arranca en t=1 (primer tick del setInterval de 1s), así que contar muestras daba 59
+    // en un escalón de 60s que en realidad sí se había completado (bug reportado por Hugo en v61).
+    const completo = duracionTotalSeg >= (idx + 1) * cfg.duracionEscalonSeg;
     filas.push({
       numeroEscalon: idx + 1,
       velocidadKmh: Math.round((cfg.velInicialKmh + idx * cfg.incrementoKmh) * 10) / 10,
-      segundos: ps.length,
-      completo: ps.length >= cfg.duracionEscalonSeg,
+      segundos: completo ? cfg.duracionEscalonSeg : Math.round(transcurrido),
+      completo,
       pulsoMedio: pulsos.length ? Math.round(pulsos.reduce((a, b) => a + b, 0) / pulsos.length) : null,
       pulsoMax: pulsos.length ? Math.max(...pulsos) : null,
       cadenciaMedia: cads.length ? Math.round(cads.reduce((a, b) => a + b, 0) / cads.length) : null,
@@ -3775,7 +3857,7 @@ function finalizarSesion(automatica) {
   if (testVmaActivo && testVmaCfg) {
     const vmaKmh = calcularVmaTest(duracionSeg, testVmaCfg);
     // el desglose se calcula sobre puntosSesion (1s), no sobre los puntos ya compactados a 5s
-    const desglose = desgloseEscalonesVma(puntosSesion, testVmaCfg);
+    const desglose = desgloseEscalonesVma(puntosSesion, testVmaCfg, duracionSeg);
     datosTestVma = { velocidadKmh: vmaKmh, cfg: testVmaCfg, desglose };
     if (vmaKmh == null) {
       toast('Test de VMA muy corto: no completaste ni un escalón entero');
@@ -3939,7 +4021,8 @@ function actualizarMejoresEsfuerzos(sesion) {
   recalcularZonasDesdeMejores();
 }
 function recalcularZonasDesdeMejores() {
-  const mejores = lsGet(K_MEJORES, []);
+  const todos = lsGet(K_MEJORES, []);
+  const { usados: mejores, filtroAplicado } = esfuerzosParaModelo(todos);
   const modelo = ajustarModeloCV(mejores);
   if (!modelo) return; // no hay suficientes datos todavía, no toco zonas
   // ritmo umbral aproximado: uso el punto de duración más larga disponible como referencia de "esfuerzo sostenible"
@@ -3953,7 +4036,7 @@ function recalcularZonasDesdeMejores() {
   let pulsoUmbral = zonas.umbralPulso; // conservo el que había si no puedo recalcularlo
   if (sesionOrigen && sesionOrigen.pulsoPromedio) pulsoUmbral = sesionOrigen.pulsoPromedio;
 
-  zonas = { umbralRitmoSegKm: ritmoUmbralSegKm, umbralPulso: pulsoUmbral, cv: modelo.cv, dprime: modelo.dprime, autoDesde: masLargo.fecha };
+  zonas = { umbralRitmoSegKm: ritmoUmbralSegKm, umbralPulso: pulsoUmbral, cv: modelo.cv, dprime: modelo.dprime, autoDesde: masLargo.fecha, filtroRpeAplicado: filtroAplicado };
   lsSet(K_ZONAS, zonas);
 }
 function guardarUmbralManual() {
@@ -4048,7 +4131,8 @@ function renderZonas() {
   document.getElementById('umbralRitmoInput').value = zonas.umbralRitmoSegKm ? segAMMSS(zonas.umbralRitmoSegKm) : '';
   document.getElementById('umbralPulsoInput').value = zonas.umbralPulso || '';
   document.getElementById('estadoUmbral').textContent = zonas.autoDesde
-    ? ('Auto-actualizado a partir de la sesión del ' + new Date(zonas.autoDesde).toLocaleDateString('es-AR'))
+    ? ('Auto-actualizado a partir de la sesión del ' + new Date(zonas.autoDesde).toLocaleDateString('es-AR') +
+       (zonas.filtroRpeAplicado === false ? ' — usando TODOS los esfuerzos (no hay al menos 2 con RPE ' + RPE_MINIMO_MAXIMAL + '+), puede quedar subestimado' : ' — solo esfuerzos con RPE ' + RPE_MINIMO_MAXIMAL + '+'))
     : (zonas.manual ? 'Cargado manualmente.' : 'Todavía sin datos suficientes — cargá un umbral manual o importá un TCX.');
 
   const tRitmo = document.getElementById('tablaZonasRitmo');
@@ -4084,10 +4168,17 @@ function renderZonas() {
   if (!mejores.length) {
     tMejores.innerHTML = '<tr><td class="vacio">Todavía no hay registros</td></tr>';
   } else {
+    const infoFiltro = esfuerzosParaModelo(mejores);
+    const idsExcluidos = new Set(infoFiltro.excluidos.map(m => m.duracionSeg));
     let html = '<tr><th>Duración</th><th>Distancia</th><th>Ritmo</th></tr>';
     mejores.forEach(m => {
       const ritmo = 1000 / (m.distM / m.duracionSeg);
-      html += '<tr><td>' + Math.round(m.duracionSeg / 60) + " min</td><td>" + (m.distM / 1000).toFixed(2) + ' km</td><td>' + segAMMSS(ritmo) + '/km</td></tr>';
+      // los excluidos se muestran igual (son tus marcas), pero atenuados y con el motivo — así se
+      // ve de dónde salen las zonas sin tener que adivinar por qué un esfuerzo no pesa.
+      const fuera = idsExcluidos.has(m.duracionSeg);
+      const estilo = fuera ? ' style="opacity:0.45;"' : '';
+      const nota = fuera ? ' <span style="font-size:10px;">(fuera del modelo: RPE bajo)</span>' : '';
+      html += '<tr' + estilo + '><td>' + Math.round(m.duracionSeg / 60) + " min" + nota + "</td><td>" + (m.distM / 1000).toFixed(2) + ' km</td><td>' + segAMMSS(ritmo) + '/km</td></tr>';
     });
     tMejores.innerHTML = html;
   }
@@ -4118,7 +4209,9 @@ function renderZonas() {
   }
 
   const tPrev = document.getElementById('tablaPrevision');
-  const modelo = ajustarModeloCV(mejores);
+  // MISMO set filtrado que usan las zonas — si no, el umbral saldría de un conjunto de esfuerzos
+  // y la previsión de otro, dando dos respuestas distintas para la misma pregunta.
+  const modelo = ajustarModeloCV(esfuerzosParaModelo(mejores).usados);
   if (!modelo) {
     tPrev.innerHTML = '<tr><td class="vacio">Faltan al menos 2 mejores esfuerzos de distinta duración</td></tr>';
   } else {
@@ -4697,6 +4790,10 @@ function actualizarRpeSesion(id, valor) {
   if (idx < 0) return;
   sesiones[idx].rpe = valor;
   lsSet(K_SESIONES, sesiones);
+  // el filtro por RPE decide qué esfuerzos entran al modelo, así que cambiar un RPE puede cambiar
+  // el umbral y la previsión — se recalcula acá para no depender de recargar la app.
+  recalcularZonasDesdeMejores();
+  renderZonas();
 }
 function actualizarAnimoPost(valor) {
   if (!sesionRecienGuardadaId) return;
