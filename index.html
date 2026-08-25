@@ -174,7 +174,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v63</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v64</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -215,6 +215,24 @@
         <button class="btn chico" id="btnConectarBandaManual" onclick="conectarRelojBLE()">Conectar banda (cadencia real + pulso, BLE)</button>
         <button class="btn chico" id="btnConectarSoloPulsoManual" onclick="conectarBandaHR()" style="margin-top:6px;">Conectar solo pulso (si el de arriba no encuentra la banda)</button>
         <div class="estado-conexion" id="estadoBandaManual">Sin conectar. La velocidad la manejás con los botones +/- de arriba; la cadencia y el pulso, si conectás la banda, se toman en vivo del sensor en vez del número de acá abajo.</div>
+
+        <div style="border-top:1px solid var(--borde); margin-top:12px; padding-top:10px;">
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="chkPlan" onchange="togglePlan()" style="width:auto;">
+            <span>Plan de sesión por bloques</span>
+          </label>
+          <div id="cfgPlan" style="display:none; margin-top:8px;">
+            <label>Duración total (min) — la usa el bloque "libre hasta completar"</label>
+            <input type="number" id="planTotalMin" value="30" min="1" onchange="cambiarTotalPlan()">
+            <div id="listaBloques" style="margin-top:10px;"></div>
+            <div class="fila" style="margin-top:8px;">
+              <button class="btn chico" onclick="agregarBloque('incremental')">+ Incremental</button>
+              <button class="btn chico" onclick="agregarBloque('constante')">+ Constante</button>
+            </div>
+            <button class="btn chico" onclick="agregarBloque('libre')" style="margin-top:6px;">+ Libre hasta completar el total</button>
+            <div class="estado-conexion" id="resumenPlan" style="margin-top:8px;"></div>
+          </div>
+        </div>
 
         <div style="border-top:1px solid var(--borde); margin-top:12px; padding-top:10px;">
           <label style="display:flex; align-items:center; gap:8px;">
@@ -287,6 +305,12 @@
 
       <!-- Guía del test incremental de VMA (v60): escalón actual, velocidad a la que hay que poner
            la cinta, y cuenta regresiva. Va arriba de todo para verlo sin scrollear mientras corrés. -->
+      <!-- Guía del plan por bloques (v64): qué bloque va, a qué velocidad y cuánto falta. -->
+      <div class="hud-item grande ritmo" id="tilePlan" style="display:none; margin-top:12px;">
+        <div class="val" id="planObjetivo">--</div>
+        <div class="lbl" id="planDetalle">Plan</div>
+      </div>
+
       <div class="hud-item grande ritmo" id="tileTestVma" style="display:none; margin-top:12px;">
         <div class="val" id="vmaObjetivo">--</div>
         <div class="lbl" id="vmaDetalle">Test VMA</div>
@@ -1835,6 +1859,35 @@
        PENDIENTE relacionado: el pulso umbral sigue saliendo del
        promedio de TODA la sesión de origen (incluye entrada en calor),
        no de la ventana del esfuerzo en sí — sería el próximo refinamiento.
+   v64: planes de sesión por bloques encadenados en modo manual, a
+       pedido de Hugo (ejemplo suyo: 30' total, incremental de 6 a
+       10 km/h de a 0.5, después libre hasta completar).
+       Tres tipos de bloque: 'incremental' (velInicial→velFinal con
+       incremento y duración de escalón), 'constante' (velocidad fija
+       por N segundos, sirve para armar series) y 'libre' — este último
+       con la opción "resto", que absorbe automáticamente lo que falte
+       para llegar al total del plan.
+       Detalle que costó y quedó testeado: 6→10 de a 0.5 son NUEVE
+       escalones, no ocho (incluye las dos puntas), y hace falta un
+       epsilon en la división para que la coma flotante no se coma uno.
+       En los bloques con velocidad impuesta la app fija su velocidad y
+       avisa para subir la cinta (mismo criterio que el test de VMA);
+       en los bloques libres NO toca la velocidad — queda la última y
+       la manejás con los botones +/-.
+       El plan se copia en profundo al iniciar la sesión, así editar el
+       constructor a mitad de camino no altera el plan en curso. Se
+       guarda en la sesión (s.plan) para saber después qué se siguió.
+       El plan y el test de VMA no pueden correr juntos (los dos
+       imponen velocidad y se pisarían) — se valida al iniciar, antes
+       de tocar el estado de la sesión.
+       Probado con el ejemplo exacto de Hugo: 9 escalones de 540s, el
+       bloque libre absorbe los 1260s restantes, la velocidad sube
+       escalón a escalón sin arrastre de coma flotante (8.0 exacto),
+       al pasar al bloque libre deja de imponer velocidad, la cuenta
+       regresiva es correcta en ambos bloques, la velocidad nunca
+       supera velFinal, los bloques constantes encadenados se recorren
+       en orden, y si los bloques fijos ya llenan el total el bloque
+       resto da 0 sin romper.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2606,6 +2659,179 @@ function desgloseEscalonesVma(puntos, cfg, duracionTotalSeg) {
     });
   });
   return filas;
+}
+/* ============================================================
+   PLAN DE SESIÓN POR BLOQUES (v64) — encadena tramos en modo manual: incremental, constante y
+   libre. El test de VMA (v60) es aparte: aquel corre hasta el agotamiento y produce un resultado;
+   esto es para sesiones planificadas de duración definida.
+   Tipos: {tipo:'constante', velocidadKmh, duracionSeg}
+          {tipo:'incremental', velInicialKmh, velFinalKmh, incrementoKmh, duracionEscalonSeg}
+          {tipo:'libre', duracionSeg} | {tipo:'libre', resto:true}  (absorbe lo que falte al total)
+   ============================================================ */
+const K_PLANES = LS_PREFIX + 'planes_sesion';
+let planActivo = null, planBloquePrevio = -1, planEscalonPrevio = -1, planAvisado = false, planTerminadoAvisado = false;
+let planEnEdicion = { totalSeg: 1800, bloques: [] };
+
+function escalonesDeBloque(b) {
+  // +1e-9 para que 6->10 de a 0.5 dé 9 escalones y no 8 por un redondeo de coma flotante
+  return Math.max(1, Math.floor((b.velFinalKmh - b.velInicialKmh) / b.incrementoKmh + 1e-9) + 1);
+}
+function duracionBloque(b, plan) {
+  if (b.tipo === 'constante') return b.duracionSeg;
+  if (b.tipo === 'incremental') return escalonesDeBloque(b) * b.duracionEscalonSeg;
+  if (b.tipo === 'libre') {
+    if (!b.resto) return b.duracionSeg;
+    const otros = plan.bloques.filter(x => x !== b).reduce((a, x) => a + duracionBloque(x, plan), 0);
+    return Math.max(0, (plan.totalSeg || 0) - otros);
+  }
+  return 0;
+}
+function duracionTotalPlan(plan) {
+  return plan.bloques.reduce((a, b) => a + duracionBloque(b, plan), 0);
+}
+function estadoPlanEnT(t, plan) {
+  let inicio = 0;
+  for (let i = 0; i < plan.bloques.length; i++) {
+    const b = plan.bloques[i];
+    const dur = duracionBloque(b, plan);
+    if (t < inicio + dur) {
+      const tEnBloque = t - inicio;
+      let velocidadKmh = null, etiqueta = '';
+      if (b.tipo === 'constante') {
+        velocidadKmh = b.velocidadKmh;
+        etiqueta = 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h';
+      } else if (b.tipo === 'incremental') {
+        const esc = Math.floor(tEnBloque / b.duracionEscalonSeg);
+        velocidadKmh = Math.round(Math.min(b.velFinalKmh, b.velInicialKmh + esc * b.incrementoKmh) * 10) / 10;
+        etiqueta = 'Incremental · escalón ' + (esc + 1) + '/' + escalonesDeBloque(b);
+      } else {
+        etiqueta = 'Libre (manejás vos)';
+      }
+      return { bloqueIndex: i, tipo: b.tipo, velocidadKmh, etiqueta, segundosRestantesBloque: (inicio + dur) - t, terminado: false };
+    }
+    inicio += dur;
+  }
+  return { bloqueIndex: -1, tipo: null, velocidadKmh: null, etiqueta: 'Plan completo', segundosRestantesBloque: 0, terminado: true };
+}
+function descripcionBloque(b, plan) {
+  const min = (duracionBloque(b, plan) / 60);
+  const dur = (Math.round(min * 10) / 10) + ' min';
+  if (b.tipo === 'constante') return 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h · ' + dur;
+  if (b.tipo === 'incremental') return 'Incremental ' + b.velInicialKmh.toFixed(1) + '→' + b.velFinalKmh.toFixed(1) +
+    ' km/h (+' + b.incrementoKmh + ' cada ' + b.duracionEscalonSeg + 's) · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
+  return 'Libre' + (b.resto ? ' (hasta completar el total)' : '') + ' · ' + dur;
+}
+
+function togglePlan() {
+  const on = document.getElementById('chkPlan').checked;
+  document.getElementById('cfgPlan').style.display = on ? 'block' : 'none';
+  if (on) renderConstructorPlan();
+}
+function cambiarTotalPlan() {
+  const min = parseFloat(document.getElementById('planTotalMin').value);
+  planEnEdicion.totalSeg = (min > 0 ? min : 0) * 60;
+  renderConstructorPlan();
+}
+function agregarBloque(tipo) {
+  if (tipo === 'incremental') planEnEdicion.bloques.push({ tipo, velInicialKmh: 6, velFinalKmh: 10, incrementoKmh: 0.5, duracionEscalonSeg: 60 });
+  else if (tipo === 'constante') planEnEdicion.bloques.push({ tipo, velocidadKmh: 8, duracionSeg: 300 });
+  else planEnEdicion.bloques.push({ tipo: 'libre', resto: true });
+  renderConstructorPlan();
+}
+function quitarBloque(i) { planEnEdicion.bloques.splice(i, 1); renderConstructorPlan(); }
+function moverBloque(i, delta) {
+  const j = i + delta;
+  if (j < 0 || j >= planEnEdicion.bloques.length) return;
+  const tmp = planEnEdicion.bloques[i];
+  planEnEdicion.bloques[i] = planEnEdicion.bloques[j];
+  planEnEdicion.bloques[j] = tmp;
+  renderConstructorPlan();
+}
+function editarCampoBloque(i, campo, valor) {
+  const v = parseFloat(valor);
+  if (!(v >= 0)) return;
+  planEnEdicion.bloques[i][campo] = (campo === 'duracionSeg' || campo === 'duracionEscalonSeg') ? Math.round(v) : v;
+  renderConstructorPlan();
+}
+function renderConstructorPlan() {
+  const cont = document.getElementById('listaBloques');
+  if (!cont) return;
+  if (!planEnEdicion.bloques.length) {
+    cont.innerHTML = '<div class="estado-conexion">Sin bloques todavía. Agregá el primero con los botones de abajo.</div>';
+  } else {
+    let html = '';
+    planEnEdicion.bloques.forEach((b, i) => {
+      html += '<div style="border:1px solid var(--borde); border-radius:10px; padding:8px; margin-bottom:6px;">';
+      html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">' +
+        '<b style="font-size:12px;">' + (i + 1) + '. ' + descripcionBloque(b, planEnEdicion) + '</b></div>';
+      if (b.tipo === 'incremental') {
+        html += '<div class="fila" style="margin-top:6px;">' +
+          '<div><label>Desde (km/h)</label><input type="number" step="0.1" value="' + b.velInicialKmh + '" onchange="editarCampoBloque(' + i + ',\'velInicialKmh\',this.value)"></div>' +
+          '<div><label>Hasta (km/h)</label><input type="number" step="0.1" value="' + b.velFinalKmh + '" onchange="editarCampoBloque(' + i + ',\'velFinalKmh\',this.value)"></div></div>' +
+          '<div class="fila" style="margin-top:6px;">' +
+          '<div><label>Incremento</label><input type="number" step="0.1" value="' + b.incrementoKmh + '" onchange="editarCampoBloque(' + i + ',\'incrementoKmh\',this.value)"></div>' +
+          '<div><label>Escalón (seg)</label><input type="number" step="10" value="' + b.duracionEscalonSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionEscalonSeg\',this.value)"></div></div>';
+      } else if (b.tipo === 'constante') {
+        html += '<div class="fila" style="margin-top:6px;">' +
+          '<div><label>Velocidad (km/h)</label><input type="number" step="0.1" value="' + b.velocidadKmh + '" onchange="editarCampoBloque(' + i + ',\'velocidadKmh\',this.value)"></div>' +
+          '<div><label>Duración (seg)</label><input type="number" step="30" value="' + b.duracionSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionSeg\',this.value)"></div></div>';
+      }
+      html += '<div class="fila" style="margin-top:6px;">' +
+        '<button class="btn chico" onclick="moverBloque(' + i + ',-1)">↑</button>' +
+        '<button class="btn chico" onclick="moverBloque(' + i + ',1)">↓</button>' +
+        '<button class="btn chico" onclick="quitarBloque(' + i + ')">Quitar</button></div>';
+      html += '</div>';
+    });
+    cont.innerHTML = html;
+  }
+  const total = duracionTotalPlan(planEnEdicion);
+  const objetivo = planEnEdicion.totalSeg;
+  let txt = 'Duración del plan: ' + segAMMSS(total);
+  if (objetivo && Math.abs(total - objetivo) > 1) {
+    txt += ' — ojo: no coincide con el total de ' + segAMMSS(objetivo) +
+      (planEnEdicion.bloques.some(b => b.tipo === 'libre' && b.resto) ? '' : ' (agregá un bloque "libre hasta completar" para rellenar)');
+  }
+  document.getElementById('resumenPlan').textContent = txt;
+}
+// Corre en cada tick(): cambia de bloque/escalón, impone la velocidad salvo en los bloques libres,
+// avisa antes de cada cambio y actualiza el tile guía.
+function actualizarPlan(tSeg) {
+  const e = estadoPlanEnT(tSeg, planActivo);
+  if (e.terminado) {
+    if (!planTerminadoAvisado) {
+      planTerminadoAvisado = true;
+      toast('Plan completo');
+      logBLE('Plan de sesión completo', '#3fb950');
+    }
+    document.getElementById('planObjetivo').textContent = '✓';
+    document.getElementById('planDetalle').textContent = 'Plan completo · seguís libre';
+    return;
+  }
+  // ¿cambió de bloque, o de escalón dentro de un incremental?
+  const escActual = e.tipo === 'incremental' ? e.velocidadKmh : null;
+  if (e.bloqueIndex !== planBloquePrevio || escActual !== planEscalonPrevio) {
+    const cambioDeBloque = e.bloqueIndex !== planBloquePrevio;
+    planBloquePrevio = e.bloqueIndex;
+    planEscalonPrevio = escActual;
+    planAvisado = false;
+    if (e.velocidadKmh != null) {
+      // bloque con velocidad impuesta: la app la fija y avisa para que subas la cinta
+      velocidadManualKmh = e.velocidadKmh;
+      actual.velocidad = velocidadManualKmh / 3.6;
+      document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+      toast('Poné la cinta a ' + e.velocidadKmh.toFixed(1) + ' km/h');
+      logBLE('Plan — ' + e.etiqueta + ' · ' + e.velocidadKmh.toFixed(1) + ' km/h', '#4FD8C4');
+    } else if (cambioDeBloque) {
+      // bloque libre: NO se toca la velocidad, queda la última y vos la manejás con los botones
+      toast('Bloque libre: la velocidad la manejás vos');
+      logBLE('Plan — ' + e.etiqueta, '#4FD8C4');
+    }
+  } else if (!planAvisado && e.segundosRestantesBloque <= 5 && e.velocidadKmh != null) {
+    planAvisado = true;
+    toast('En ' + e.segundosRestantesBloque + 's cambia el tramo');
+  }
+  document.getElementById('planObjetivo').textContent = e.velocidadKmh != null ? (e.velocidadKmh.toFixed(1) + ' km/h') : 'Libre';
+  document.getElementById('planDetalle').textContent = e.etiqueta + ' · faltan ' + segAMMSS(e.segundosRestantesBloque);
 }
 function toggleTestVma() {
   const on = document.getElementById('chkTestVma').checked;
@@ -3561,6 +3787,12 @@ function iniciarSesion() {
   const haceTestVma = (modo === 'manual' && document.getElementById('chkTestVma').checked);
   const cfgVma = haceTestVma ? leerCfgTestVma() : null;
   if (haceTestVma && !cfgVma) { toast('Revisá la configuración del test de VMA (valores inválidos)'); return; }
+  const usaPlan = (modo === 'manual' && document.getElementById('chkPlan').checked && planEnEdicion.bloques.length > 0);
+  if (modo === 'manual' && document.getElementById('chkPlan').checked && !planEnEdicion.bloques.length) {
+    toast('El plan no tiene bloques todavía'); return;
+  }
+  // El test de VMA también impone velocidad; si corren los dos a la vez se pisan entre sí.
+  if (usaPlan && haceTestVma) { toast('Elegí una sola cosa: plan por bloques o test de VMA'); return; }
 
   sesionActiva = true;
   sesionPausada = false;
@@ -3598,6 +3830,14 @@ function iniciarSesion() {
   document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
   testVmaActivo = false; testVmaCfg = null; testVmaEscalonPrevio = -1; testVmaAvisado = false;
   document.getElementById('tileTestVma').style.display = 'none';
+  planActivo = null; planBloquePrevio = -1; planEscalonPrevio = -1; planAvisado = false; planTerminadoAvisado = false;
+  document.getElementById('tilePlan').style.display = 'none';
+  if (usaPlan) {
+    // copia profunda: si Hugo edita el constructor durante la sesión, el plan en curso no cambia
+    planActivo = JSON.parse(JSON.stringify(planEnEdicion));
+    document.getElementById('tilePlan').style.display = 'block';
+    logBLE('Plan iniciado — ' + planActivo.bloques.length + ' bloques, ' + segAMMSS(duracionTotalPlan(planActivo)), '#4FD8C4');
+  }
   if (haceTestVma) {
     testVmaActivo = true; testVmaCfg = cfgVma;
     document.getElementById('tileTestVma').style.display = 'block';
@@ -3634,6 +3874,7 @@ function tick() {
   // antes de leer la velocidad: si hay test de VMA en curso, puede que este tick cambie de escalón
   // y suba actual.velocidad — así la muestra que se guarda abajo ya refleja la velocidad nueva.
   if (testVmaActivo && testVmaCfg) actualizarTestVma(t);
+  if (planActivo) actualizarPlan(t);
   const velocidad = actual.velocidad || 0; // m/s
   const ritmoSegKm = velocidad > 0.1 ? (1000 / velocidad) : null;
   const pulso = actual.pulso || 0;
@@ -3908,6 +4149,7 @@ function finalizarSesion(automatica) {
     fantasmaDeltaFinalSeg: fantasmaId ? deltaFantasmaUltimo : null,
     puntos: compactarPuntos(reducirResolucion(puntosSesion, INTERVALO_GUARDADO_SEG)),
     testVma: datosTestVma, // null en una sesión normal; con datos si fue un test incremental (v61)
+    plan: planActivo ? { totalSeg: planActivo.totalSeg, bloques: planActivo.bloques } : null, // v64: qué plan se siguió
     notas: document.getElementById('notasSesion').value || ''
   };
 
@@ -3937,6 +4179,7 @@ function resetearHUD() {
   document.getElementById('tileVelocidadManual').style.display = (modo === 'manual' || modo === 'calibracion') ? 'block' : 'none';
   mostrarBotonesVelocidadHud(modo === 'manual' || modo === 'calibracion');
   document.getElementById('tileTestVma').style.display = 'none';
+  document.getElementById('tilePlan').style.display = 'none';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
