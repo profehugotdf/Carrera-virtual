@@ -78,9 +78,20 @@
   .hud-item.grande{grid-column:1/-1;}
   .hud-item.grande .val{font-size:44px;}
 
-  .ritmo-ctrl{display:flex; align-items:center; justify-content:center; gap:12px;}
-  .ritmo-btn{width:52px; height:52px; border-radius:50%; border:1px solid var(--borde);
-    background:var(--panel); color:var(--pendiente); font-size:26px; font-weight:700; flex:none;}
+  /* Ancho por proporción fija (no medido en JS: medir la altura del centro generaba un bucle —
+     botón más grande => centro más angosto => texto envuelto => centro más alto => botón más
+     grande). Con el ancho definido por flex-basis, aspect-ratio:1 SÍ funciona y da el alto. */
+  .hud-item.ritmo-full{padding:8px; overflow:hidden;}
+  .ritmo-ctrl{display:flex; align-items:center; justify-content:space-between; gap:6px;}
+  .ritmo-btn{flex:0 0 31%; max-width:130px; aspect-ratio:1; padding:0;
+    border-radius:50%; border:1px solid var(--borde);
+    background:var(--panel2); color:var(--pendiente); font-size:40px; font-weight:700;
+    line-height:1; touch-action:none; user-select:none; -webkit-user-select:none;}
+  .ritmo-centro{flex:1 1 auto; min-width:0; padding:8px 2px; text-align:center;}
+  /* con los botones a los costados el número tiene menos ancho: se achica un poco y los rótulos
+     no se envuelven, que era justo lo que disparaba el bucle anterior */
+  .ritmo-full.con-botones .ritmo-centro .val{font-size:34px; white-space:nowrap;}
+  .ritmo-full.con-botones .ritmo-centro .lbl{white-space:nowrap; font-size:9px;}
   .pendiente-ctrl{display:flex; align-items:center; justify-content:center; gap:14px; margin-top:6px;}
   .pendiente-ctrl button{width:44px; height:44px; border-radius:50%; border:1px solid var(--borde);
     background:var(--panel); color:var(--pendiente); font-size:20px; font-weight:800;}
@@ -174,7 +185,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v64</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v68</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -222,8 +233,16 @@
             <span>Plan de sesión por bloques</span>
           </label>
           <div id="cfgPlan" style="display:none; margin-top:8px;">
-            <label>Duración total (min) — la usa el bloque "libre hasta completar"</label>
-            <input type="number" id="planTotalMin" value="30" min="1" onchange="cambiarTotalPlan()">
+            <div class="fila">
+              <div>
+                <label>Duración total (min)</label>
+                <input type="number" id="planTotalMin" value="30" min="1" onchange="cambiarTotalPlan()">
+              </div>
+              <div>
+                <label>Repetir el plan (veces)</label>
+                <input type="number" id="planRepeticiones" value="1" min="1" onchange="cambiarRepeticionesPlan()">
+              </div>
+            </div>
             <div id="listaBloques" style="margin-top:10px;"></div>
             <div class="fila" style="margin-top:8px;">
               <button class="btn chico" onclick="agregarBloque('incremental')">+ Incremental</button>
@@ -306,9 +325,19 @@
       <!-- Guía del test incremental de VMA (v60): escalón actual, velocidad a la que hay que poner
            la cinta, y cuenta regresiva. Va arriba de todo para verlo sin scrollear mientras corrés. -->
       <!-- Guía del plan por bloques (v64): qué bloque va, a qué velocidad y cuánto falta. -->
+      <!-- Aviso grande de objetivo cumplido (v65): tiene que verse de un vistazo mientras corrés,
+           por eso ocupa todo el ancho, va en color pleno y además vibra el teléfono. -->
+      <div id="avisoGrande" style="display:none; margin-top:12px; padding:16px 12px; border-radius:12px;
+           color:#0a0d12; font-weight:800; font-size:18px; text-align:center; line-height:1.3;"></div>
+
       <div class="hud-item grande ritmo" id="tilePlan" style="display:none; margin-top:12px;">
         <div class="val" id="planObjetivo">--</div>
         <div class="lbl" id="planDetalle">Plan</div>
+        <!-- Salida manual del bloque: si no das más en un incremental (o el pulso no llega a la
+             zona), pasás al bloque siguiente sin cortar la sesión. -->
+        <button class="btn chico" id="btnSaltarBloque" onclick="saltarBloquePlan()" style="margin-top:10px; min-height:48px;">
+          No doy más ▶ pasar al siguiente bloque
+        </button>
       </div>
 
       <div class="hud-item grande ritmo" id="tileTestVma" style="display:none; margin-top:12px;">
@@ -319,9 +348,13 @@
       <div class="hud-item pendiente" id="tileVelocidadManual" style="display:none; margin-top:12px;">
         <div class="lbl" style="margin-bottom:2px;">Velocidad cinta (manual)</div>
         <div class="pendiente-ctrl">
-          <button onclick="ajustarVelocidadManual(-0.1)">−</button>
+          <button style="touch-action:none;" onpointerdown="iniciarAjusteContinuo(-0.1, event)"
+            onpointerup="detenerAjusteContinuo()" onpointercancel="detenerAjusteContinuo()"
+            onpointerleave="detenerAjusteContinuo()">−</button>
           <div class="val" id="hudVelocidadManual">0.0 km/h</div>
-          <button onclick="ajustarVelocidadManual(0.1)">+</button>
+          <button style="touch-action:none;" onpointerdown="iniciarAjusteContinuo(0.1, event)"
+            onpointerup="detenerAjusteContinuo()" onpointercancel="detenerAjusteContinuo()"
+            onpointerleave="detenerAjusteContinuo()">+</button>
         </div>
       </div>
 
@@ -355,19 +388,24 @@
       <div class="cinta-ritmo"><div class="cinta-marker" id="cintaMarker" style="left:50%;"></div></div>
 
       <div class="hud-grid">
-        <div class="hud-item grande ritmo">
+        <div class="hud-item grande ritmo ritmo-full" id="tileRitmo">
           <!-- En modo manual/calibración los botones +/- aparecen FLANQUEANDO el ritmo, para poder
                cambiar la velocidad de la cinta sin scrollear hasta el control de arriba mientras
                se está corriendo. Llaman a la misma ajustarVelocidadManual() de v47 — es el mismo
-               control, mostrado en dos lugares, no una lógica nueva. -->
+               control, mostrado en dos lugares, no una lógica nueva.
+               Los handlers son pointerdown/up (no onclick) para poder mantener presionado. -->
           <div class="ritmo-ctrl">
-            <button class="ritmo-btn" id="btnVelMenosHud" onclick="ajustarVelocidadManual(-0.1)" style="display:none;">−</button>
-            <div>
+            <button class="ritmo-btn" id="btnVelMenosHud" style="display:none;"
+              onpointerdown="iniciarAjusteContinuo(-0.1, event)" onpointerup="detenerAjusteContinuo()"
+              onpointercancel="detenerAjusteContinuo()" onpointerleave="detenerAjusteContinuo()">−</button>
+            <div class="ritmo-centro">
               <div class="val" id="hudRitmo">--:--</div>
               <div class="lbl">Ritmo /km</div>
               <div class="lbl" id="hudKmh" style="font-size:11px; margin-top:2px; opacity:0.75;">-- km/h</div>
             </div>
-            <button class="ritmo-btn" id="btnVelMasHud" onclick="ajustarVelocidadManual(0.1)" style="display:none;">+</button>
+            <button class="ritmo-btn" id="btnVelMasHud" style="display:none;"
+              onpointerdown="iniciarAjusteContinuo(0.1, event)" onpointerup="detenerAjusteContinuo()"
+              onpointercancel="detenerAjusteContinuo()" onpointerleave="detenerAjusteContinuo()">+</button>
           </div>
         </div>
         <div class="hud-item pulso">
@@ -1888,6 +1926,108 @@
        supera velFinal, los bloques constantes encadenados se recorren
        en orden, y si los bloques fijos ya llenan el total el bloque
        resto da 0 sin romper.
+   v65: bloques que terminan por ZONA DE PULSO + repeticiones, a pedido
+       de Hugo (ejemplos suyos: "30', incremental +0.2 desde 6 km/h
+       hasta Z5, después libre hasta terminar" y "series incrementales
+       de 6 km/h hasta Z4, con aviso bien visible para bajar la cinta").
+       Cambio de arquitectura: en v64 el plan era una función pura del
+       tiempo porque se sabía de antemano cuánto duraba cada bloque. Un
+       bloque que termina "cuando llegues a Z4" tiene duración
+       DESCONOCIDA, así que pasó a ser una máquina de estados
+       (progresoInicial/pasoPlan/siguienteBloque) que avanza por
+       eventos. estadoPlanEnT() de v64 se eliminó.
+       Decisiones de Hugo: el objetivo se da por cumplido al SOSTENER
+       la zona 15 segundos (no al tocarla — el pulso es ruidoso y un
+       pico aislado no significa nada), y las repeticiones repiten el
+       plan entero N veces (para las series).
+       El aviso de objetivo cumplido ocupa todo el ancho, va en color
+       pleno, dura 8s y hace vibrar el teléfono — tiene que verse de un
+       vistazo mientras corrés, que era el punto del pedido.
+       Detalles cuidados: el bloque "libre resto" ahora se resuelve EN
+       VIVO contra el total del plan (antes se precalculaba), así sigue
+       funcionando aunque antes haya un bloque de duración desconocida.
+       Si un bloque depende del pulso y no hay banda conectada, se
+       avisa una vez en lugar de quedarse trabado en silencio.
+       actualizarPlan() avanza en un bucle acotado porque un bloque
+       puede terminar y el siguiente terminar en el mismo instante
+       (ej. un "resto" que ya no tiene tiempo) — con la primera versión
+       eso se colgaba.
+       Probado con los dos ejemplos de Hugo: la velocidad sube de a 0.2
+       sin arrastre de coma flotante, sostener Z5 15s cumple el
+       objetivo a los 15s exactos, tocarla 8s NO lo cumple, el contador
+       se reinicia si el pulso baja, el "resto" llena hasta los 30 min
+       sin importar cuánto duró el incremental, sin banda nunca se
+       cumple solo, las 4 series se repiten arrancando cada una en
+       6 km/h, y tras cumplir entra la recuperación libre.
+       ATENCIÓN: esto depende de que las zonas de pulso estén bien
+       calibradas, y al momento de escribirlo el umbral de Hugo estaba
+       subestimado (136 bpm con una VMA de 9.6 km/h) — con zonas mal
+       calibradas los bloques por zona cortan antes de tiempo.
+   v66: dos pedidos de usabilidad corriendo, de Hugo.
+       (a) Los botones +/- del ritmo ahora tienen el diámetro de la
+       ALTURA del tile, no un tamaño fijo de 52px — mucha más
+       superficie para acertarles con la cinta en movimiento. Se logra
+       con align-items:stretch en el contenedor + aspect-ratio:1 en el
+       botón: la altura la impone el bloque central y el ancho la
+       iguala. Quedan min-width/min-height de 64px por si aspect-ratio
+       no estuviera disponible.
+       (b) Botón "No doy más ▶ pasar al siguiente bloque" dentro del
+       tile del plan: si no se aguanta un incremental (o el pulso no
+       llega nunca a la zona pedida), se pasa al bloque siguiente sin
+       tener que cortar la sesión entera. Reusa siguienteBloque(), así
+       respeta las repeticiones igual que si el bloque hubiera
+       terminado solo: saltar el último bloque de una serie arranca la
+       siguiente, y saltar en la última termina el plan.
+       Probado: el salto pasa a la recuperación de la misma serie, el
+       bloque nuevo arranca a contar desde el momento del salto, no
+       cicla infinito en la última serie, y el contador de zona
+       sostenida se reinicia (no arrastra el del bloque anterior).
+       NOTA: el tercer pedido de Hugo (que la sesión con meta por
+       tiempo se corte y guarde sola al llegar) YA estaba implementado
+       desde v45 — no se tocó nada.
+   v67: correcciones sobre v66, con captura de Hugo.
+       (a) Los botones habían quedado OVALADOS: aspect-ratio:1 no se
+       aplicó (peleaba con el min-width y con el stretch del flex).
+       Primera versión de v67 medía la altura en JS: MAL, generaba un
+       bucle (botón más grande => centro más angosto => texto envuelto
+       => centro más alto => botón más grande), con círculos enormes
+       tapando los números. Corregido en v68.
+       (b) Mantener presionado ahora repite el ajuste en vez de tener
+       que dar toques sueltos. Los handlers pasaron de onclick a
+       pointerdown/pointerup/pointercancel/pointerleave (con
+       touch-action:none para que el gesto no scrollee la página).
+       Curva: primer paso inmediato, 500ms de espera antes de empezar a
+       repetir (para que un toque normal siga moviendo solo 0.1),
+       después 220ms por paso, y desde el décimo 90ms — así una
+       mantenida larga recorre todo el rango sin machacar el botón.
+       Se aplicó también al control de arriba del escenario, para que
+       los dos se comporten igual.
+       Probado con reloj simulado (sin esperas reales): un toque de
+       100ms mueve exactamente 0.1 y no dispara repeticiones, a los
+       500ms arranca a repetir, soltar frena en el acto sin dejar
+       timers colgados, bajar nunca cruza el cero, y apretar un botón
+       sin soltar el otro no deja dos repeticiones corriendo a la vez.
+   v68: los botones de v67 quedaron ENORMES y tapando los números.
+       Causa: medir la altura del centro en JS creaba un bucle de
+       realimentación — botón más grande, centro más angosto, texto
+       envuelto en más líneas, centro más alto, botón más grande otra
+       vez. Ninguna medición iterativa iba a converger ahí.
+       Solución: invertir la dirección de la dependencia. El ANCHO se
+       fija por proporción (flex:0 0 31% cada botón, tope 130px) y
+       aspect-ratio:1 deriva la altura — así el botón no puede empujar
+       el alto del centro y volver a crecer. Sin JS de por medio.
+       Complemento: la clase .con-botones (que mostrarBotonesVelocidadHud
+       aplica al tile) achica el número a 34px y pone nowrap en el valor
+       y en los rótulos, porque con los botones al costado el centro
+       tiene ~38% del ancho y el texto envuelto era justamente lo que
+       disparaba el bucle anterior.
+       NOTA DE PROCESO: al ir a hacer este cambio, el archivo de trabajo
+       YA tenía aplicada esta corrección — un proceso interrumpido la
+       había escrito (tercera vez que pasa en el proyecto). Se comparó
+       contra la copia de outputs antes de seguir, como manda la
+       convención, y se verificó que la edición ajena estuviera completa
+       y coherente (CSS + enganche del classList en el JS + función de
+       medición ya eliminada) en vez de escribir encima a ciegas.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2593,11 +2733,38 @@ function procesarPosicionGPS(pos) {
 let velocidadManualKmh = 0;
 // Muestra/oculta los botones +/- que flanquean el ritmo en el HUD. Van siempre en el mismo estado
 // que tileVelocidadManual (el control de arriba): son el mismo control en dos lugares.
+// Mantener presionado: primer paso inmediato, después repite. Arranca lento y acelera, así un
+// toque corto mueve 0.1 y una mantenida larga recorre todo el rango sin machacar el botón.
+let ajusteTimer = null, ajustePasos = 0;
+function iniciarAjusteContinuo(delta, ev) {
+  if (ev && ev.preventDefault) ev.preventDefault();
+  detenerAjusteContinuo();
+  ajustePasos = 0;
+  ajustarVelocidadManual(delta);
+  const programar = () => {
+    // 500ms de espera antes de arrancar (para no disparar repeticiones en un toque normal),
+    // después 220ms, y a partir del décimo paso 90ms.
+    const ms = ajustePasos === 0 ? 500 : (ajustePasos < 10 ? 220 : 90);
+    ajusteTimer = setTimeout(() => {
+      ajustePasos++;
+      ajustarVelocidadManual(delta);
+      programar();
+    }, ms);
+  };
+  programar();
+}
+function detenerAjusteContinuo() {
+  if (ajusteTimer) { clearTimeout(ajusteTimer); ajusteTimer = null; }
+  ajustePasos = 0;
+}
 function mostrarBotonesVelocidadHud(visible) {
   const d = visible ? 'block' : 'none';
   const menos = document.getElementById('btnVelMenosHud'), mas = document.getElementById('btnVelMasHud');
   if (menos) menos.style.display = d;
   if (mas) mas.style.display = d;
+  // la clase achica el número y evita que los rótulos se envuelvan cuando hay botones al lado
+  const tile = document.getElementById('tileRitmo');
+  if (tile) tile.classList.toggle('con-botones', !!visible);
 }
 /* ============================================================
    TEST INCREMENTAL DE VMA (v60) — protocolo tipo VAM-EVAL sobre la cinta, en modo manual.
@@ -2669,8 +2836,8 @@ function desgloseEscalonesVma(puntos, cfg, duracionTotalSeg) {
           {tipo:'libre', duracionSeg} | {tipo:'libre', resto:true}  (absorbe lo que falte al total)
    ============================================================ */
 const K_PLANES = LS_PREFIX + 'planes_sesion';
-let planActivo = null, planBloquePrevio = -1, planEscalonPrevio = -1, planAvisado = false, planTerminadoAvisado = false;
-let planEnEdicion = { totalSeg: 1800, bloques: [] };
+let planActivo = null; // copia del plan que se está corriendo (null si la sesión no usa plan)
+let planEnEdicion = { totalSeg: 1800, repeticiones: 1, bloques: [] };
 
 function escalonesDeBloque(b) {
   // +1e-9 para que 6->10 de a 0.5 dé 9 escalones y no 8 por un redondeo de coma flotante
@@ -2678,7 +2845,12 @@ function escalonesDeBloque(b) {
 }
 function duracionBloque(b, plan) {
   if (b.tipo === 'constante') return b.duracionSeg;
-  if (b.tipo === 'incremental') return escalonesDeBloque(b) * b.duracionEscalonSeg;
+  if (b.tipo === 'incremental') {
+    // los que terminan por zona no tienen duración conocida: para el resumen del constructor se
+    // devuelve 0 y se aclara aparte, en vez de mostrar un total falso
+    if (b.finPor === 'zona') return 0;
+    return escalonesDeBloque(b) * b.duracionEscalonSeg;
+  }
   if (b.tipo === 'libre') {
     if (!b.resto) return b.duracionSeg;
     const otros = plan.bloques.filter(x => x !== b).reduce((a, x) => a + duracionBloque(x, plan), 0);
@@ -2689,36 +2861,80 @@ function duracionBloque(b, plan) {
 function duracionTotalPlan(plan) {
   return plan.bloques.reduce((a, b) => a + duracionBloque(b, plan), 0);
 }
-function estadoPlanEnT(t, plan) {
-  let inicio = 0;
-  for (let i = 0; i < plan.bloques.length; i++) {
-    const b = plan.bloques[i];
-    const dur = duracionBloque(b, plan);
-    if (t < inicio + dur) {
-      const tEnBloque = t - inicio;
-      let velocidadKmh = null, etiqueta = '';
-      if (b.tipo === 'constante') {
-        velocidadKmh = b.velocidadKmh;
-        etiqueta = 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h';
-      } else if (b.tipo === 'incremental') {
-        const esc = Math.floor(tEnBloque / b.duracionEscalonSeg);
-        velocidadKmh = Math.round(Math.min(b.velFinalKmh, b.velInicialKmh + esc * b.incrementoKmh) * 10) / 10;
-        etiqueta = 'Incremental · escalón ' + (esc + 1) + '/' + escalonesDeBloque(b);
-      } else {
-        etiqueta = 'Libre (manejás vos)';
-      }
-      return { bloqueIndex: i, tipo: b.tipo, velocidadKmh, etiqueta, segundosRestantesBloque: (inicio + dur) - t, terminado: false };
-    }
-    inicio += dur;
+const SEG_SOSTENER_ZONA = 15; // hay que sostener la zona objetivo 15s para dar el bloque por cumplido (decisión de Hugo, v65)
+function r1Plan(v) { return Math.round(v * 10) / 10; }
+function progresoInicial() {
+  return { bloqueIndex: 0, repeticion: 1, inicioBloqueSeg: 0, inicioZonaSeg: null, terminado: false };
+}
+function siguienteBloque(prog, plan, t) {
+  let idx = prog.bloqueIndex + 1, rep = prog.repeticion;
+  if (idx >= plan.bloques.length) {
+    if (rep < (plan.repeticiones || 1)) { rep++; idx = 0; }
+    else return { ...prog, terminado: true };
   }
-  return { bloqueIndex: -1, tipo: null, velocidadKmh: null, etiqueta: 'Plan completo', segundosRestantesBloque: 0, terminado: true };
+  return { bloqueIndex: idx, repeticion: rep, inicioBloqueSeg: t, inicioZonaSeg: null, terminado: false };
+}
+// Paso del motor. Los bloques que terminan por zona de pulso tienen duración DESCONOCIDA de
+// antemano, así que el plan dejó de ser una función pura del tiempo (v64) y pasó a ser una máquina
+// de estados que avanza por eventos. zonaActual puede ser null (sin banda): en ese caso un bloque
+// "hasta ZN" nunca se cumple solo — se avisa aparte en vez de colgarse en silencio.
+function pasoPlan(prog, plan, t, zonaActual) {
+  if (prog.terminado) return { prog, velocidadObjetivo: null, etiqueta: 'Plan completo', segundosRestantes: null, evento: null, sostenidoSeg: 0 };
+  const b = plan.bloques[prog.bloqueIndex];
+  const tEnBloque = t - prog.inicioBloqueSeg;
+  let velocidadObjetivo = null, etiqueta = '', segundosRestantes = null;
+  let debeTerminar = false, cumplioObjetivo = false;
+  let inicioZonaSeg = prog.inicioZonaSeg, sostenidoSeg = 0;
+
+  if (b.tipo === 'incremental') {
+    const esc = Math.floor(tEnBloque / b.duracionEscalonSeg);
+    if (b.finPor === 'zona') {
+      velocidadObjetivo = r1Plan(b.velInicialKmh + esc * b.incrementoKmh);
+      if (zonaActual != null && zonaActual >= b.zonaObjetivo) {
+        if (inicioZonaSeg == null) inicioZonaSeg = t;
+        sostenidoSeg = t - inicioZonaSeg;
+        if (sostenidoSeg >= SEG_SOSTENER_ZONA) { debeTerminar = true; cumplioObjetivo = true; }
+      } else { inicioZonaSeg = null; sostenidoSeg = 0; }
+      etiqueta = 'Incremental hasta Z' + b.zonaObjetivo + ' · escalón ' + (esc + 1);
+    } else {
+      const nEsc = escalonesDeBloque(b);
+      velocidadObjetivo = r1Plan(Math.min(b.velFinalKmh, b.velInicialKmh + esc * b.incrementoKmh));
+      const dur = nEsc * b.duracionEscalonSeg;
+      segundosRestantes = dur - tEnBloque;
+      if (tEnBloque >= dur) debeTerminar = true;
+      etiqueta = 'Incremental · escalón ' + (esc + 1) + '/' + nEsc;
+    }
+  } else if (b.tipo === 'constante') {
+    velocidadObjetivo = b.velocidadKmh;
+    segundosRestantes = b.duracionSeg - tEnBloque;
+    if (tEnBloque >= b.duracionSeg) debeTerminar = true;
+    etiqueta = 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h';
+  } else {
+    // el bloque "resto" se mide contra el total del plan y se resuelve EN VIVO — así funciona
+    // aunque antes hubiera bloques de duración desconocida (los que terminan por zona)
+    const dur = b.resto ? Math.max(0, (plan.totalSeg || 0) - prog.inicioBloqueSeg) : b.duracionSeg;
+    segundosRestantes = dur - tEnBloque;
+    if (tEnBloque >= dur) debeTerminar = true;
+    etiqueta = 'Libre (manejás vos)';
+  }
+
+  if (debeTerminar) {
+    const nuevo = siguienteBloque({ ...prog, inicioZonaSeg }, plan, t);
+    return { prog: nuevo, velocidadObjetivo, etiqueta, segundosRestantes,
+      evento: cumplioObjetivo ? 'objetivoCumplido' : (nuevo.terminado ? 'planCompleto' : 'cambioBloque'), sostenidoSeg };
+  }
+  return { prog: { ...prog, inicioZonaSeg }, velocidadObjetivo, etiqueta, segundosRestantes, evento: null, sostenidoSeg };
 }
 function descripcionBloque(b, plan) {
   const min = (duracionBloque(b, plan) / 60);
   const dur = (Math.round(min * 10) / 10) + ' min';
   if (b.tipo === 'constante') return 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h · ' + dur;
-  if (b.tipo === 'incremental') return 'Incremental ' + b.velInicialKmh.toFixed(1) + '→' + b.velFinalKmh.toFixed(1) +
-    ' km/h (+' + b.incrementoKmh + ' cada ' + b.duracionEscalonSeg + 's) · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
+  if (b.tipo === 'incremental') {
+    if (b.finPor === 'zona') return 'Incremental desde ' + b.velInicialKmh.toFixed(1) + ' km/h (+' + b.incrementoKmh +
+      ' cada ' + b.duracionEscalonSeg + 's) hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · duración variable';
+    return 'Incremental ' + b.velInicialKmh.toFixed(1) + '→' + b.velFinalKmh.toFixed(1) +
+      ' km/h (+' + b.incrementoKmh + ' cada ' + b.duracionEscalonSeg + 's) · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
+  }
   return 'Libre' + (b.resto ? ' (hasta completar el total)' : '') + ' · ' + dur;
 }
 
@@ -2727,15 +2943,24 @@ function togglePlan() {
   document.getElementById('cfgPlan').style.display = on ? 'block' : 'none';
   if (on) renderConstructorPlan();
 }
+function cambiarRepeticionesPlan() {
+  const n = parseInt(document.getElementById('planRepeticiones').value, 10);
+  planEnEdicion.repeticiones = (n > 0 ? n : 1);
+  renderConstructorPlan();
+}
 function cambiarTotalPlan() {
   const min = parseFloat(document.getElementById('planTotalMin').value);
   planEnEdicion.totalSeg = (min > 0 ? min : 0) * 60;
   renderConstructorPlan();
 }
 function agregarBloque(tipo) {
-  if (tipo === 'incremental') planEnEdicion.bloques.push({ tipo, velInicialKmh: 6, velFinalKmh: 10, incrementoKmh: 0.5, duracionEscalonSeg: 60 });
+  if (tipo === 'incremental') planEnEdicion.bloques.push({ tipo, velInicialKmh: 6, velFinalKmh: 10, incrementoKmh: 0.5, duracionEscalonSeg: 60, finPor: 'velocidad', zonaObjetivo: 4 });
   else if (tipo === 'constante') planEnEdicion.bloques.push({ tipo, velocidadKmh: 8, duracionSeg: 300 });
   else planEnEdicion.bloques.push({ tipo: 'libre', resto: true });
+  renderConstructorPlan();
+}
+function editarFinPor(i, valor) {
+  planEnEdicion.bloques[i].finPor = valor;
   renderConstructorPlan();
 }
 function quitarBloque(i) { planEnEdicion.bloques.splice(i, 1); renderConstructorPlan(); }
@@ -2765,9 +2990,18 @@ function renderConstructorPlan() {
       html += '<div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">' +
         '<b style="font-size:12px;">' + (i + 1) + '. ' + descripcionBloque(b, planEnEdicion) + '</b></div>';
       if (b.tipo === 'incremental') {
+        html += '<label style="margin-top:6px;">Termina por</label>' +
+          '<select onchange="editarFinPor(' + i + ', this.value)">' +
+          '<option value="velocidad"' + (b.finPor !== 'zona' ? ' selected' : '') + '>Velocidad final</option>' +
+          '<option value="zona"' + (b.finPor === 'zona' ? ' selected' : '') + '>Llegar a una zona de pulso</option>' +
+          '</select>';
         html += '<div class="fila" style="margin-top:6px;">' +
           '<div><label>Desde (km/h)</label><input type="number" step="0.1" value="' + b.velInicialKmh + '" onchange="editarCampoBloque(' + i + ',\'velInicialKmh\',this.value)"></div>' +
-          '<div><label>Hasta (km/h)</label><input type="number" step="0.1" value="' + b.velFinalKmh + '" onchange="editarCampoBloque(' + i + ',\'velFinalKmh\',this.value)"></div></div>' +
+          (b.finPor === 'zona'
+            ? '<div><label>Hasta zona</label><select onchange="editarCampoBloque(' + i + ',\'zonaObjetivo\',this.value)">' +
+              [2,3,4,5].map(z => '<option value="' + z + '"' + (b.zonaObjetivo === z ? ' selected' : '') + '>Z' + z + '</option>').join('') + '</select></div>'
+            : '<div><label>Hasta (km/h)</label><input type="number" step="0.1" value="' + b.velFinalKmh + '" onchange="editarCampoBloque(' + i + ',\'velFinalKmh\',this.value)"></div>') +
+          '</div>' +
           '<div class="fila" style="margin-top:6px;">' +
           '<div><label>Incremento</label><input type="number" step="0.1" value="' + b.incrementoKmh + '" onchange="editarCampoBloque(' + i + ',\'incrementoKmh\',this.value)"></div>' +
           '<div><label>Escalón (seg)</label><input type="number" step="10" value="' + b.duracionEscalonSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionEscalonSeg\',this.value)"></div></div>';
@@ -2795,43 +3029,97 @@ function renderConstructorPlan() {
 }
 // Corre en cada tick(): cambia de bloque/escalón, impone la velocidad salvo en los bloques libres,
 // avisa antes de cada cambio y actualiza el tile guía.
-function actualizarPlan(tSeg) {
-  const e = estadoPlanEnT(tSeg, planActivo);
-  if (e.terminado) {
-    if (!planTerminadoAvisado) {
-      planTerminadoAvisado = true;
-      toast('Plan completo');
+let progresoPlan = null, planUltimoObjetivo = null, avisoPlanHasta = 0, planSinBandaAvisado = false;
+function mostrarAvisoGrande(texto, color) {
+  const el = document.getElementById('avisoGrande');
+  el.textContent = texto;
+  el.style.background = color || '#3fb950';
+  el.style.display = 'block';
+  avisoPlanHasta = Date.now() + 8000; // se apaga solo a los 8s, en actualizarPlan
+  if (navigator.vibrate) { try { navigator.vibrate([300, 120, 300]); } catch (_) {} }
+}
+// Salida manual del bloque en curso. Reusa siguienteBloque(), así respeta las repeticiones igual
+// que si el bloque hubiera terminado solo (última serie -> plan completo; si no, arranca la próxima).
+function saltarBloquePlan() {
+  if (!planActivo || !progresoPlan || progresoPlan.terminado) return;
+  const t = tiempoTranscurridoSeg();
+  const bloqueAnterior = progresoPlan.bloqueIndex + 1;
+  progresoPlan = siguienteBloque(progresoPlan, planActivo, t);
+  planUltimoObjetivo = null; // así el bloque nuevo vuelve a imponer su velocidad aunque coincida
+  logBLE('Plan — bloque ' + bloqueAnterior + ' salteado a mano', '#d29922');
+  if (progresoPlan.terminado) {
+    mostrarAvisoGrande('🏁 PLAN COMPLETO', '#4FD8C4');
+    document.getElementById('planObjetivo').textContent = '✓';
+    document.getElementById('planDetalle').textContent = 'Plan completo · seguís libre';
+  } else {
+    toast('Pasando al bloque siguiente');
+  }
+}
+function actualizarPlan(tSeg, zonaActual) {
+  if (avisoPlanHasta && Date.now() > avisoPlanHasta) {
+    document.getElementById('avisoGrande').style.display = 'none';
+    avisoPlanHasta = 0;
+  }
+  // Bucle: un paso puede terminar un bloque, y el bloque siguiente puede terminar en el mismo
+  // instante (ej. un "resto" que ya no tiene tiempo). Se avanza hasta quedar estable, con tope
+  // por si un plan mal armado encadenara bloques de duración cero.
+  let est = null, vueltas = 0;
+  while (vueltas++ < 20) {
+    const repAntes = progresoPlan.repeticion;
+    const r = pasoPlan(progresoPlan, planActivo, tSeg, zonaActual);
+    if (r.evento === 'objetivoCumplido') {
+      const totalReps = planActivo.repeticiones || 1;
+      mostrarAvisoGrande('✅ OBJETIVO CUMPLIDO — BAJÁ LA VELOCIDAD' + (totalReps > 1 ? ('  (serie ' + repAntes + '/' + totalReps + ')') : ''), '#3fb950');
+      toast('Objetivo cumplido: bajá la cinta');
+      logBLE('Plan — objetivo cumplido (serie ' + repAntes + ')', '#3fb950');
+    } else if (r.evento === 'planCompleto') {
+      mostrarAvisoGrande('🏁 PLAN COMPLETO', '#4FD8C4');
       logBLE('Plan de sesión completo', '#3fb950');
     }
+    const avanzo = r.prog !== progresoPlan && (r.prog.bloqueIndex !== progresoPlan.bloqueIndex || r.prog.repeticion !== progresoPlan.repeticion || r.prog.terminado);
+    progresoPlan = r.prog;
+    est = r;
+    if (!avanzo || progresoPlan.terminado) break;
+  }
+
+  if (progresoPlan.terminado) {
     document.getElementById('planObjetivo').textContent = '✓';
     document.getElementById('planDetalle').textContent = 'Plan completo · seguís libre';
     return;
   }
-  // ¿cambió de bloque, o de escalón dentro de un incremental?
-  const escActual = e.tipo === 'incremental' ? e.velocidadKmh : null;
-  if (e.bloqueIndex !== planBloquePrevio || escActual !== planEscalonPrevio) {
-    const cambioDeBloque = e.bloqueIndex !== planBloquePrevio;
-    planBloquePrevio = e.bloqueIndex;
-    planEscalonPrevio = escActual;
-    planAvisado = false;
-    if (e.velocidadKmh != null) {
-      // bloque con velocidad impuesta: la app la fija y avisa para que subas la cinta
-      velocidadManualKmh = e.velocidadKmh;
-      actual.velocidad = velocidadManualKmh / 3.6;
-      document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
-      toast('Poné la cinta a ' + e.velocidadKmh.toFixed(1) + ' km/h');
-      logBLE('Plan — ' + e.etiqueta + ' · ' + e.velocidadKmh.toFixed(1) + ' km/h', '#4FD8C4');
-    } else if (cambioDeBloque) {
-      // bloque libre: NO se toca la velocidad, queda la última y vos la manejás con los botones
-      toast('Bloque libre: la velocidad la manejás vos');
-      logBLE('Plan — ' + e.etiqueta, '#4FD8C4');
-    }
-  } else if (!planAvisado && e.segundosRestantesBloque <= 5 && e.velocidadKmh != null) {
-    planAvisado = true;
-    toast('En ' + e.segundosRestantesBloque + 's cambia el tramo');
+
+  // estado ya del bloque en curso (si el bucle avanzó, hay que releerlo para mostrar lo correcto)
+  est = pasoPlan(progresoPlan, planActivo, tSeg, zonaActual);
+  if (est.velocidadObjetivo != null && est.velocidadObjetivo !== planUltimoObjetivo) {
+    planUltimoObjetivo = est.velocidadObjetivo;
+    velocidadManualKmh = est.velocidadObjetivo;
+    actual.velocidad = velocidadManualKmh / 3.6;
+    document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+    toast('Poné la cinta a ' + est.velocidadObjetivo.toFixed(1) + ' km/h');
+    logBLE('Plan — ' + est.etiqueta + ' · ' + est.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
+  } else if (est.velocidadObjetivo == null && planUltimoObjetivo !== null) {
+    // entró a un bloque libre: NO se toca la velocidad, la manejás vos con los botones
+    planUltimoObjetivo = null;
+    toast('Bloque libre: la velocidad la manejás vos');
+    logBLE('Plan — ' + est.etiqueta, '#4FD8C4');
   }
-  document.getElementById('planObjetivo').textContent = e.velocidadKmh != null ? (e.velocidadKmh.toFixed(1) + ' km/h') : 'Libre';
-  document.getElementById('planDetalle').textContent = e.etiqueta + ' · faltan ' + segAMMSS(e.segundosRestantesBloque);
+
+  const bAct = planActivo.bloques[progresoPlan.bloqueIndex];
+  if (bAct && bAct.finPor === 'zona' && zonaActual == null && !planSinBandaAvisado) {
+    planSinBandaAvisado = true;
+    toast('Este bloque termina por pulso, pero no hay banda conectada');
+    logBLE('Plan — bloque por zona SIN datos de pulso: no va a cumplirse solo', '#d29922');
+  }
+
+  const totalReps = planActivo.repeticiones || 1;
+  const serieTxt = totalReps > 1 ? (' · serie ' + progresoPlan.repeticion + '/' + totalReps) : '';
+  document.getElementById('planObjetivo').textContent = est.velocidadObjetivo != null ? (est.velocidadObjetivo.toFixed(1) + ' km/h') : 'Libre';
+  let det = est.etiqueta + serieTxt;
+  if (est.segundosRestantes != null) det += ' · faltan ' + segAMMSS(Math.max(0, est.segundosRestantes));
+  else if (bAct && bAct.finPor === 'zona') {
+    det += (est.sostenidoSeg > 0) ? (' · sosteniendo ' + Math.floor(est.sostenidoSeg) + '/' + SEG_SOSTENER_ZONA + 's') : ' · hasta llegar a la zona';
+  }
+  document.getElementById('planDetalle').textContent = det;
 }
 function toggleTestVma() {
   const on = document.getElementById('chkTestVma').checked;
@@ -3830,13 +4118,16 @@ function iniciarSesion() {
   document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
   testVmaActivo = false; testVmaCfg = null; testVmaEscalonPrevio = -1; testVmaAvisado = false;
   document.getElementById('tileTestVma').style.display = 'none';
-  planActivo = null; planBloquePrevio = -1; planEscalonPrevio = -1; planAvisado = false; planTerminadoAvisado = false;
+  planActivo = null; progresoPlan = null; planUltimoObjetivo = null; planSinBandaAvisado = false; avisoPlanHasta = 0;
   document.getElementById('tilePlan').style.display = 'none';
+  document.getElementById('avisoGrande').style.display = 'none';
   if (usaPlan) {
     // copia profunda: si Hugo edita el constructor durante la sesión, el plan en curso no cambia
     planActivo = JSON.parse(JSON.stringify(planEnEdicion));
+    progresoPlan = progresoInicial();
     document.getElementById('tilePlan').style.display = 'block';
-    logBLE('Plan iniciado — ' + planActivo.bloques.length + ' bloques, ' + segAMMSS(duracionTotalPlan(planActivo)), '#4FD8C4');
+    const reps = planActivo.repeticiones || 1;
+    logBLE('Plan iniciado — ' + planActivo.bloques.length + ' bloques' + (reps > 1 ? (' × ' + reps + ' series') : ''), '#4FD8C4');
   }
   if (haceTestVma) {
     testVmaActivo = true; testVmaCfg = cfgVma;
@@ -3874,7 +4165,10 @@ function tick() {
   // antes de leer la velocidad: si hay test de VMA en curso, puede que este tick cambie de escalón
   // y suba actual.velocidad — así la muestra que se guarda abajo ya refleja la velocidad nueva.
   if (testVmaActivo && testVmaCfg) actualizarTestVma(t);
-  if (planActivo) actualizarPlan(t);
+  if (planActivo) {
+    const zonaParaPlan = (zonas.umbralPulso && actual.pulso) ? zonaPorPulso(actual.pulso, zonas.umbralPulso) : null;
+    actualizarPlan(t, zonaParaPlan);
+  }
   const velocidad = actual.velocidad || 0; // m/s
   const ritmoSegKm = velocidad > 0.1 ? (1000 / velocidad) : null;
   const pulso = actual.pulso || 0;
@@ -4180,6 +4474,7 @@ function resetearHUD() {
   mostrarBotonesVelocidadHud(modo === 'manual' || modo === 'calibracion');
   document.getElementById('tileTestVma').style.display = 'none';
   document.getElementById('tilePlan').style.display = 'none';
+  document.getElementById('avisoGrande').style.display = 'none';
   document.getElementById('notasSesion').value = '';
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
