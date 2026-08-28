@@ -73,6 +73,13 @@
   .hud-item .val{font-family:var(--mono); font-size:30px; font-weight:700; font-variant-numeric:tabular-nums; line-height:1.1;}
   .hud-item .lbl{font-size:10px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin-top:4px;}
   .hud-item.ritmo .val{color:var(--ritmo);}
+  /* Pedido de Hugo (v71): que el km/h debajo del ritmo se note — mismo color/tipografía que
+     tenía como valor propio el tile "Velocidad cinta (manual)" que se sacó en v70, ahora sin
+     tile aparte. No usa la clase .lbl (que lo dejaba en gris 10-11px y en mayúsculas) sino una
+     propia, para no heredar ni el color mudo ni el text-transform de las demás etiquetas. */
+  .kmh-val{font-family:var(--mono); font-weight:700; font-size:24px; color:var(--pendiente);
+    margin-top:2px; font-variant-numeric:tabular-nums;}
+  .ritmo-full.con-botones .ritmo-centro .kmh-val{font-size:19px; white-space:nowrap;}
   .hud-item.pulso .val{color:var(--pulso);}
   .hud-item.pendiente .val{color:var(--pendiente);}
   .hud-item.grande{grid-column:1/-1;}
@@ -185,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v68</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v72</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -345,19 +352,6 @@
         <div class="lbl" id="vmaDetalle">Test VMA</div>
       </div>
 
-      <div class="hud-item pendiente" id="tileVelocidadManual" style="display:none; margin-top:12px;">
-        <div class="lbl" style="margin-bottom:2px;">Velocidad cinta (manual)</div>
-        <div class="pendiente-ctrl">
-          <button style="touch-action:none;" onpointerdown="iniciarAjusteContinuo(-0.1, event)"
-            onpointerup="detenerAjusteContinuo()" onpointercancel="detenerAjusteContinuo()"
-            onpointerleave="detenerAjusteContinuo()">−</button>
-          <div class="val" id="hudVelocidadManual">0.0 km/h</div>
-          <button style="touch-action:none;" onpointerdown="iniciarAjusteContinuo(0.1, event)"
-            onpointerup="detenerAjusteContinuo()" onpointercancel="detenerAjusteContinuo()"
-            onpointerleave="detenerAjusteContinuo()">+</button>
-        </div>
-      </div>
-
       <div id="wrapEscena" style="display:none; margin-top:12px;">
         <div id="lineaVueltaEscena" class="estado-conexion" style="text-align:center; margin-bottom:6px;"></div>
         <div style="position:relative;">
@@ -401,7 +395,7 @@
             <div class="ritmo-centro">
               <div class="val" id="hudRitmo">--:--</div>
               <div class="lbl">Ritmo /km</div>
-              <div class="lbl" id="hudKmh" style="font-size:11px; margin-top:2px; opacity:0.75;">-- km/h</div>
+              <div class="kmh-val" id="hudKmh">-- km/h</div>
             </div>
             <button class="ritmo-btn" id="btnVelMasHud" style="display:none;"
               onpointerdown="iniciarAjusteContinuo(0.1, event)" onpointerup="detenerAjusteContinuo()"
@@ -2028,6 +2022,67 @@
        convención, y se verificó que la edición ajena estuviera completa
        y coherente (CSS + enganche del classList en el JS + función de
        medición ya eliminada) en vez de escribir encima a ciegas.
+   v69: pedido de Hugo — sacar el bloque "Velocidad cinta (manual)"
+       de arriba del escenario y ponerlo en la tarjeta "Sesión en
+       vivo", debajo del tile de ritmo (el "10:00" celeste). Mismo
+       control (mismos IDs, misma lógica), solo cambió de lugar en el
+       HTML: ahora vive dentro del hud-grid, con la clase "grande"
+       agregada para que ocupe la fila completa igual que tileRitmo.
+       Nada de JS se tocó — display:none/block lo sigue manejando
+       cambiarModo() igual que antes.
+       OJO pendiente de confirmar con captura: al entrar a la grilla,
+       la regla CSS .hud-item.grande .val (font-size:44px) tiene más
+       especificidad que .pendiente-ctrl .val (26px), así que el
+       "0.0 km/h" de este tile debería verse más grande que antes —
+       no se pudo confirmar el tamaño real sin ver el render.
+   v70: Hugo aclaró v69 con una captura — no quería el control
+       duplicado en un tile aparte, sino que el dato de velocidad
+       simplemente VIVA donde ya vivía: el "km/h" chico debajo del
+       ritmo (hudKmh), con los botones +/- que ya lo flanquean desde
+       v59 (mostrarBotonesVelocidadHud). Se eliminó por completo el
+       tile "Velocidad cinta (manual)" (tileVelocidadManual/
+       hudVelocidadManual) del HTML y de las 6 referencias en JS que
+       lo mostraban/ocultaban o le escribían el valor — las tres
+       escrituras que hacía a hudVelocidadManual ahora van directo a
+       hudKmh, que es lo único que queda en pantalla. La visibilidad
+       de los botones +/- del ritmo la sigue manejando
+       mostrarBotonesVelocidadHud(), sin cambios ahí.
+   v71: mismo pedido, un paso más — Hugo señaló en la MISMA captura
+       de v70 (a mano, con marcador amarillo) que quería el km/h con
+       más presencia: color y tamaño, no gris chiquito. hudKmh dejó
+       la clase .lbl (gris 10-11px, mayúsculas) por una propia,
+       .kmh-val: tipografía mono, negrita, 24px (19px cuando los
+       botones +/- están visibles y el tile se angosta, mismo ajuste
+       proporcional que ya tenía el número de ritmo al pasar de 44 a
+       34px), color var(--pendiente) — el mismo amarillo que tenía
+       como val propio el tile eliminado en v70. No se tocó JS: las
+       escrituras a hudKmh (textContent) siguen iguales, cambió solo
+       el CSS.
+   v72: Hugo preguntó si un bloque "Incremental" con Desde 7.5 >
+       Hasta 6.0 e Incremento 0.1 (positivo) funcionaba como tramo
+       descendente. NO andaba — bug real, confirmado con captura: el
+       constructor mostraba "1 escalones · 0.5 min" en vez de ~16
+       escalones / 8 min. Causa: escalonesDeBloque() hacía
+       (velFinalKmh - velInicialKmh) / incrementoKmh sin valor
+       absoluto — con Desde>Hasta el delta daba negativo, y
+       Math.max(1, negativo) lo recortaba siempre a 1. Arreglado:
+       - escalonesDeBloque() ahora usa Math.abs() del delta y del
+         incremento, funciona en cualquier dirección.
+       - Nueva función incrementoDireccional(b): calcula el signo
+         real a partir de Desde/Hasta (ignora el signo que haya
+         tipeado el usuario en "Incremento" — no hace falta poner
+         -0.1, alcanza con Hasta < Desde).
+       - pasoPlan() usa esa dirección al generar cada escalón, y
+         clampea con Math.min o Math.max según corresponda (antes
+         siempre Math.min, que en un tramo descendente saltaba
+         directo a la velocidad final en el primer escalón).
+       - descripcionBloque() muestra el signo real (+ o −) en vez
+         del que tipeó el usuario, para que el resumen no diga
+         "+0.1" en un tramo que en realidad baja.
+       Test: 7.5→6.0 de a 0.1/30s da 16 escalones y rampea
+       7.5,7.4,...,6.0 (antes saltaba directo a 6.0). El caso
+       ascendente de siempre (6→10 de a 0.5) se probó igual, sigue
+       dando 9 escalones — no se rompió nada ahí.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2363,10 +2418,9 @@ function seleccionarModo(m) {
   document.getElementById('panelCalibracion').style.display = m === 'calibracion' ? 'block' : 'none';
   if (m === 'calibracion') actualizarResumenCalibracion();
   // el control de velocidad manual (+/- 0.1 km/h) tiene que poder tocarse ANTES de arrancar,
-  // para cargar la velocidad de salida de la cinta — no solo durante la sesión. Vive fuera de
-  // cardModo/cardMeta (que sí se ocultan al iniciar), así que se muestra en cuanto se elige el
-  // modo, no recién en iniciarSesion().
-  document.getElementById('tileVelocidadManual').style.display = (m === 'manual' || m === 'calibracion') ? 'block' : 'none';
+  // para cargar la velocidad de salida de la cinta — no solo durante la sesión. Vive dentro de
+  // tileRitmo (que no se oculta al iniciar), así que se muestra en cuanto se elige el modo, no
+  // recién en iniciarSesion().
   mostrarBotonesVelocidadHud(m === 'manual' || m === 'calibracion');
   // en aire libre no hay pendiente controlable ni desnivel/hora de cinta; en cambio mostramos desnivel GPS
   document.getElementById('cardPendiente').style.display = m === 'aire_libre' ? 'none' : 'block';
@@ -2840,8 +2894,20 @@ let planActivo = null; // copia del plan que se está corriendo (null si la sesi
 let planEnEdicion = { totalSeg: 1800, repeticiones: 1, bloques: [] };
 
 function escalonesDeBloque(b) {
-  // +1e-9 para que 6->10 de a 0.5 dé 9 escalones y no 8 por un redondeo de coma flotante
-  return Math.max(1, Math.floor((b.velFinalKmh - b.velInicialKmh) / b.incrementoKmh + 1e-9) + 1);
+  // +1e-9 para que 6->10 de a 0.5 dé 9 escalones y no 8 por un redondeo de coma flotante.
+  // v72: usa el delta y el incremento en VALOR ABSOLUTO, para que funcione tanto ascendente
+  // como descendente (antes, con Desde>Hasta e Incremento positivo, el delta daba negativo y
+  // Math.max(1,...) lo recortaba siempre a 1 escalón — bug que reportó Hugo con una captura:
+  // 7.5->6.0 km/h de a 0.1 daba "1 escalones · 0.5 min" en vez de 16 escalones / 8 min).
+  const inc = Math.abs(b.incrementoKmh) || 1e-9;
+  return Math.max(1, Math.floor(Math.abs(b.velFinalKmh - b.velInicialKmh) / inc + 1e-9) + 1);
+}
+// Incremento con signo según la dirección real del tramo (Desde->Hasta), ignorando el signo
+// que haya tipeado el usuario en el campo "Incremento" — así no hace falta acordarse de poner
+// el número en negativo para un tramo que baja, alcanza con poner Hasta < Desde (v72).
+function incrementoDireccional(b) {
+  const inc = Math.abs(b.incrementoKmh);
+  return b.velFinalKmh >= b.velInicialKmh ? inc : -inc;
 }
 function duracionBloque(b, plan) {
   if (b.tipo === 'constante') return b.duracionSeg;
@@ -2898,7 +2964,8 @@ function pasoPlan(prog, plan, t, zonaActual) {
       etiqueta = 'Incremental hasta Z' + b.zonaObjetivo + ' · escalón ' + (esc + 1);
     } else {
       const nEsc = escalonesDeBloque(b);
-      velocidadObjetivo = r1Plan(Math.min(b.velFinalKmh, b.velInicialKmh + esc * b.incrementoKmh));
+      const bruto = b.velInicialKmh + esc * incrementoDireccional(b);
+      velocidadObjetivo = r1Plan(b.velFinalKmh >= b.velInicialKmh ? Math.min(b.velFinalKmh, bruto) : Math.max(b.velFinalKmh, bruto));
       const dur = nEsc * b.duracionEscalonSeg;
       segundosRestantes = dur - tEnBloque;
       if (tEnBloque >= dur) debeTerminar = true;
@@ -2932,8 +2999,11 @@ function descripcionBloque(b, plan) {
   if (b.tipo === 'incremental') {
     if (b.finPor === 'zona') return 'Incremental desde ' + b.velInicialKmh.toFixed(1) + ' km/h (+' + b.incrementoKmh +
       ' cada ' + b.duracionEscalonSeg + 's) hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · duración variable';
+    // el signo que se muestra es el real (según Desde/Hasta), no el que haya tipeado el
+    // usuario en el campo Incremento — ver incrementoDireccional() (v72).
+    const dirTxt = (b.velFinalKmh >= b.velInicialKmh ? '+' : '−') + Math.abs(b.incrementoKmh);
     return 'Incremental ' + b.velInicialKmh.toFixed(1) + '→' + b.velFinalKmh.toFixed(1) +
-      ' km/h (+' + b.incrementoKmh + ' cada ' + b.duracionEscalonSeg + 's) · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
+      ' km/h (' + dirTxt + ' cada ' + b.duracionEscalonSeg + 's) · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
   }
   return 'Libre' + (b.resto ? ' (hasta completar el total)' : '') + ' · ' + dur;
 }
@@ -3094,7 +3164,7 @@ function actualizarPlan(tSeg, zonaActual) {
     planUltimoObjetivo = est.velocidadObjetivo;
     velocidadManualKmh = est.velocidadObjetivo;
     actual.velocidad = velocidadManualKmh / 3.6;
-    document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+    document.getElementById('hudKmh').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
     toast('Poné la cinta a ' + est.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Plan — ' + est.etiqueta + ' · ' + est.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (est.velocidadObjetivo == null && planUltimoObjetivo !== null) {
@@ -3141,7 +3211,7 @@ function actualizarTestVma(tSeg) {
     testVmaAvisado = false;
     velocidadManualKmh = e.velocidadObjetivo;
     actual.velocidad = velocidadManualKmh / 3.6;
-    document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
+    document.getElementById('hudKmh').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
     toast('Escalón ' + e.numeroEscalon + ': subí la cinta a ' + e.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Test VMA — escalón ' + e.numeroEscalon + ' a ' + e.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (!testVmaAvisado && e.segundosRestantes <= 5) {
@@ -3155,7 +3225,6 @@ function actualizarTestVma(tSeg) {
 function ajustarVelocidadManual(delta) {
   velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
   actual.velocidad = velocidadManualKmh / 3.6; // km/h -> m/s, mismo dato que usa tick() para ritmo/distancia
-  document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
   // Reflejarlo también en el tile grande del ritmo: si la sesión todavía no arrancó, tick() no
   // corre y ese tile quedaría en "--:--" mientras cargás la velocidad de salida con los botones.
   // Con la sesión en marcha esto igual se pisa en el próximo tick, así que no hay conflicto.
@@ -4139,8 +4208,6 @@ function iniciarSesion() {
     // arranca desde lo que ya haya en actual.velocidad (cargado con actualizarManual() antes de iniciar),
     // no en 0 — si no, el primer toque de +/- saltaría desde una velocidad que no es la real.
     velocidadManualKmh = Math.round((actual.velocidad || 0) * 3.6 * 10) / 10;
-    document.getElementById('hudVelocidadManual').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
-    document.getElementById('tileVelocidadManual').style.display = 'block';
     mostrarBotonesVelocidadHud(true);
   }
   intervaloMuestreo = setInterval(tick, 1000);
@@ -4468,9 +4535,8 @@ function resetearHUD() {
   document.getElementById('cardNotas').style.display = 'none';
   document.getElementById('cardModo').style.display = 'block';
   document.getElementById('cardMeta').style.display = 'block';
-  // no se oculta a ciegas: si seguís en modo manual/calibración, el control de velocidad tiene
-  // que quedar visible para cargar la velocidad de la próxima sesión (mismo criterio que arriba).
-  document.getElementById('tileVelocidadManual').style.display = (modo === 'manual' || modo === 'calibracion') ? 'block' : 'none';
+  // si seguís en modo manual/calibración, los botones +/- del ritmo tienen que quedar visibles
+  // para cargar la velocidad de la próxima sesión (mismo criterio que arriba).
   mostrarBotonesVelocidadHud(modo === 'manual' || modo === 'calibracion');
   document.getElementById('tileTestVma').style.display = 'none';
   document.getElementById('tilePlan').style.display = 'none';
