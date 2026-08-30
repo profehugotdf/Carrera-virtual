@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v78</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v80</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -241,6 +241,11 @@
           </label>
           <div id="cfgPlan" style="display:none; margin-top:8px;">
             <div class="fila">
+              <select id="selectorPlantillaPlan" onchange="cargarPlantillaPlan()" style="flex:1;">
+                <option value="">— Cargar plantilla guardada —</option>
+              </select>
+            </div>
+            <div class="fila">
               <div>
                 <label>Duración total (min)</label>
                 <input type="number" id="planTotalMin" value="30" min="1" onchange="cambiarTotalPlan()">
@@ -256,6 +261,10 @@
               <button class="btn chico" onclick="agregarBloque('constante')">+ Constante</button>
             </div>
             <button class="btn chico" onclick="agregarBloque('libre')" style="margin-top:6px;">+ Libre hasta completar el total</button>
+            <div class="fila" style="margin-top:10px; border-top:1px solid var(--borde); padding-top:10px;">
+              <button class="btn chico" onclick="guardarPlantillaPlan()">Guardar como plantilla</button>
+              <button class="btn chico" onclick="borrarPlantillaPlan()">Borrar seleccionada</button>
+            </div>
             <div class="estado-conexion" id="resumenPlan" style="margin-top:8px;"></div>
           </div>
         </div>
@@ -2260,6 +2269,34 @@
        libre y uno que termina por zona, para confirmar que esos
        aportan 0 sin romper el total de los demás bloques. 3/3 OK,
        repetido contra las funciones ya integradas en el archivo.
+   v79: pedido de Hugo — poder guardar la configuración de un plan
+       por bloques como plantilla, para no armarlo de cero cada vez.
+       Se conectó K_PLANES (constante que ya estaba declarada desde
+       hacía rato pero nunca se había enganchado a nada — quedó de
+       alguna versión vieja como placeholder). Selector arriba del
+       constructor para cargar una plantilla guardada, botones
+       "Guardar como plantilla" / "Borrar seleccionada" abajo, cerca
+       del resumen. Nombre por prompt() (mismo patrón que ya se usa
+       para nombrar un reto). Guardar y cargar hacen SIEMPRE copia
+       profunda (JSON.parse(JSON.stringify(...))) en los dos
+       sentidos — ni el plan en edición queda apuntando a la
+       plantilla guardada, ni al revés; sin esto, editar un plan
+       recién cargado modificaría en silencio la plantilla original.
+       Probado en aislamiento con localStorage simulado: guardar y
+       releer una plantilla con sus bloques completos, cargar y
+       confirmar que editar la copia cargada NO toca lo guardado
+       (el caso que más importaba), y borrar una plantilla sin
+       afectar las demás. 3/3 OK.
+   v80: pedido de Hugo — que el nombre sugerido al guardar una
+       plantilla sea la distancia total del plan (reusa
+       distanciaTotalPlan(), v78), en vez de "Plan " + fecha. Sigue
+       siendo editable en el mismo prompt() de siempre — esto es
+       solo el valor por default, no un nombre forzado. Si el plan
+       no tiene distancia calculable (solo bloques libres o que
+       terminan por zona, total 0), cae al nombre por fecha de antes
+       en vez de sugerir "0.00 km", que sería un título sin sentido.
+       Test: plan real de Hugo -> sugiere "3.57 km"; plan solo con
+       bloque libre -> cae a "Plan (fecha)". 2/2 OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3241,7 +3278,72 @@ function descripcionBloque(b, plan) {
 function togglePlan() {
   const on = document.getElementById('chkPlan').checked;
   document.getElementById('cfgPlan').style.display = on ? 'block' : 'none';
-  if (on) renderConstructorPlan();
+  if (on) { renderConstructorPlan(); renderSelectorPlantillas(); }
+}
+// Plantillas de plan guardadas — pedido de Hugo, para no armar de cero cada vez (v79). Reusa
+// K_PLANES, que ya estaba declarado pero nunca se había conectado a nada.
+function renderSelectorPlantillas() {
+  const plantillas = lsGet(K_PLANES, []);
+  const sel = document.getElementById('selectorPlantillaPlan');
+  if (!sel) return;
+  const actual = sel.value;
+  sel.innerHTML = '<option value="">— Cargar plantilla guardada —</option>' +
+    plantillas.map(p => '<option value="' + p.id + '">' + p.nombre + ' (' + p.bloques.length + ' bloques, ' + segAMMSS(p.totalSeg) + ')</option>').join('');
+  sel.value = actual; // si la opción sigue existiendo, la deja seleccionada; si no, vuelve al placeholder
+}
+function guardarPlantillaPlan() {
+  if (!planEnEdicion.bloques.length) { toast('Agregá al menos un bloque antes de guardar'); return; }
+  // Sugerido = la distancia total del plan (pedido de Hugo, v80) — mismo cálculo que ya muestra
+  // el resumen (distanciaTotalPlan(), v78). Si el plan no tiene distancia calculable (todo
+  // bloques "libre" o que terminan por zona, distancia total 0), cae al nombre por fecha de
+  // antes en vez de sugerir "0.00 km", que sería un título sin sentido.
+  const distTotal = distanciaTotalPlan(planEnEdicion);
+  const sugerido = distTotal > 0 ? (distTotal / 1000).toFixed(2) + ' km' : 'Plan ' + new Date().toLocaleDateString('es-AR');
+  const nombre = prompt('¿Con qué nombre guardo esta plantilla?', sugerido);
+  if (!nombre || !nombre.trim()) return; // canceló o dejó vacío
+  const plantillas = lsGet(K_PLANES, []);
+  plantillas.push({
+    id: 'plan_' + Date.now(),
+    nombre: nombre.trim(),
+    fecha: new Date().toISOString(),
+    totalSeg: planEnEdicion.totalSeg,
+    repeticiones: planEnEdicion.repeticiones,
+    bloques: JSON.parse(JSON.stringify(planEnEdicion.bloques)), // copia profunda: no queda apuntando al plan en edición
+  });
+  lsSet(K_PLANES, plantillas);
+  renderSelectorPlantillas();
+  toast('Plantilla "' + nombre.trim() + '" guardada');
+}
+function cargarPlantillaPlan() {
+  const sel = document.getElementById('selectorPlantillaPlan');
+  const id = sel.value;
+  if (!id) return;
+  const plantilla = lsGet(K_PLANES, []).find(p => p.id === id);
+  if (!plantilla) return;
+  if (planEnEdicion.bloques.length && !confirm('Esto reemplaza el plan que estás armando ahora por "' + plantilla.nombre + '". ¿Seguro?')) {
+    sel.value = ''; return;
+  }
+  planEnEdicion = {
+    totalSeg: plantilla.totalSeg,
+    repeticiones: plantilla.repeticiones,
+    bloques: JSON.parse(JSON.stringify(plantilla.bloques)), // copia profunda: editar acá no debe tocar la plantilla guardada
+  };
+  document.getElementById('planTotalMin').value = Math.round(plantilla.totalSeg / 60);
+  document.getElementById('planRepeticiones').value = plantilla.repeticiones;
+  renderConstructorPlan();
+  toast('Plantilla "' + plantilla.nombre + '" cargada');
+}
+function borrarPlantillaPlan() {
+  const sel = document.getElementById('selectorPlantillaPlan');
+  const id = sel.value;
+  if (!id) { toast('Elegí una plantilla para borrar'); return; }
+  const plantillas = lsGet(K_PLANES, []);
+  const plantilla = plantillas.find(p => p.id === id);
+  if (!plantilla) return;
+  if (!confirm('¿Borrar la plantilla "' + plantilla.nombre + '"? No se puede deshacer.')) return;
+  lsSet(K_PLANES, plantillas.filter(p => p.id !== id));
+  renderSelectorPlantillas();
+  toast('Plantilla borrada');
 }
 function cambiarRepeticionesPlan() {
   const n = parseInt(document.getElementById('planRepeticiones').value, 10);
