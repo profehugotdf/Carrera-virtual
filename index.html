@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v77</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v78</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2238,6 +2238,28 @@
        sin evidencia de que sea la causa hubiera sido tirar dato sin
        necesidad. Pendiente: confirmar con Hugo si esto solo alcanza
        para que el botón se active, o si hace falta seguir buscando.
+   v78: pedido de Hugo — ver la distancia TOTAL estimada del plan
+       mientras lo arma en el constructor (junto a "Duración del
+       plan"), para poder dosificarlo antes de correrlo y compararlo
+       contra su mejor sesión o el fantasma. Nuevas funciones
+       distanciaBloque()/distanciaTotalPlan(), mismo criterio que las
+       de duración ya existentes: 'constante' es velocidad×tiempo
+       directo; 'incremental' suma la distancia escalón a escalón
+       (mismo cálculo de velocidad por escalón que ya usa pasoPlan(),
+       reutilizando escalonesDeBloque() e incrementoDireccional() de
+       v72 así no hay dos lugares calculando lo mismo distinto);
+       'libre' y el incremental que termina por zona devuelven 0
+       porque no hay forma de saber de antemano cuánto se va a
+       recorrer ahí (velocidad manual o duración desconocida) — si
+       el plan tiene alguno de esos, el resumen aclara "(parcial)" en
+       vez de mostrar un número que parece exacto y no lo es.
+       Test con el plan real de la captura de Hugo (rampa 6.0→7.6,
+       constante 7.6 13min, rampa 7.6→6.0): da 3.57 km — coincide
+       EXACTO con la distancia de la sesión real que corrió con este
+       mismo plan el 30/8. Probado también con un plan con bloque
+       libre y uno que termina por zona, para confirmar que esos
+       aportan 0 sin romper el total de los demás bloques. 3/3 OK,
+       repetido contra las funciones ya integradas en el archivo.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3112,6 +3134,29 @@ function duracionBloque(b, plan) {
 function duracionTotalPlan(plan) {
   return plan.bloques.reduce((a, b) => a + duracionBloque(b, plan), 0);
 }
+// Distancia estimada de un bloque — pedido de Hugo, para dosificar el diseño del plan antes de
+// correrlo (v78). Mismo criterio que duracionBloque(): 'zona' y 'libre' devuelven 0 porque no hay
+// forma de saber de antemano cuánto vas a recorrer ahí (duración o velocidad desconocidas al
+// momento de armar el plan) — se avisa aparte en el resumen, no se finge un número.
+function distanciaBloque(b) {
+  if (b.tipo === 'constante') return (b.velocidadKmh / 3.6) * b.duracionSeg;
+  if (b.tipo === 'incremental') {
+    if (b.finPor === 'zona') return 0;
+    const nEsc = escalonesDeBloque(b);
+    const incDir = incrementoDireccional(b);
+    let dist = 0;
+    for (let esc = 0; esc < nEsc; esc++) {
+      const bruto = b.velInicialKmh + esc * incDir;
+      const vKmh = b.velFinalKmh >= b.velInicialKmh ? Math.min(b.velFinalKmh, bruto) : Math.max(b.velFinalKmh, bruto);
+      dist += (vKmh / 3.6) * b.duracionEscalonSeg;
+    }
+    return dist;
+  }
+  return 0; // 'libre': velocidad manual, no hay dato para estimar
+}
+function distanciaTotalPlan(plan) {
+  return plan.bloques.reduce((a, b) => a + distanciaBloque(b), 0);
+}
 const SEG_SOSTENER_ZONA = 15; // hay que sostener la zona objetivo 15s para dar el bloque por cumplido (decisión de Hugo, v65)
 function r1Plan(v) { return Math.round(v * 10) / 10; }
 function progresoInicial() {
@@ -3280,6 +3325,10 @@ function renderConstructorPlan() {
     txt += ' — ojo: no coincide con el total de ' + segAMMSS(objetivo) +
       (planEnEdicion.bloques.some(b => b.tipo === 'libre' && b.resto) ? '' : ' (agregá un bloque "libre hasta completar" para rellenar)');
   }
+  const distTotal = distanciaTotalPlan(planEnEdicion);
+  const hayDistDesconocida = planEnEdicion.bloques.some(b => b.tipo === 'libre' || (b.tipo === 'incremental' && b.finPor === 'zona'));
+  txt += ' · Distancia estimada: ' + (distTotal / 1000).toFixed(2) + ' km' +
+    (hayDistDesconocida ? ' (parcial — hay bloques de velocidad libre o que terminan por zona, esos no se pueden calcular de antemano)' : '');
   document.getElementById('resumenPlan').textContent = txt;
 }
 // Corre en cada tick(): cambia de bloque/escalón, impone la velocidad salvo en los bloques libres,
