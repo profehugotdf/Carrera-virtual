@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v72</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v74</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -281,6 +281,16 @@
             <div class="estado-conexion" style="margin-top:8px;">Al iniciar la sesión, la app sube sola su velocidad en cada escalón y te avisa 5 segundos antes para que subas la cinta a tiempo. Corré hasta no poder más y tocá Finalizar: la VMA sale de la última velocidad completada, interpolando el escalón que quedó a medias. Ojo con el tope de tu cinta — si te quedás sin velocidad disponible, el test se corta antes de tu VMA real.</div>
           </div>
         </div>
+
+        <div style="border-top:1px solid var(--borde); margin-top:12px; padding-top:10px;">
+          <label style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="chkTestUmbral" onchange="toggleTestUmbral()" style="width:auto;">
+            <span>Test de umbral (30 min, protocolo Friel)</span>
+          </label>
+          <div id="cfgTestUmbral" style="display:none; margin-top:8px;">
+            <div class="estado-conexion">10 min de entrada en calor + 20 min más al esfuerzo más duro que puedas sostener, todo seguido (30 min en total). Vos manejás la velocidad con los +/- de siempre, la app no impone nada. El umbral sale del promedio de ritmo y pulso de los últimos 20 minutos — la app marca sola el minuto 10, no hace falta que hagas nada especial ahí. Si cortás antes de los 30 min, igual guarda un resultado parcial con lo que corriste después del minuto 10 (mientras sean al menos 5 min de ventana) — mejor eso que nada, pero repetilo completo cuando puedas para más precisión.</div>
+          </div>
+        </div>
       </div>
 
       <div id="panelAireLibre" style="display:none;">
@@ -350,6 +360,10 @@
       <div class="hud-item grande ritmo" id="tileTestVma" style="display:none; margin-top:12px;">
         <div class="val" id="vmaObjetivo">--</div>
         <div class="lbl" id="vmaDetalle">Test VMA</div>
+      </div>
+      <div class="hud-item grande ritmo" id="tileTestUmbral" style="display:none; margin-top:12px;">
+        <div class="val" id="umbralTestVal">--</div>
+        <div class="lbl" id="umbralTestDetalle">Test de umbral</div>
       </div>
 
       <div id="wrapEscena" style="display:none; margin-top:12px;">
@@ -2083,6 +2097,78 @@
        7.5,7.4,...,6.0 (antes saltaba directo a 6.0). El caso
        ascendente de siempre (6→10 de a 0.5) se probó igual, sigue
        dando 9 escalones — no se rompió nada ahí.
+   v73: pedido de Hugo desde otra app nueva (Plan de Ciclos) —
+       integrar el umbral de ritmo/pulso con una clave compartida
+       entre apps, entrenamiento_umbrales (misma idea que ya existía
+       con K_FORMA_COMPARTIDA para CTL/ATL/TSB). Dos mecanismos:
+       - FALLBACK al arrancar: si zonas (K_ZONAS, la clave propia de
+         Correr) no tiene umbralRitmoSegKm o umbralPulso, los toma
+         de entrenamiento_umbrales.ritmoUmbralCarreraSegKm /
+         .pulsoUmbralCarrera si están cargados ahí. No pisa un valor
+         local que ya exista. No persiste el fallback a K_ZONAS: es
+         solo en memoria para esa carga, así que si Plan de Ciclos
+         actualiza el valor compartido antes de que Correr calcule o
+         cargue el propio, la próxima carga toma lo más nuevo.
+       - SINCRONIZACIÓN al guardar: los dos lugares donde Correr
+         actualiza zonas (auto vía modelo de velocidad crítica, y
+         manual vía el formulario de umbrales) ahora también llaman
+         sincronizarUmbralesCompartidos(), que lee el objeto
+         entrenamiento_umbrales completo, pisa solo
+         ritmoUmbralCarreraSegKm/pulsoUmbralCarrera/actualizado (los
+         campos de las otras disciplinas — ftpBici, pulsoUmbralKayak,
+         ritmoUmbralNatacion100m — quedan intactos) y lo vuelve a
+         guardar entero. Si Correr solo tiene uno de los dos campos
+         (ej. carga manual solo de pulso), no pisa el otro con null.
+       Probado en aislamiento con un localStorage simulado: fallback
+       llena vacíos, no pisa valor local existente, sincronización
+       no toca campos de otras apps, y campo parcial no pisa el otro
+       con null. 4/4 casos OK antes de integrar al archivo real.
+   v74: nuevo modo "Test de umbral (30 min, protocolo Friel)" en
+       manual, para reemplazar el umbral inferido (que arrastraba el
+       problema de v63/v73: sale del mejor esfuerzo más largo
+       guardado, que puede ser un rodaje suave) por una MEDICIÓN
+       directa. Protocolo: 10' de entrada en calor + 20' más al
+       esfuerzo más duro sostenible, todo seguido — a diferencia del
+       test de VMA, NO impone velocidad (la maneja Hugo con los +/-
+       de siempre). Umbral = promedio de ritmo y pulso de los puntos
+       entre el minuto 10 y el 30.
+       Pedido de Hugo sobre el diseño original: "entregar el mejor
+       dato posible mientras no tengamos el óptimo" — en vez de
+       todo-o-nada a los 30' exactos, si el test se corta antes
+       igual se calcula con lo que haya entre el minuto 10 y el
+       corte (ventana más corta que los 20' ideales), siempre que
+       haya al menos 5 min de ventana (UMBRAL_TEST_MIN_VENTANA_SEG);
+       por debajo de eso ya no hay nada razonable que promediar y se
+       descarta. Si se corrió de más, la ventana se sigue topando en
+       el minuto 30 (el protocolo es de 30', no más). Se guarda con
+       zonas.origenUmbral='test30' (completo) o 'test30_parcial'
+       (corto), y con datosTestUmbral.completo=false en la sesión
+       para que el tag del historial diga "(PARCIAL)".
+       HALLAZGO IMPORTANTE al integrar: recalcularZonasDesdeMejores()
+       reasignaba `zonas` entero sin mirar si el umbral actual venía
+       de una carga manual o de un test — la próxima sesión normal
+       guardada (o cualquier RPE editado) hubiera pisado en silencio
+       el resultado del test con la estimación automática de nuevo.
+       Bug latente real, no solo de esta feature: la carga MANUAL
+       (guardarUmbralManual) tenía exactamente el mismo problema
+       desde que existe. Arreglado con un flag zonas.origenUmbral
+       ('auto'/'manual'/'test30'/'test30_parcial'): el recálculo
+       automático ahora solo pisa ritmo/pulso cuando origenUmbral es
+       'auto' (o no existe todavía). De paso, renderZonas() también
+       tenía un bug de texto relacionado: mostraba "Auto-actualizado
+       ..." para siempre una vez que zonas.autoDesde se seteaba la
+       primera vez, aunque después hubiera un umbral cargado a mano
+       — ahora el texto respeta la misma prioridad que el guard.
+       Probado en aislamiento (localStorage simulado + puntos
+       simulados) ANTES de integrar: completo (30'→ventana 20'),
+       parcial (22'→ventana 12'), corto sin ventana mínima (13'→
+       inválido), límite exacto de la ventana mínima (15'→válido,
+       justo 5' de ventana), sesión que nunca pasa del minuto 10
+       (inválido), y sesión de 40' (se sigue topando en 30', no usa
+       los 10' de más). 6/6 casos OK. Repetido después de integrar,
+       leyendo las constantes reales del archivo por regex (no una
+       copia reescrita) para confirmar que lo que quedó pegado en
+       el HTML es exactamente lo que se probó.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2097,6 +2183,10 @@ const CALIBRACION_MAX_MUESTRAS = 5000; // ~80 min de muestreo a 1/seg; se recort
 // OJO Hugo: confirmar que este nombre coincide con el que ya usa (o va a usar) Bici Indoor, sino
 // el panel combinado no va a poder juntar los registros de las dos apps. Fácil de renombrar acá abajo.
 const K_FORMA_COMPARTIDA = 'entrenamiento_forma_registro';
+// Clave compartida entre apps para los umbrales de entrenamiento (Plan de Ciclos la escribe/lee
+// también para bici/kayak/natación). Correr lee de acá como FALLBACK si todavía no tiene umbral
+// propio, y escribe acá cuando calcula o carga el suyo — pedido de Hugo (v73).
+const K_UMBRALES_COMPARTIDOS = 'entrenamiento_umbrales';
 
 /* ---------------- CONSTANTES DE CÁLCULO ---------------- */
 const DURACIONES_REF = [180, 300, 480, 720, 1200, 1800, 3600]; // 3,5,8,12,20,30,60 min
@@ -2370,6 +2460,31 @@ let vt = 0, replaySpeed = 2, replayPlaying = false, replayRAF = null, replayLast
 let repRoadCtx = null;
 
 let zonas = lsGet(K_ZONAS, { umbralRitmoSegKm: null, umbralPulso: null });
+// Fallback a entrenamiento_umbrales (Plan de Ciclos) si Correr todavía no tiene umbral propio —
+// pedido de Hugo (v73). No persiste a K_ZONAS: queda solo en memoria para esta carga, así que si
+// Plan de Ciclos actualiza el valor compartido antes de que Correr calcule o cargue el suyo, la
+// próxima carga de Correr toma el valor más nuevo. El día que Correr calcule/cargue el propio
+// (auto o manual), sincronizarUmbralesCompartidos() lo escribe de vuelta y ahí sí pasa a mandar
+// el de Correr, que es más preciso que lo que se tipeó a mano en Plan de Ciclos.
+(function aplicarFallbackUmbralesCompartidos() {
+  if (zonas.umbralRitmoSegKm && zonas.umbralPulso) return; // ya tengo los dos propios, no hace falta
+  const compartidos = lsGet(K_UMBRALES_COMPARTIDOS, null);
+  if (!compartidos) return;
+  if (!zonas.umbralRitmoSegKm && compartidos.ritmoUmbralCarreraSegKm) zonas.umbralRitmoSegKm = compartidos.ritmoUmbralCarreraSegKm;
+  if (!zonas.umbralPulso && compartidos.pulsoUmbralCarrera) zonas.umbralPulso = compartidos.pulsoUmbralCarrera;
+})();
+// Escribe el umbral de Correr en la clave compartida, preservando lo que hayan puesto las otras
+// apps (ftpBici, pulsoUmbralKayak, ritmoUmbralNatacion100m) — lee el objeto completo, toca solo
+// los dos campos de carrera + la fecha, y guarda todo de nuevo. Pedido de Hugo (v73). Solo escribe
+// un campo si Correr realmente lo tiene (no pisa el valor compartido con null cuando, por ejemplo,
+// una carga manual solo trajo el pulso y no el ritmo).
+function sincronizarUmbralesCompartidos() {
+  const compartidos = lsGet(K_UMBRALES_COMPARTIDOS, {});
+  if (zonas.umbralRitmoSegKm) compartidos.ritmoUmbralCarreraSegKm = zonas.umbralRitmoSegKm;
+  if (zonas.umbralPulso) compartidos.pulsoUmbralCarrera = zonas.umbralPulso;
+  compartidos.actualizado = new Date().toISOString().slice(0, 10);
+  lsSet(K_UMBRALES_COMPARTIDOS, compartidos);
+}
 
 /* ============================================================
    NAVEGACIÓN
@@ -2827,6 +2942,7 @@ function mostrarBotonesVelocidadHud(visible) {
    el de la cinta, en vez de tener que sincronizar los dos a mano.
    ============================================================ */
 let testVmaActivo = false, testVmaCfg = null, testVmaEscalonPrevio = -1, testVmaAvisado = false;
+let testUmbralActivo = false; // test de umbral (30 min, Friel) — sin cfg propia, no impone velocidad
 // Escalón 0 = primer escalón, a velInicial. En el escalón k se corre a velInicial + k*incremento.
 function estadoEscalonVma(tSeg, cfg) {
   const idx = Math.floor(tSeg / cfg.duracionEscalonSeg);
@@ -3194,6 +3310,35 @@ function actualizarPlan(tSeg, zonaActual) {
 function toggleTestVma() {
   const on = document.getElementById('chkTestVma').checked;
   document.getElementById('cfgTestVma').style.display = on ? 'block' : 'none';
+}
+function toggleTestUmbral() {
+  const on = document.getElementById('chkTestUmbral').checked;
+  document.getElementById('cfgTestUmbral').style.display = on ? 'block' : 'none';
+}
+// Constantes del protocolo de Friel: 10' de entrada en calor + 20' de esfuerzo sostenido medido.
+const UMBRAL_TEST_MARCA_SEG = 600, UMBRAL_TEST_FIN_SEG = 1800;
+// Mínimo de ventana útil (después del minuto 10) para aceptar un resultado PARCIAL cuando el
+// test se corta antes de los 30' — pedido de Hugo: mejor dato posible mientras no esté el
+// óptimo, pero con un piso; menos de 5 min de ventana ya no es razonable promediar.
+const UMBRAL_TEST_MIN_VENTANA_SEG = 300;
+// Corre en cada tick() mientras el test está activo — a diferencia del de VMA, no impone
+// velocidad (el usuario la maneja con los +/- de siempre), solo guía y muestra el promedio
+// parcial de la ventana de medición (10'-30') a medida que se junta.
+function actualizarTestUmbral(tSeg) {
+  const val = document.getElementById('umbralTestVal'), det = document.getElementById('umbralTestDetalle');
+  if (tSeg < UMBRAL_TEST_MARCA_SEG) {
+    const restan = UMBRAL_TEST_MARCA_SEG - tSeg;
+    val.textContent = segAMMSS(restan);
+    det.textContent = 'Test de umbral · entrada en calor, arranca la medición en ' + Math.ceil(restan / 60) + ' min';
+  } else if (tSeg <= UMBRAL_TEST_FIN_SEG) {
+    const ventana = puntosSesion.filter(p => p.t >= UMBRAL_TEST_MARCA_SEG && p.ritmo);
+    const restan = UMBRAL_TEST_FIN_SEG - tSeg;
+    val.textContent = ventana.length ? (segAMMSS(ventana.reduce((s, p) => s + p.ritmo, 0) / ventana.length) + '/km') : '--';
+    det.textContent = 'Test de umbral · midiendo, faltan ' + Math.ceil(restan / 60) + ' min (promedio parcial)';
+  } else {
+    val.textContent = '✓';
+    det.textContent = 'Test de umbral completo — podés finalizar';
+  }
 }
 function leerCfgTestVma() {
   const vi = parseFloat(document.getElementById('vmaVelInicial').value);
@@ -4144,12 +4289,17 @@ function iniciarSesion() {
   const haceTestVma = (modo === 'manual' && document.getElementById('chkTestVma').checked);
   const cfgVma = haceTestVma ? leerCfgTestVma() : null;
   if (haceTestVma && !cfgVma) { toast('Revisá la configuración del test de VMA (valores inválidos)'); return; }
+  const haceTestUmbral = (modo === 'manual' && document.getElementById('chkTestUmbral').checked);
   const usaPlan = (modo === 'manual' && document.getElementById('chkPlan').checked && planEnEdicion.bloques.length > 0);
   if (modo === 'manual' && document.getElementById('chkPlan').checked && !planEnEdicion.bloques.length) {
     toast('El plan no tiene bloques todavía'); return;
   }
-  // El test de VMA también impone velocidad; si corren los dos a la vez se pisan entre sí.
+  // El test de VMA también impone velocidad; si corren los dos a la vez se pisan entre sí. El
+  // test de umbral no impone velocidad, pero igual es "una sola cosa por sesión" para no mezclar
+  // el objetivo de la sesión ni pelearse por la etiqueta del historial.
   if (usaPlan && haceTestVma) { toast('Elegí una sola cosa: plan por bloques o test de VMA'); return; }
+  if (usaPlan && haceTestUmbral) { toast('Elegí una sola cosa: plan por bloques o test de umbral'); return; }
+  if (haceTestVma && haceTestUmbral) { toast('Elegí una sola cosa: test de VMA o test de umbral'); return; }
 
   sesionActiva = true;
   sesionPausada = false;
@@ -4187,6 +4337,8 @@ function iniciarSesion() {
   document.getElementById('cardMeta').style.display = 'none'; // no se puede cambiar con la sesión en marcha (ver seleccionarMeta) — se oculta para que el escenario y los datos en vivo queden juntos, sin este paso de en medio
   testVmaActivo = false; testVmaCfg = null; testVmaEscalonPrevio = -1; testVmaAvisado = false;
   document.getElementById('tileTestVma').style.display = 'none';
+  testUmbralActivo = false;
+  document.getElementById('tileTestUmbral').style.display = 'none';
   planActivo = null; progresoPlan = null; planUltimoObjetivo = null; planSinBandaAvisado = false; avisoPlanHasta = 0;
   document.getElementById('tilePlan').style.display = 'none';
   document.getElementById('avisoGrande').style.display = 'none';
@@ -4202,6 +4354,11 @@ function iniciarSesion() {
     testVmaActivo = true; testVmaCfg = cfgVma;
     document.getElementById('tileTestVma').style.display = 'block';
     logBLE('Test VMA iniciado — ' + cfgVma.velInicialKmh + ' km/h, +' + cfgVma.incrementoKmh + ' cada ' + cfgVma.duracionEscalonSeg + 's', '#4FD8C4');
+  }
+  if (haceTestUmbral) {
+    testUmbralActivo = true;
+    document.getElementById('tileTestUmbral').style.display = 'block';
+    logBLE('Test de umbral iniciado — 30 min, marca a los 10\'', '#4FD8C4');
   }
 
   if (modo === 'manual' || modo === 'calibracion') {
@@ -4232,6 +4389,7 @@ function tick() {
   // antes de leer la velocidad: si hay test de VMA en curso, puede que este tick cambie de escalón
   // y suba actual.velocidad — así la muestra que se guarda abajo ya refleja la velocidad nueva.
   if (testVmaActivo && testVmaCfg) actualizarTestVma(t);
+  if (testUmbralActivo) actualizarTestUmbral(t);
   if (planActivo) {
     const zonaParaPlan = (zonas.umbralPulso && actual.pulso) ? zonaPorPulso(actual.pulso, zonas.umbralPulso) : null;
     actualizarPlan(t, zonaParaPlan);
@@ -4472,6 +4630,56 @@ function finalizarSesion(automatica) {
     testVmaActivo = false; testVmaCfg = null;
   }
 
+  // Resultado del test de umbral (Friel, 30 min) — mismo criterio: se calcula antes del guardado
+  // normal, la sesión se guarda igual que cualquier otra. Si sale válido pisa directo
+  // zonas.umbralRitmoSegKm/umbralPulso (origenUmbral='test30'/'test30_parcial' para que
+  // recalcularZonasDesdeMejores() no lo vuelva a pisar con la estimación automática).
+  // Pedido de Hugo: entregar el mejor dato posible mientras no se tenga el óptimo, en vez de
+  // todo-o-nada a los 30 min exactos. Si el test se corta antes, se usa lo que haya entre el
+  // minuto 10 y el momento del corte (ventana más corta que los 20' ideales, pero sigue siendo
+  // una MEDICIÓN directa — mejor que la estimación automática de todos modos). Solo se descarta
+  // del todo si ni siquiera hay margen para una ventana mínima de 5 min después del minuto 10
+  // (UMBRAL_TEST_MIN_VENTANA_SEG) — ahí ya no hay nada razonable que promediar. Si se corrió más
+  // de 30 min, la ventana se sigue topando en el minuto 30 (el protocolo es de 30', no más).
+  let datosTestUmbral = null;
+  if (testUmbralActivo) {
+    const finVentana = Math.min(duracionSeg, UMBRAL_TEST_FIN_SEG);
+    const duracionVentanaSeg = finVentana - UMBRAL_TEST_MARCA_SEG;
+    if (duracionVentanaSeg >= UMBRAL_TEST_MIN_VENTANA_SEG) {
+      const ventana = puntosSesion.filter(p => p.t >= UMBRAL_TEST_MARCA_SEG && p.t <= finVentana && p.ritmo);
+      const conPulso = ventana.filter(p => p.pulso);
+      if (ventana.length >= 5) {
+        const ritmoProm = ventana.reduce((s, p) => s + p.ritmo, 0) / ventana.length;
+        const pulsoProm = conPulso.length ? Math.round(conPulso.reduce((s, p) => s + p.pulso, 0) / conPulso.length) : null;
+        const completo = duracionSeg >= UMBRAL_TEST_FIN_SEG;
+        datosTestUmbral = { ritmoUmbralSegKm: ritmoProm, umbralPulso: pulsoProm, duracionSeg: Math.round(duracionSeg), duracionVentanaSeg: Math.round(duracionVentanaSeg), completo };
+        zonas.umbralRitmoSegKm = ritmoProm;
+        if (pulsoProm) zonas.umbralPulso = pulsoProm;
+        zonas.origenUmbral = completo ? 'test30' : 'test30_parcial';
+        zonas.testUmbralFecha = new Date().toISOString().slice(0, 10);
+        lsSet(K_ZONAS, zonas);
+        sincronizarUmbralesCompartidos();
+        const txtResultado = segAMMSS(ritmoProm) + '/km' + (pulsoProm ? (' · ' + pulsoProm + ' bpm') : '');
+        if (completo) {
+          toast('Umbral medido: ' + txtResultado);
+          logBLE('Test de umbral terminado — ' + txtResultado, '#3fb950');
+        } else {
+          toast('Umbral medido (parcial, ' + Math.round(duracionVentanaSeg / 60) + ' de 20 min de ventana): ' + txtResultado);
+          logBLE('Test de umbral parcial — ventana de ' + Math.round(duracionVentanaSeg / 60) + '/20 min — ' + txtResultado, '#d29922');
+        }
+      } else {
+        datosTestUmbral = { ritmoUmbralSegKm: null, umbralPulso: null, duracionSeg: Math.round(duracionSeg) };
+        toast('Test de umbral: pocos datos de ritmo en la ventana de medición');
+        logBLE('Test de umbral inválido — pocos puntos con ritmo en la ventana', '#f85149');
+      }
+    } else {
+      datosTestUmbral = { ritmoUmbralSegKm: null, umbralPulso: null, duracionSeg: Math.round(duracionSeg) };
+      toast('Test de umbral: muy corto, ni para un resultado parcial (mínimo 15 min)');
+      logBLE('Test de umbral inválido — sesión de ' + Math.round(duracionSeg / 60) + ' min, no alcanza ni para un resultado parcial (mínimo 15: 10 de entrada en calor + 5 de ventana)', '#f85149');
+    }
+    testUmbralActivo = false;
+  }
+
   if (duracionSeg < 30 || puntosSesion.length < 5) {
     toast('Sesión muy corta, no se guardó');
     resetearHUD();
@@ -4510,6 +4718,7 @@ function finalizarSesion(automatica) {
     fantasmaDeltaFinalSeg: fantasmaId ? deltaFantasmaUltimo : null,
     puntos: compactarPuntos(reducirResolucion(puntosSesion, INTERVALO_GUARDADO_SEG)),
     testVma: datosTestVma, // null en una sesión normal; con datos si fue un test incremental (v61)
+    testUmbral: datosTestUmbral, // null en una sesión normal; con datos si fue un test de umbral de 30' (v74)
     plan: planActivo ? { totalSeg: planActivo.totalSeg, bloques: planActivo.bloques } : null, // v64: qué plan se siguió
     notas: document.getElementById('notasSesion').value || ''
   };
@@ -4539,6 +4748,7 @@ function resetearHUD() {
   // para cargar la velocidad de la próxima sesión (mismo criterio que arriba).
   mostrarBotonesVelocidadHud(modo === 'manual' || modo === 'calibracion');
   document.getElementById('tileTestVma').style.display = 'none';
+  document.getElementById('tileTestUmbral').style.display = 'none';
   document.getElementById('tilePlan').style.display = 'none';
   document.getElementById('avisoGrande').style.display = 'none';
   document.getElementById('notasSesion').value = '';
@@ -4640,8 +4850,22 @@ function recalcularZonasDesdeMejores() {
   let pulsoUmbral = zonas.umbralPulso; // conservo el que había si no puedo recalcularlo
   if (sesionOrigen && sesionOrigen.pulsoPromedio) pulsoUmbral = sesionOrigen.pulsoPromedio;
 
-  zonas = { umbralRitmoSegKm: ritmoUmbralSegKm, umbralPulso: pulsoUmbral, cv: modelo.cv, dprime: modelo.dprime, autoDesde: masLargo.fecha, filtroRpeAplicado: filtroAplicado };
+  // v74: si el umbral actual viene de una carga manual o del test de 30' (Friel), NO lo piso con
+  // esta estimación — son más confiables que "el mejor esfuerzo más largo guardado" (que puede
+  // venir de un rodaje suave, ver el problema que arrastraba desde v63). Sin este guard, la
+  // primera sesión normal después de un test de umbral hubiera vuelto a pisarlo en silencio.
+  // 'test30_parcial' también protege — sigue siendo una medición directa (Friel), aunque con
+  // ventana más corta que el ideal de 20 min, y es mejor que la estimación automática igual.
+  const protegido = zonas.origenUmbral === 'manual' || zonas.origenUmbral === 'test30' || zonas.origenUmbral === 'test30_parcial';
+  zonas = {
+    umbralRitmoSegKm: protegido ? zonas.umbralRitmoSegKm : ritmoUmbralSegKm,
+    umbralPulso: protegido ? zonas.umbralPulso : pulsoUmbral,
+    cv: modelo.cv, dprime: modelo.dprime, autoDesde: masLargo.fecha, filtroRpeAplicado: filtroAplicado,
+    origenUmbral: protegido ? zonas.origenUmbral : 'auto',
+    testUmbralFecha: zonas.testUmbralFecha, // se conserva aunque no esté protegido, es solo referencia histórica
+  };
   lsSet(K_ZONAS, zonas);
+  sincronizarUmbralesCompartidos();
 }
 function guardarUmbralManual() {
   const ritmoSeg = parseMMSS(document.getElementById('umbralRitmoInput').value);
@@ -4650,7 +4874,9 @@ function guardarUmbralManual() {
   if (ritmoSeg) zonas.umbralRitmoSegKm = ritmoSeg;
   if (!isNaN(pulso) && pulso > 0) zonas.umbralPulso = pulso;
   zonas.manual = true;
+  zonas.origenUmbral = 'manual';
   lsSet(K_ZONAS, zonas);
+  sincronizarUmbralesCompartidos();
   document.getElementById('estadoUmbral').textContent = 'Umbral guardado manualmente.';
   document.getElementById('estadoUmbral').className = 'estado-conexion ok';
   renderZonas();
@@ -4734,10 +4960,16 @@ function calcularSerieFormaCombinada() {
 function renderZonas() {
   document.getElementById('umbralRitmoInput').value = zonas.umbralRitmoSegKm ? segAMMSS(zonas.umbralRitmoSegKm) : '';
   document.getElementById('umbralPulsoInput').value = zonas.umbralPulso || '';
-  document.getElementById('estadoUmbral').textContent = zonas.autoDesde
-    ? ('Auto-actualizado a partir de la sesión del ' + new Date(zonas.autoDesde).toLocaleDateString('es-AR') +
+  // v74: el origen (test30/manual) tiene prioridad sobre autoDesde en el texto — antes, una vez
+  // que corría el auto-cálculo una sola vez, autoDesde quedaba pisado para siempre y el texto
+  // decía "Auto-actualizado..." aunque después hubiera un umbral cargado a mano o medido.
+  document.getElementById('estadoUmbral').textContent =
+    zonas.origenUmbral === 'test30' ? ('Medido con test de umbral (30 min, Friel) el ' + new Date(zonas.testUmbralFecha).toLocaleDateString('es-AR') + '.')
+    : zonas.origenUmbral === 'test30_parcial' ? ('Medido con test de umbral (parcial — se cortó antes de los 30 min) el ' + new Date(zonas.testUmbralFecha).toLocaleDateString('es-AR') + '. Repetilo completo cuando puedas para un dato más preciso.')
+    : zonas.origenUmbral === 'manual' ? 'Cargado manualmente.'
+    : zonas.autoDesde ? ('Auto-actualizado a partir de la sesión del ' + new Date(zonas.autoDesde).toLocaleDateString('es-AR') +
        (zonas.filtroRpeAplicado === false ? ' — usando TODOS los esfuerzos (no hay al menos 2 con RPE ' + RPE_MINIMO_MAXIMAL + '+), puede quedar subestimado' : ' — solo esfuerzos con RPE ' + RPE_MINIMO_MAXIMAL + '+'))
-    : (zonas.manual ? 'Cargado manualmente.' : 'Todavía sin datos suficientes — cargá un umbral manual o importá un TCX.');
+    : 'Todavía sin datos suficientes — cargá un umbral manual, hacé el test de 30 min, o importá un TCX.';
 
   const tRitmo = document.getElementById('tablaZonasRitmo');
   if (!zonas.umbralRitmoSegKm) {
@@ -4851,7 +5083,8 @@ function renderHistorial() {
       const km = (s.distanciaM / 1000).toFixed(2);
       const tag = s.esReto ? ('🏁 RETO DE ' + (s.nombreReto || 'un conocido').toUpperCase()) :
         (s.testVma ? ('🎯 TEST VMA' + (s.testVma.velocidadKmh ? (' · ' + s.testVma.velocidadKmh.toFixed(1) + ' KM/H') : ' (INVÁLIDO)')) :
-        (s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA')));
+        (s.testUmbral ? ('🎯 TEST UMBRAL' + (s.testUmbral.ritmoUmbralSegKm ? (' · ' + segAMMSS(s.testUmbral.ritmoUmbralSegKm) + '/KM' + (s.testUmbral.umbralPulso ? (' · ' + s.testUmbral.umbralPulso + ' BPM') : '') + (s.testUmbral.completo === false ? ' (PARCIAL)' : '')) : ' (INVÁLIDO)')) :
+        (s.modo === 'aire_libre' ? 'AIRE LIBRE' : (s.modo === 'import_tcx' ? 'TCX IMPORTADO' : 'CINTA'))));
       const pulsoTxt = s.pulsoPromedio ? ('♥ ' + s.pulsoPromedio + (s.pulsoMax ? '/' + s.pulsoMax : '')) : '';
       return '<div class="sesion-item" style="display:block;" onclick="abrirDetalle(\'' + s.id + '\')">' +
         '<div class="sesion-tag">' + tag + '</div>' +
