@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v74</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v76</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -423,6 +423,10 @@
         <div class="hud-item">
           <div class="val" id="hudCadencia">--</div>
           <div class="lbl">Cadencia spm</div>
+        </div>
+        <div class="hud-item" id="tileZancada" style="display:none;">
+          <div class="val" id="hudZancada">--</div>
+          <div class="lbl">Zancada m</div>
         </div>
         <div class="hud-item">
           <div class="val" id="hudDistancia">0.00</div>
@@ -2169,6 +2173,51 @@
        leyendo las constantes reales del archivo por regex (no una
        copia reescrita) para confirmar que lo que quedó pegado en
        el HTML es exactamente lo que se probó.
+   v75: pedido de Hugo — zancada estimada EN VIVO en el HUD, para
+       modo manual con banda BLE (Garmin Pro+) conectada. Fórmula:
+       zancada (m) = velocidad (m/min) ÷ cadencia (zancadas/min) —
+       ambos datos ya estaban disponibles tick a tick (velocidad de
+       la cinta manejada a mano, cadencia real de la banda desde
+       v49). Tile nuevo "tileZancada" en el HUD en vivo, oculto por
+       default y solo visible cuando hay velocidad Y cadencia real
+       simultáneas (si falta cualquiera de las dos no hay con qué
+       dividir). A propósito NO se guarda en puntosSesion.zancada ni
+       alimenta el gráfico "Longitud de zancada (mm)" del detalle de
+       sesión — ese campo ya existe pero está atado a rd.zancada, el
+       dato de un sensor ANT+ Running Dynamics dedicado (más preciso,
+       mide la zancada real en vez de inferirla de velocidad/
+       cadencia). Mezclar las dos fuentes en el mismo campo sin que
+       quede explícito de cuál salió cada dato habría sido combinar
+       dos métodos de medición distintos en un solo número — se deja
+       como posible mejora aparte si Hugo la pide.
+       Test con los números de la calibración de cinta que se armó
+       con Qwen (109,44÷seg): 8.95 km/h reales + 170 spm -> 0.877 m;
+       verificado que coincide con la cuenta a mano hecha en el chat.
+       Casos borde probados: cadencia 0, velocidad 0, y cinta parada
+       (velocidad<0.1 m/s, el mismo piso que usa el resto del código
+       para "no hay marcha") -> los tres dan null sin dividir por 0.
+   v76: pedido de Hugo — los promedios de Running Dynamics (ANT+)
+       ahora aparecen en la información de la sesión (los tiles del
+       resumen, tanto en "sesión terminada" como en el detalle del
+       historial), no solo en los gráficos de detalle que ya venían
+       desde v42. Nuevos campos en el objeto de sesión: voPromedio
+       (mm), gctPromedio (ms), zancadaPromedio (mm — del sensor RD,
+       distinto del estimado en vivo de v75 con velocidad+cadencia
+       BLE, que sigue sin guardarse en ningún lado, ver v75),
+       vRatioPromedio (%), balancePromedio (%), stancePromedio (%).
+       Cada tile solo aparece si hay dato (mismo criterio que ya
+       usaba potenciaPromedio) — una sesión sin sensor RD conectado
+       no muestra ninguno de los seis, no aparecen en "--".
+       OJO unidades: la zancada del RD queda en milímetros acá
+       (zancadaPromedio, igual que el gráfico de detalle), mientras
+       que el tile en vivo de v75 muestra metros — son dos unidades
+       distintas a propósito, cada una consistente con lo que ya
+       existía en su propio lugar.
+       Probado en aislamiento con puntos simulados: sensor conectado
+       toda la sesión, sensor nunca conectado (todos null, no 0 ni
+       NaN), y sensor que se conecta recién a mitad de sesión
+       (promedia solo los puntos con dato real, no cuenta los null
+       como ceros). 3/3 casos OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4398,6 +4447,12 @@ function tick() {
   const ritmoSegKm = velocidad > 0.1 ? (1000 / velocidad) : null;
   const pulso = actual.pulso || 0;
   const cadencia = actual.cadencia || 0;
+  // Zancada estimada en vivo (m) = velocidad (m/min) / cadencia (zancadas/min) — pedido de Hugo.
+  // Distinta del dato de Running Dynamics por ANT+ (rd.zancada, más preciso porque lo mide un
+  // sensor dedicado): esta es una estimación con lo que ya hay disponible en modo manual con la
+  // banda BLE conectada (velocidad de la cinta + cadencia real de la banda). Solo tiene sentido
+  // con cadencia real (de la banda) y velocidad andando — si cualquiera de las dos falta, no hay
+  // con qué dividir.
 
   if (modo !== 'aire_libre') {
     distanciaAcumM += velocidad * 1; // 1s de muestreo, dead-reckoning (BLE/manual)
@@ -4425,6 +4480,13 @@ function tick() {
   document.getElementById('hudKmh').textContent = velocidad > 0.1 ? (velocidad * 3.6).toFixed(1) + ' km/h' : '-- km/h';
   document.getElementById('hudPulso').textContent = pulso || '--';
   document.getElementById('hudCadencia').textContent = cadencia || '--';
+  if (velocidad > 0.1 && cadencia > 0) {
+    const zancadaM = (velocidad * 60) / cadencia; // m/min ÷ zancadas/min = m/zancada
+    document.getElementById('hudZancada').textContent = zancadaM.toFixed(2);
+    document.getElementById('tileZancada').style.display = 'block';
+  } else {
+    document.getElementById('tileZancada').style.display = 'none';
+  }
   document.getElementById('hudDistancia').textContent = (distanciaAcumM / 1000).toFixed(2);
   document.getElementById('hudTiempo').textContent = segAHMS(t);
   const progresoMeta = calcularProgresoMeta(t, distanciaAcumM);
@@ -4692,6 +4754,24 @@ function finalizarSesion(automatica) {
   const pulsoMax = pulsosValidos.length ? Math.max(...pulsosValidos) : null;
   const cadenciasValidas = puntosSesion.filter(p => p.cadencia).map(p => p.cadencia);
   const cadenciaPromedio = cadenciasValidas.length ? Math.round(promedio(cadenciasValidas)) : null;
+  // Promedios de Running Dynamics (ANT+) — pedido de Hugo: que aparezcan en la información de la
+  // sesión (tiles del resumen), no solo en los gráficos de detalle que ya existían desde v42.
+  // null en cualquier sesión sin sensor RD conectado (mismo criterio que potenciaPromedio).
+  const vosValidos = puntosSesion.filter(p => p.vo).map(p => p.vo);
+  const voPromedio = vosValidos.length ? Math.round(promedio(vosValidos)) : null;
+  const gctsValidos = puntosSesion.filter(p => p.gct).map(p => p.gct);
+  const gctPromedio = gctsValidos.length ? Math.round(promedio(gctsValidos)) : null;
+  const zancadasRdValidas = puntosSesion.filter(p => p.zancada).map(p => p.zancada);
+  // "zancadaPromedio": SIEMPRE viene del sensor RD (rd.zancada), nunca del estimado en vivo con
+  // velocidad+cadencia BLE de v75 (ese no se guarda en ningún punto, ver el motivo en v75) — así
+  // que no hay mezcla de fuentes acá, aunque el nombre del campo no lo diga explícito.
+  const zancadaPromedio = zancadasRdValidas.length ? Math.round(promedio(zancadasRdValidas)) : null;
+  const vRatiosValidos = puntosSesion.filter(p => p.vRatio).map(p => p.vRatio);
+  const vRatioPromedio = vRatiosValidos.length ? Math.round(promedio(vRatiosValidos) * 10) / 10 : null;
+  const balancesValidos = puntosSesion.filter(p => p.balance).map(p => p.balance);
+  const balancePromedio = balancesValidos.length ? Math.round(promedio(balancesValidos) * 10) / 10 : null;
+  const stancesValidos = puntosSesion.filter(p => p.stance).map(p => p.stance);
+  const stancePromedio = stancesValidos.length ? Math.round(promedio(stancesValidos) * 10) / 10 : null;
 
   const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
   const desacople = calcularDesacople(puntosSesion.filter(p => p.velocidad > 0 && p.pulso > 0));
@@ -4707,6 +4787,7 @@ function finalizarSesion(automatica) {
     pulsoPromedio,
     pulsoMax,
     cadenciaPromedio,
+    voPromedio, gctPromedio, zancadaPromedio, vRatioPromedio, balancePromedio, stancePromedio, // Running Dynamics (ANT+), v76
     potenciaPromedio: null, // no se captura en vivo, solo puede venir de un TCX importado
     vamPromedio: tiempoSubidaSeg > 0 ? Math.round(vamAcumWh / tiempoSubidaSeg) : 0,
     elevGanadaM: modo === 'aire_libre' ? Math.round(elevGanadaAcumM) : null,
@@ -4756,6 +4837,8 @@ function resetearHUD() {
   document.getElementById('hudKmh').textContent = '-- km/h';
   document.getElementById('hudPulso').textContent = '--';
   document.getElementById('hudCadencia').textContent = '--';
+  document.getElementById('hudZancada').textContent = '--';
+  document.getElementById('tileZancada').style.display = 'none';
   document.getElementById('hudDistancia').textContent = '0.00';
   document.getElementById('hudTiempo').textContent = '00:00';
   document.getElementById('hudVAM').textContent = '0';
@@ -5231,6 +5314,13 @@ function renderResumenSesion(s, contenedorId) {
   tiles.push(tileResumenHTML(s.pulsoMax || '--', 'Pulso máx bpm', 'pulso'));
   tiles.push(tileResumenHTML(s.cadenciaPromedio || '--', 'Cadencia spm'));
   if (s.potenciaPromedio) tiles.push(tileResumenHTML(s.potenciaPromedio, 'Potencia media W'));
+  // Running Dynamics (ANT+) — solo aparecen si la sesión tiene sensor RD conectado (v76)
+  if (s.voPromedio) tiles.push(tileResumenHTML(s.voPromedio, 'Oscilación vert. mm'));
+  if (s.gctPromedio) tiles.push(tileResumenHTML(s.gctPromedio, 'GCT medio ms'));
+  if (s.zancadaPromedio) tiles.push(tileResumenHTML(s.zancadaPromedio, 'Zancada media mm'));
+  if (s.vRatioPromedio) tiles.push(tileResumenHTML(s.vRatioPromedio.toFixed(1), 'Vertical ratio %'));
+  if (s.balancePromedio) tiles.push(tileResumenHTML(s.balancePromedio.toFixed(1), 'Balance apoyo %'));
+  if (s.stancePromedio) tiles.push(tileResumenHTML(s.stancePromedio.toFixed(1), '% tiempo apoyo'));
   tiles.push(tileResumenHTML(s.tss || 0, 'TSS'));
   if (s.elevGanadaM != null) tiles.push(tileResumenHTML(s.elevGanadaM, 'Desnivel+ (GPS) m'));
   else tiles.push(tileResumenHTML(s.vamPromedio || 0, 'Desnivel/hora m/h'));
