@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v76</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v77</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2218,6 +2218,26 @@
        NaN), y sensor que se conecta recién a mitad de sesión
        (promedia solo los puntos con dato real, no cuenta los null
        como ceros). 3/3 casos OK.
+   v77: Hugo reportó que Garmin Connect ("Importar datos" en la web)
+       no dejaba importar un TCX exportado de Correr — el botón
+       quedaba inactivo, sin mensaje de error. El archivo era XML
+       válido (verificado: bien formado, tags balanceados, distancia
+       siempre creciente, orden de campos del Lap correcto) así que
+       no estaba roto. Comparando ese TCX real contra uno de Bici
+       Indoor que sí importó bien, apareció una diferencia concreta:
+       al Trackpoint de Correr le faltaba el campo <Cadence> ESTÁNDAR
+       del schema (Time, [Position], [AltitudeMeters], DistanceMeters,
+       HeartRateBpm, Cadence, [SensorState], Extensions — ese es el
+       orden exacto). Correr solo escribía la cadencia adentro de
+       Extensions/TPX/RunCadence (la extensión de Garmin), nunca en
+       este campo nativo — el de Bici sí lo tenía. Agregado entre
+       HeartRateBpm y Extensions, con tope de 254 (tipo del schema es
+       xsd:byte sin signo). No se tocaron los campos del Lap
+       (AverageHeartRateBpm/MaximumHeartRateBpm/Cadence) aunque el de
+       Bici no los tenía — son opcionales y agregan info real, sacarlos
+       sin evidencia de que sea la causa hubiera sido tirar dato sin
+       necesidad. Pendiente: confirmar con Hugo si esto solo alcanza
+       para que el botón se active, o si hace falta seguir buscando.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -5404,6 +5424,16 @@ function generarTCX(sesion) {
     const tiempoAbs = new Date(t0.getTime() + p.t * 1000).toISOString();
     let xml = '<Trackpoint><Time>' + tiempoAbs + '</Time><DistanceMeters>' + p.distAcum.toFixed(2) + '</DistanceMeters>';
     if (p.pulso) xml += '<HeartRateBpm><Value>' + Math.round(p.pulso) + '</Value></HeartRateBpm>';
+    // v77: falta el campo <Cadence> ESTÁNDAR del Trackpoint (Time, [Position], [AltitudeMeters],
+    // DistanceMeters, HeartRateBpm, Cadence, [SensorState], Extensions — ese es el orden exacto
+    // del schema, Cadence va ANTES de Extensions). Hasta ahora la cadencia solo iba adentro de
+    // Extensions/TPX/RunCadence (la extensión de Garmin), nunca en este campo nativo. Encontrado
+    // comparando un TCX real que Correr generó (rechazado por el importador web de Garmin Connect,
+    // el botón "Importar datos" no se activaba) contra uno de Bici Indoor que sí importó bien: el
+    // de Bici sí trae este <Cadence> en cada punto, el de Correr no. Tope de 254 porque el tipo
+    // del schema es xsd:byte sin signo (0-254 con datos válidos; 255 se usa como "sin dato" en
+    // algunas convenciones ANT+, así que se evita también de este lado).
+    if (p.cadencia) xml += '<Cadence>' + Math.min(254, Math.round(p.cadencia)) + '</Cadence>';
     if (p.potencia || p.cadencia) {
       xml += '<Extensions><TPX xmlns="http://www.garmin.com/xmlschemas/ActivityExtension/v2">';
       if (p.potencia) xml += '<Watts>' + Math.round(p.potencia) + '</Watts>';
