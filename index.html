@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v80</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v82</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -437,6 +437,10 @@
           <div class="val" id="hudZancada">--</div>
           <div class="lbl">Zancada m</div>
         </div>
+        <div class="hud-item" id="tilePotenciaEst" style="display:none;">
+          <div class="val" id="hudPotenciaEst">--</div>
+          <div class="lbl">Potencia est. W</div>
+        </div>
         <div class="hud-item">
           <div class="val" id="hudDistancia">0.00</div>
           <div class="lbl">Distancia km</div>
@@ -547,6 +551,17 @@
   <!-- ===================== VISTA: ZONAS ===================== -->
   <section class="view" id="view-zonas">
     <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
+    <div class="card">
+      <h2>Perfil</h2>
+      <div class="fila">
+        <div>
+          <label>Peso (kg)</label>
+          <input type="number" id="pesoInput" placeholder="70" step="0.5" min="30" onchange="guardarPerfil()">
+        </div>
+      </div>
+      <div class="estado-conexion">Se usa para estimar potencia de carrera y calorías (v81) — sin peso cargado, esas dos cosas no se calculan. No hace falta para nada más de la app.</div>
+    </div>
+
     <div class="card">
       <h2>Umbral estimado</h2>
       <div class="fila">
@@ -2297,12 +2312,63 @@
        en vez de sugerir "0.00 km", que sería un título sin sentido.
        Test: plan real de Hugo -> sugiere "3.57 km"; plan solo con
        bloque libre -> cae a "Plan (fecha)". 2/2 OK.
+   v81: pedido de Hugo — calorías y potencia estimadas por peso.
+       Nueva tarjeta "Perfil" (pantalla Zonas) con un campo de peso
+       (K_PERFIL, localStorage propio). Fórmula: ecuación de Minetti
+       (Minetti et al. 2002) para el costo energético de correr según
+       la pendiente — costoMinetti(i) en J/kg/m, válida de -45% a
+       +45% (la cinta nunca llega ahí). potenciaEstW() = costo ×
+       peso × velocidad = potencia METABÓLICA estimada, distinta de
+       la "potencia mecánica" de un footpod real (Stryd) — por eso
+       vive en su propio campo (potenciaEst/caloriasEst/
+       potenciaEstPromedio), nunca se mezcla con el "potencia" real
+       de sensor BLE (mismo criterio que la zancada de v75/v76: no
+       conflate dos fuentes de datos distintas en el mismo número).
+       Se acumula en Joules tick a tick (energiaEstJ, cada segundo,
+       ver setInterval(tick,1000)) en vez de integrarse después
+       sobre puntosSesion — así no se pierde precisión por la
+       compactación a 5s que sufren los puntos guardados. Al
+       finalizar, caloriasEst = energiaEstJ/4184 (J a kcal). Tile
+       nuevo en vivo "Potencia est. W" (mismo patrón que zancada:
+       oculto si no hay peso cargado). Tiles nuevos en el resumen
+       post-sesión: "Calorías est." y "Potencia est. media W".
+       Conectado también al <Calories> del TCX (v42 lo dejaba
+       hardcodeado en 0 porque nunca hubo con qué calcularlo).
+       Validado numéricamente antes de tocar el HTML: 70kg a 12km/h
+       en llano da ~840W / ~60 kcal/km (coincide con el estimador
+       de referencia de ~1 kcal/kg/km); +5% de pendiente aumenta el
+       costo como corresponde; sin peso o sin velocidad da 0 sin
+       NaN; acumular Joule a Joule cada segundo durante una sesión
+       simulada de 30' da EXACTO lo mismo que integrar la fórmula
+       de una sola vez (241 kcal en los dos casos) — confirma que
+       el acumulador tick a tick no divergía del cálculo directo.
+       Repetido después contra las funciones ya pegadas en el
+       archivo, mismos resultados.
+   v82: pedido de Hugo — sincronizar el peso con la clave compartida
+       entrenamiento_perfil, mismo patrón exacto que entrenamiento_
+       umbrales (v73): fallback al arrancar si Correr no tiene peso
+       propio (sin pisar un valor local existente, sin persistir el
+       fallback a K_PERFIL), y sincronización hacia la clave
+       compartida cada vez que se guarda el peso desde la tarjeta
+       "Perfil" — lee el objeto completo y toca solo pesoKg/
+       actualizado, por si Plan de Ciclos guarda ahí otros campos de
+       perfil más adelante (edad, por ejemplo). Guardar con el campo
+       vacío (borrar el peso local) no pisa el valor compartido con
+       null, mismo criterio que ya usa el umbral. Del otro lado
+       (que Plan de Ciclos lea/escriba esta clave) queda pendiente
+       en el chat de esa app — no se tocó nada ahí.
+       Probado en aislamiento con localStorage simulado: fallback
+       toma el peso compartido cuando no hay uno propio, no pisa un
+       valor local que ya existe, y guardar sincroniza sin pisar
+       otros campos hipotéticos que ya tuviera la clave compartida
+       (ej. una edad cargada por otra app). 3/3 OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
 const LS_PREFIX = 'correr_';
 const K_SESIONES = LS_PREFIX + 'sesiones';
 const K_ZONAS = LS_PREFIX + 'zonas';
+const K_PERFIL = LS_PREFIX + 'perfil'; // { pesoKg } — v81, para estimar potencia y calorías
 const K_MEJORES = LS_PREFIX + 'mejores_esfuerzos';
 const K_CALIBRACION = LS_PREFIX + 'calibracion_muestras'; // pares {velocidadRealKmh, velocidadBLE, cadenciaBLE} del modo Calibración, ver v48
 const K_VMA_TEST = LS_PREFIX + 'vma_test'; // resultado MEDIDO del test incremental (v60) — distinto de estimarVMA(), que infiere del mejor esfuerzo
@@ -2315,10 +2381,31 @@ const K_FORMA_COMPARTIDA = 'entrenamiento_forma_registro';
 // también para bici/kayak/natación). Correr lee de acá como FALLBACK si todavía no tiene umbral
 // propio, y escribe acá cuando calcula o carga el suyo — pedido de Hugo (v73).
 const K_UMBRALES_COMPARTIDOS = 'entrenamiento_umbrales';
+// Clave compartida entre apps para el perfil personal (peso). Mismo criterio que
+// K_UMBRALES_COMPARTIDOS: Correr lee de acá como fallback si no tiene peso propio, y escribe
+// acá cada vez que se guarda el peso local — pedido de Hugo (v82).
+const K_PERFIL_COMPARTIDO = 'entrenamiento_perfil';
 
 /* ---------------- CONSTANTES DE CÁLCULO ---------------- */
 const DURACIONES_REF = [180, 300, 480, 720, 1200, 1800, 3600]; // 3,5,8,12,20,30,60 min
 const VENTANA_MEJORES_DIAS = 90;
+
+// Estimación de potencia/calorías (v81) — costo energético de correr según la pendiente, ecuación
+// de Minetti (Minetti et al. 2002, J Appl Physiol), estándar en fisiología del ejercicio para esto
+// mismo. Devuelve J por kg de peso por metro recorrido. Válida para pendientes entre -45% y +45%
+// (i en fracción, no en %) — la cinta de Hugo nunca llega a esos extremos, no hace falta clampear.
+function costoMinetti(i) {
+  return 155.4 * i ** 5 - 30.4 * i ** 4 - 43.3 * i ** 3 + 46.3 * i ** 2 + 19.5 * i + 3.6;
+}
+// Potencia metabólica estimada (W) = costo(J/kg/m) × peso(kg) × velocidad(m/s). Es potencia
+// METABÓLICA (gasto energético), no "potencia mecánica" al estilo de un footpod Stryd — sirve para
+// comparar sesión a sesión y para las calorías, pero no es el mismo tipo de dato que reportaría un
+// sensor de potencia real. pendientePct en % (como ya lo maneja el resto de la app), se pasa a
+// fracción acá adentro.
+function potenciaEstW(pesoKg, velocidadMs, pendientePct) {
+  if (!pesoKg || velocidadMs <= 0) return 0;
+  return costoMinetti((pendientePct || 0) / 100) * pesoKg * velocidadMs;
+}
 
 const PACE_ZONAS = [
   { z: 1, label: 'Recuperación', min: 1.29, max: Infinity },
@@ -2588,6 +2675,27 @@ let vt = 0, replaySpeed = 2, replayPlaying = false, replayRAF = null, replayLast
 let repRoadCtx = null;
 
 let zonas = lsGet(K_ZONAS, { umbralRitmoSegKm: null, umbralPulso: null });
+let perfil = lsGet(K_PERFIL, { pesoKg: null }); // v81
+// Fallback a entrenamiento_perfil (Plan de Ciclos) si Correr todavía no tiene peso propio —
+// mismo criterio que el fallback de umbrales (v73): no persiste a K_PERFIL, solo en memoria para
+// esta carga, así toma siempre el valor compartido más nuevo hasta que Correr guarde el suyo.
+(function aplicarFallbackPerfilCompartido() {
+  if (perfil.pesoKg) return;
+  const compartido = lsGet(K_PERFIL_COMPARTIDO, null);
+  if (compartido && compartido.pesoKg) perfil.pesoKg = compartido.pesoKg;
+})();
+function guardarPerfil() {
+  const peso = parseFloat(document.getElementById('pesoInput').value);
+  perfil.pesoKg = (peso > 0) ? peso : null;
+  lsSet(K_PERFIL, perfil);
+  // Sincroniza con la clave compartida (v82) — lee el objeto completo y toca solo pesoKg/fecha,
+  // por si Plan de Ciclos guarda otros campos de perfil ahí más adelante (edad, por ejemplo).
+  const compartido = lsGet(K_PERFIL_COMPARTIDO, {});
+  if (perfil.pesoKg) compartido.pesoKg = perfil.pesoKg;
+  compartido.actualizado = new Date().toISOString().slice(0, 10);
+  lsSet(K_PERFIL_COMPARTIDO, compartido);
+  toast(perfil.pesoKg ? 'Peso guardado: ' + perfil.pesoKg + ' kg' : 'Peso borrado');
+}
 // Fallback a entrenamiento_umbrales (Plan de Ciclos) si Correr todavía no tiene umbral propio —
 // pedido de Hugo (v73). No persiste a K_ZONAS: queda solo en memoria para esta carga, así que si
 // Plan de Ciclos actualiza el valor compartido antes de que Correr calcule o cargue el suyo, la
@@ -3071,6 +3179,7 @@ function mostrarBotonesVelocidadHud(visible) {
    ============================================================ */
 let testVmaActivo = false, testVmaCfg = null, testVmaEscalonPrevio = -1, testVmaAvisado = false;
 let testUmbralActivo = false; // test de umbral (30 min, Friel) — sin cfg propia, no impone velocidad
+let energiaEstJ = 0; // acumulador de energía metabólica estimada (Joules) de la sesión en curso — v81
 // Escalón 0 = primer escalón, a velInicial. En el escalón k se corre a velInicial + k*incremento.
 function estadoEscalonVma(tSeg, cfg) {
   const idx = Math.floor(tSeg / cfg.duracionEscalonSeg);
@@ -4559,6 +4668,7 @@ function iniciarSesion() {
   document.getElementById('tileTestVma').style.display = 'none';
   testUmbralActivo = false;
   document.getElementById('tileTestUmbral').style.display = 'none';
+  energiaEstJ = 0;
   planActivo = null; progresoPlan = null; planUltimoObjetivo = null; planSinBandaAvisado = false; avisoPlanHasta = 0;
   document.getElementById('tilePlan').style.display = 'none';
   document.getElementById('avisoGrande').style.display = 'none';
@@ -4660,6 +4770,17 @@ function tick() {
   }
   document.getElementById('hudDistancia').textContent = (distanciaAcumM / 1000).toFixed(2);
   document.getElementById('hudTiempo').textContent = segAHMS(t);
+  // Potencia metabólica estimada en vivo (v81) — solo si hay peso cargado. Se acumula en Joules
+  // cada segundo (tick corre cada 1000ms, ver setInterval(tick,1000)) para las calorías al final;
+  // no depende de puntosSesion ni de su compactación a 5s, así no se pierde precisión ahí.
+  if (perfil.pesoKg && velocidad > 0.1) {
+    const potW = potenciaEstW(perfil.pesoKg, velocidad, pendienteActual);
+    energiaEstJ += potW;
+    document.getElementById('hudPotenciaEst').textContent = Math.round(potW);
+    document.getElementById('tilePotenciaEst').style.display = 'block';
+  } else {
+    document.getElementById('tilePotenciaEst').style.display = 'none';
+  }
   const progresoMeta = calcularProgresoMeta(t, distanciaAcumM);
   if (progresoMeta) {
     document.getElementById('tileMeta').style.display = 'block';
@@ -4943,6 +5064,11 @@ function finalizarSesion(automatica) {
   const balancePromedio = balancesValidos.length ? Math.round(promedio(balancesValidos) * 10) / 10 : null;
   const stancesValidos = puntosSesion.filter(p => p.stance).map(p => p.stance);
   const stancePromedio = stancesValidos.length ? Math.round(promedio(stancesValidos) * 10) / 10 : null;
+  // Calorías y potencia media estimadas (v81) — energiaEstJ se acumuló en tick(), segundo a
+  // segundo, mientras hubo peso cargado y velocidad>0.1. null si no hay peso (no "0 kcal", que
+  // sería engañoso — es "no se sabe", no "no gastó nada").
+  const caloriasEst = perfil.pesoKg ? Math.round(energiaEstJ / 4184) : null;
+  const potenciaEstPromedio = (perfil.pesoKg && duracionSeg > 0) ? Math.round(energiaEstJ / duracionSeg) : null;
 
   const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
   const desacople = calcularDesacople(puntosSesion.filter(p => p.velocidad > 0 && p.pulso > 0));
@@ -4959,6 +5085,7 @@ function finalizarSesion(automatica) {
     pulsoMax,
     cadenciaPromedio,
     voPromedio, gctPromedio, zancadaPromedio, vRatioPromedio, balancePromedio, stancePromedio, // Running Dynamics (ANT+), v76
+    caloriasEst, potenciaEstPromedio, // estimadas por peso+velocidad+pendiente, v81 — null sin peso cargado
     potenciaPromedio: null, // no se captura en vivo, solo puede venir de un TCX importado
     vamPromedio: tiempoSubidaSeg > 0 ? Math.round(vamAcumWh / tiempoSubidaSeg) : 0,
     elevGanadaM: modo === 'aire_libre' ? Math.round(elevGanadaAcumM) : null,
@@ -5010,6 +5137,8 @@ function resetearHUD() {
   document.getElementById('hudCadencia').textContent = '--';
   document.getElementById('hudZancada').textContent = '--';
   document.getElementById('tileZancada').style.display = 'none';
+  document.getElementById('hudPotenciaEst').textContent = '--';
+  document.getElementById('tilePotenciaEst').style.display = 'none';
   document.getElementById('hudDistancia').textContent = '0.00';
   document.getElementById('hudTiempo').textContent = '00:00';
   document.getElementById('hudVAM').textContent = '0';
@@ -5212,6 +5341,7 @@ function calcularSerieFormaCombinada() {
    RENDER: ZONAS
    ============================================================ */
 function renderZonas() {
+  document.getElementById('pesoInput').value = perfil.pesoKg || '';
   document.getElementById('umbralRitmoInput').value = zonas.umbralRitmoSegKm ? segAMMSS(zonas.umbralRitmoSegKm) : '';
   document.getElementById('umbralPulsoInput').value = zonas.umbralPulso || '';
   // v74: el origen (test30/manual) tiene prioridad sobre autoDesde en el texto — antes, una vez
@@ -5492,6 +5622,9 @@ function renderResumenSesion(s, contenedorId) {
   if (s.vRatioPromedio) tiles.push(tileResumenHTML(s.vRatioPromedio.toFixed(1), 'Vertical ratio %'));
   if (s.balancePromedio) tiles.push(tileResumenHTML(s.balancePromedio.toFixed(1), 'Balance apoyo %'));
   if (s.stancePromedio) tiles.push(tileResumenHTML(s.stancePromedio.toFixed(1), '% tiempo apoyo'));
+  // Estimadas por peso (v81) — separadas de las de arriba, que son datos reales de sensor
+  if (s.caloriasEst) tiles.push(tileResumenHTML(s.caloriasEst, 'Calorías est.'));
+  if (s.potenciaEstPromedio) tiles.push(tileResumenHTML(s.potenciaEstPromedio, 'Potencia est. media W'));
   tiles.push(tileResumenHTML(s.tss || 0, 'TSS'));
   if (s.elevGanadaM != null) tiles.push(tileResumenHTML(s.elevGanadaM, 'Desnivel+ (GPS) m'));
   else tiles.push(tileResumenHTML(s.vamPromedio || 0, 'Desnivel/hora m/h'));
@@ -5599,9 +5732,11 @@ function generarTCX(sesion) {
   // [MaximumHeartRateBpm], Intensity, [Cadence], TriggerMethod, Track — Calories/Intensity/
   // TriggerMethod son obligatorios aunque no tengamos el dato real (Calories=0 es válido).
   // Sin esto, servicios como TrainingPeaks pueden rechazar el archivo o importarlo mal.
+  // v81: si hay peso cargado, sesion.caloriasEst reemplaza el 0 fijo de siempre — es un
+  // estimado (ver potenciaEstW/costoMinetti), no una medición, pero es mejor dato que "0".
   let lap = '<TotalTimeSeconds>' + sesion.duracionSeg + '</TotalTimeSeconds>' +
     '<DistanceMeters>' + sesion.distanciaM.toFixed(2) + '</DistanceMeters>' +
-    '<Calories>0</Calories>';
+    '<Calories>' + (sesion.caloriasEst || 0) + '</Calories>';
   if (sesion.pulsoPromedio) lap += '<AverageHeartRateBpm><Value>' + Math.round(sesion.pulsoPromedio) + '</Value></AverageHeartRateBpm>';
   if (sesion.pulsoMax) lap += '<MaximumHeartRateBpm><Value>' + Math.round(sesion.pulsoMax) + '</Value></MaximumHeartRateBpm>';
   lap += '<Intensity>Active</Intensity>';
