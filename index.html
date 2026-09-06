@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v82</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v83</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2362,6 +2362,39 @@
        valor local que ya existe, y guardar sincroniza sin pisar
        otros campos hipotéticos que ya tuviera la clave compartida
        (ej. una edad cargada por otra app). 3/3 OK.
+   v83: pedido de Hugo/Plan de Ciclos — timestamp real de arranque
+       de la sesión (inicioISO), no solo la fecha de cuando se toca
+       "Finalizar". Hoy `fecha` se escribe recién al guardar, y si
+       Hugo se queda revisando gráficas/cargando RPE y ánimo antes de
+       tocar Finalizar, queda corrida respecto al arranque real —
+       encontró un caso de casi 4 horas de diferencia. Plan de Ciclos
+       la necesita para reconstruir en qué horario entrenó de verdad.
+       HALLAZGO al implementar: Hugo propuso usar directo la variable
+       que ya alimenta el cronómetro en vivo (cronometro.inicio), y
+       ESA no sirve para esto — pausarSesion() la reasigna cada vez
+       que se reanuda de una pausa (cronometro.inicio = Date.now()),
+       así que en cualquier sesión con al menos una pausa de por
+       medio hubiera dado el inicio del ÚLTIMO tramo activo, no el de
+       la sesión completa — el mismo tipo de corrimiento que se
+       estaba tratando de arreglar, solo que por otra causa. Se
+       agregó una variable nueva, inicioSesionMs, que se fija UNA
+       SOLA VEZ en iniciarSesion() y que pausarSesion() nunca toca.
+       inicioISO = new Date(inicioSesionMs).toISOString() se agrega
+       al objeto de sesión sin tocar fecha ni nada más. También se
+       agregó al guardado de una sesión importada por TCX (ahí t0 ya
+       es el inicio real exacto que trae el archivo, sin drift que
+       corregir, pero se suma igual para que el campo exista siempre
+       de acá en adelante). Sesiones viejas quedan sin inicioISO,
+       como esperaba Hugo (Plan de Ciclos ya tiene un cálculo
+       aproximado de respaldo para esas).
+       Probado en aislamiento: sesión con una pausa de 3 min a los 5
+       min de arrancada, reanudada, corrida 20 min más, y con 15 min
+       extra simulados de demora en llegar a Finalizar — inicioISO
+       coincide exacto con el arranque real en los tres puntos de
+       control (arranque, después de pausar, después de reanudar),
+       sin verse afectado por la demora posterior. Confirmado que
+       cronometro.inicio SÍ se pisa al reanudar (control del bug que
+       se estaba evitando) mientras inicioSesionMs no se mueve.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2628,6 +2661,13 @@ let metaTipo = 'libre', metaValor = null, metaAlcanzada = false; // meta de la s
 let sesionActiva = false;
 let sesionPausada = false;
 let cronometro = { inicio: 0, acumulado: 0 };
+// Timestamp real de arranque de la sesión (ms, Date.now()) — pedido de Hugo/Plan de Ciclos (v83).
+// A diferencia de cronometro.inicio, este NUNCA se pisa: cronometro.inicio se resetea cada vez que
+// se reanuda de una pausa (ver pausarSesion), así que por sí solo no sirve para saber cuándo
+// arrancó la sesión de verdad si hubo alguna pausa de por medio — daría el inicio del último
+// tramo activo, no el de la sesión completa. inicioSesionMs se fija una sola vez en iniciarSesion()
+// y no lo toca nada más.
+let inicioSesionMs = 0;
 let intervaloMuestreo = null;
 let distanciaAcumM = 0;
 let vamAcumWh = 0; // suma de (vam*dt) para promedio ponderado por tiempo en subida
@@ -4634,6 +4674,7 @@ function iniciarSesion() {
   sesionPausada = false;
   cronometro.inicio = Date.now();
   cronometro.acumulado = 0;
+  inicioSesionMs = cronometro.inicio; // fijo una sola vez acá — pausarSesion() no lo toca (v83)
   distanciaAcumM = 0;
   vamAcumWh = 0;
   tiempoSubidaSeg = 0;
@@ -5077,6 +5118,7 @@ function finalizarSesion(automatica) {
   const sesion = {
     id: 'run_' + Date.now(),
     fecha: new Date().toISOString(),
+    inicioISO: new Date(inicioSesionMs).toISOString(), // timestamp real de arranque, v83 — ver nota junto a inicioSesionMs
     modo,
     duracionSeg: Math.round(duracionSeg),
     distanciaM: Math.round(distanciaAcumM),
@@ -6181,6 +6223,7 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     const sesion = {
       id: 'tcx_' + Date.now(),
       fecha: new Date(t0).toISOString(),
+      inicioISO: new Date(t0).toISOString(), // v83 — en un TCX importado, t0 YA es el inicio real exacto
       modo: 'import_tcx',
       duracionSeg: Math.round(duracionSeg),
       distanciaM: Math.round(distanciaM),
