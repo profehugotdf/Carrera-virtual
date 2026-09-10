@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v84</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v86</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2415,6 +2415,62 @@
        pero permiso rechazado cae al catch y loguea el motivo sin
        romper; con éxito el sentinel queda guardado para poder
        soltarlo después. 3/3 OK.
+   v85: pedido de Hugo/app de Nutrición — sumar pasos totales de la
+       sesión a lo que se escribe en entrenamiento_forma_registro
+       (actualizarFormaCompartida), para que Nutrición no cuente dos
+       veces las calorías de esos pasos (una por la sesión de correr,
+       otra al calcular el gasto por el total de pasos del día).
+       Chequeado ANTES de implementar, como pidió Hugo: no hay ningún
+       contador real de pasos acumulados disponible desde la banda
+       BLE que usa — el estándar RSC que habla esa banda solo manda
+       cadencia INSTANTÁNEA (pasos/min), nunca un conteo acumulado.
+       El único contador real que existe en todo el código
+       (rdStepAcc, con manejo de rollover de 7 bits — ver
+       StepCountAccumulator) es exclusivo de Running Dynamics por
+       ANT+, que sigue sin conectarse a hardware real. Se aproxima
+       con cadenciaPromedio × duración, y se agrega pasosAprox=true
+       junto al campo pasos para que quien lo lea sepa que no es un
+       conteo exacto — pedido explícito de Hugo, no se dejó solo
+       como comentario en el código porque un dato real (no un
+       comentario) es lo único que la app de Nutrición puede
+       consumir para decidir cómo tratarlo. Sin cadenciaPromedio
+       (sesión sin banda conectada), pasos queda null, no 0.
+       No se tocó nada de lo que ya se escribía (fecha/deporte/tss/
+       id) — probado que sigue intacto.
+       Probado en aislamiento y después contra la función real ya
+       integrada (con stubs de lsGet/lsSet): sesión con cadencia da
+       pasos aproximados y pasosAprox=true; sesión sin cadencia da
+       null; los campos preexistentes (tss/id/fecha) no se tocaron
+       en ninguno de los dos casos. 2/2 OK en los dos niveles.
+   v86: Hugo notó que en modo manual ya hay velocidad y cadencia
+       reales tick a tick, así que la aproximación de v85 (cadencia-
+       Promedio × duración total) se puede afinar acumulando pasos
+       EN VIVO en vez de aplicar un promedio a toda la sesión de
+       punta a punta. El problema concreto que esto corrige: si la
+       banda tarda en conectarse o hay un corte de señal, el promedio
+       plano le aplica igual la cadencia "promedio" a los segundos
+       sin dato real, sumando de más. Nuevo acumulador
+       pasosAcumulados (mismo patrón que energiaEstJ de v81): en
+       tick(), cada segundo con cadencia>0 suma cadencia/60 pasos;
+       independiente del peso, solo necesita la banda conectada. Se
+       guarda como sesion.pasosVivo (null si nunca hubo cadencia en
+       toda la sesión). actualizarFormaCompartida() ahora prefiere
+       pasosVivo sobre el cálculo de v85, que queda como respaldo
+       para sesiones sin acumulador en vivo (hoy, la importada por
+       TCX, que no pasa por tick()). Sigue siendo pasosAprox=true en
+       los dos casos — ninguno es un conteo de eventos real como el
+       de un sensor dedicado, esto solo mejora qué tan fino es el
+       estimado.
+       Test con el caso concreto que motivó el cambio: sesión de 20
+       min donde la banda conecta recién a los 5 min — el método
+       viejo (promedio × duración total) da 3300 pasos, sobrestimando
+       un 33% porque le aplica cadencia a los 5 min sin dato; el
+       nuevo da 2475, que es lo correcto (solo cuenta los 15 min
+       reales). Control: con la banda conectada toda la sesión, los
+       dos métodos coinciden (3300 en ambos). Repetido después contra
+       actualizarFormaCompartida() ya integrada: con pasosVivo usa
+       ese valor (no el promedio); sin pasosVivo (ej. TCX importado)
+       cae al respaldo de v85; sin ningún dato da null. 3/3 OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3263,6 +3319,12 @@ function mostrarBotonesVelocidadHud(visible) {
 let testVmaActivo = false, testVmaCfg = null, testVmaEscalonPrevio = -1, testVmaAvisado = false;
 let testUmbralActivo = false; // test de umbral (30 min, Friel) — sin cfg propia, no impone velocidad
 let energiaEstJ = 0; // acumulador de energía metabólica estimada (Joules) de la sesión en curso — v81
+// Acumulador de pasos EN VIVO (v86) — pedido de Hugo: en vez de aproximar pasos como
+// cadenciaPromedio × duración total al final (v85, que sobrestima si la banda tarda en conectarse
+// o hay cortes — le aplica el promedio incluso a los segundos sin dato real), se suma tick a tick
+// (cadencia/60 pasos por segundo) solo cuando hay cadencia real ese segundo. Mismo patrón que
+// energiaEstJ de arriba.
+let pasosAcumulados = 0;
 // Escalón 0 = primer escalón, a velInicial. En el escalón k se corre a velInicial + k*incremento.
 function estadoEscalonVma(tSeg, cfg) {
   const idx = Math.floor(tSeg / cfg.duracionEscalonSeg);
@@ -4754,6 +4816,7 @@ function iniciarSesion() {
   testUmbralActivo = false;
   document.getElementById('tileTestUmbral').style.display = 'none';
   energiaEstJ = 0;
+  pasosAcumulados = 0;
   planActivo = null; progresoPlan = null; planUltimoObjetivo = null; planSinBandaAvisado = false; avisoPlanHasta = 0;
   document.getElementById('tilePlan').style.display = 'none';
   document.getElementById('avisoGrande').style.display = 'none';
@@ -4853,6 +4916,9 @@ function tick() {
   } else {
     document.getElementById('tileZancada').style.display = 'none';
   }
+  // Pasos acumulados en vivo (v86) — independiente del peso, solo necesita cadencia real de la
+  // banda ese segundo. cadencia/60 = pasos en ese segundo (tick corre cada 1000ms).
+  if (cadencia > 0) pasosAcumulados += cadencia / 60;
   document.getElementById('hudDistancia').textContent = (distanciaAcumM / 1000).toFixed(2);
   document.getElementById('hudTiempo').textContent = segAHMS(t);
   // Potencia metabólica estimada en vivo (v81) — solo si hay peso cargado. Se acumula en Joules
@@ -5154,6 +5220,9 @@ function finalizarSesion(automatica) {
   // sería engañoso — es "no se sabe", no "no gastó nada").
   const caloriasEst = perfil.pesoKg ? Math.round(energiaEstJ / 4184) : null;
   const potenciaEstPromedio = (perfil.pesoKg && duracionSeg > 0) ? Math.round(energiaEstJ / duracionSeg) : null;
+  // Pasos acumulados en vivo (v86) — se guarda siempre que haya al menos un tick con cadencia real
+  // (independiente del peso). null si nunca hubo cadencia en toda la sesión, no un 0 engañoso.
+  const pasosVivo = pasosAcumulados > 0 ? Math.round(pasosAcumulados) : null;
 
   const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
   const desacople = calcularDesacople(puntosSesion.filter(p => p.velocidad > 0 && p.pulso > 0));
@@ -5172,6 +5241,7 @@ function finalizarSesion(automatica) {
     cadenciaPromedio,
     voPromedio, gctPromedio, zancadaPromedio, vRatioPromedio, balancePromedio, stancePromedio, // Running Dynamics (ANT+), v76
     caloriasEst, potenciaEstPromedio, // estimadas por peso+velocidad+pendiente, v81 — null sin peso cargado
+    pasosVivo, // acumulado en vivo tick a tick, v86 — null si nunca hubo cadencia real en la sesión
     potenciaPromedio: null, // no se captura en vivo, solo puede venir de un TCX importado
     vamPromedio: tiempoSubidaSeg > 0 ? Math.round(vamAcumWh / tiempoSubidaSeg) : 0,
     elevGanadaM: modo === 'aire_libre' ? Math.round(elevGanadaAcumM) : null,
@@ -5357,7 +5427,25 @@ function guardarUmbralManual() {
    ============================================================ */
 function actualizarFormaCompartida(sesion) {
   const registro = lsGet(K_FORMA_COMPARTIDA, []);
-  registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss, id: sesion.id });
+  // Pasos totales de la sesión — pedido de Hugo, para que la app de Nutrición no cuente dos veces
+  // las calorías de estos pasos (una vez acá, otra al calcular el gasto por el total de pasos del
+  // día) (v85). Chequeado antes de implementar: NO hay ningún contador real de pasos acumulados
+  // disponible desde la banda BLE que usa Hugo — el estándar RSC que habla esa banda solo manda
+  // cadencia INSTANTÁNEA, no un conteo acumulado. El único contador real que existe en el código
+  // (rdStepAcc, con manejo de rollover de 7 bits) es exclusivo de Running Dynamics por ANT+, que
+  // todavía no está conectado a hardware real — por eso no se usa acá. Si algún día se conecta el
+  // ANT+ RD, ahí sí valdría la pena usar rdStepAcc.total en vez de cualquiera de las dos de abajo.
+  // v86: Hugo notó que en modo manual ya hay cadencia real tick a tick, así que en vez de aplicar
+  // el promedio de toda la sesión a la duración total (que sobrestima si la banda tarda en
+  // conectarse o hay cortes — le aplica el promedio incluso a los segundos sin dato real), se
+  // prefiere sesion.pasosVivo, acumulado en tick() solo en los segundos con cadencia real (ver
+  // pasosAcumulados). Sigue siendo pasosAprox=true en los dos casos: ninguno de los dos es un
+  // conteo de eventos real como el de un sensor dedicado, solo cambia qué tan fino es el estimado.
+  // El respaldo (cadenciaPromedio × duración) sigue existiendo para sesiones sin acumulador en
+  // vivo — hoy, la importada por TCX, que no pasa por tick().
+  const pasos = sesion.pasosVivo != null ? sesion.pasosVivo :
+    (sesion.cadenciaPromedio ? Math.round(sesion.cadenciaPromedio * (sesion.duracionSeg / 60)) : null);
+  registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss, id: sesion.id, pasos, pasosAprox: pasos !== null });
   lsSet(K_FORMA_COMPARTIDA, registro);
 }
 // saca del registro compartido la entrada de ESTA sesión puntual (por id) — así al borrar una
