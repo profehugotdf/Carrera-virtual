@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v83</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v84</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2395,6 +2395,26 @@
        sin verse afectado por la demora posterior. Confirmado que
        cronometro.inicio SÍ se pisa al reanudar (control del bug que
        se estaba evitando) mientras inicioSesionMs no se mueve.
+   v84: pedido de Hugo — que la pantalla no se apague ni se oscurezca
+       durante la sesión. Screen Wake Lock API (navigator.wakeLock),
+       estándar del navegador — en los que no la soportan simplemente
+       no hace nada, no rompe la sesión. Se pide al arrancar
+       (iniciarSesion) y se suelta en resetearHUD(), que cubre las
+       tres salidas de finalizarSesion() (sesión muy corta, test de
+       calibración corto, y el cierre normal) sin tener que tocar las
+       tres por separado. Detalle importante del propio funcionamiento
+       de la API: el navegador libera el wake lock SOLO cuando la
+       pestaña pierde visibilidad (se apaga la pantalla sola, se
+       cambia de app) — hay que volver a pedirlo cuando vuelve a estar
+       visible, si la sesión sigue activa, o si no dejaría de tener
+       efecto después del primer apagado de pantalla, que es justo el
+       caso más común corriendo en la cinta con el teléfono al lado.
+       Se agregó un listener de visibilitychange para eso.
+       Probado en aislamiento (sin navigator real, Node no lo tiene):
+       sin soporte de la API no rompe ni loguea de más; con soporte
+       pero permiso rechazado cae al catch y loguea el motivo sin
+       romper; con éxito el sentinel queda guardado para poder
+       soltarlo después. 3/3 OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2668,6 +2688,29 @@ let cronometro = { inicio: 0, acumulado: 0 };
 // tramo activo, no el de la sesión completa. inicioSesionMs se fija una sola vez en iniciarSesion()
 // y no lo toca nada más.
 let inicioSesionMs = 0;
+// Wake Lock — pedido de Hugo, para que la pantalla no se apague/oscurezca durante la sesión (v84).
+// API estándar del navegador (navigator.wakeLock), soportada en Chrome/Brave para Android; en
+// navegadores sin soporte simplemente no hace nada (no rompe la sesión, solo no mantiene la
+// pantalla encendida). El wake lock se libera SOLO cuando la pestaña pierde visibilidad (se apaga
+// la pantalla, se cambia de app) — por eso hay que volver a pedirlo cuando la pestaña vuelve a
+// estar visible, si la sesión sigue activa (si no, quedaría sin efecto después del primer bloqueo
+// de pantalla, que es justo el caso más común mientras corrés en la cinta con el teléfono al lado).
+let wakeLockSentinel = null;
+async function pedirWakeLock() {
+  if (!('wakeLock' in navigator)) return;
+  try {
+    wakeLockSentinel = await navigator.wakeLock.request('screen');
+    wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; });
+  } catch (e) {
+    logBLE('No se pudo mantener la pantalla encendida: ' + e.message, '#d29922');
+  }
+}
+function soltarWakeLock() {
+  if (wakeLockSentinel) { wakeLockSentinel.release(); wakeLockSentinel = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && sesionActiva && !wakeLockSentinel) pedirWakeLock();
+});
 let intervaloMuestreo = null;
 let distanciaAcumM = 0;
 let vamAcumWh = 0; // suma de (vam*dt) para promedio ponderado por tiempo en subida
@@ -4675,6 +4718,7 @@ function iniciarSesion() {
   cronometro.inicio = Date.now();
   cronometro.acumulado = 0;
   inicioSesionMs = cronometro.inicio; // fijo una sola vez acá — pausarSesion() no lo toca (v83)
+  pedirWakeLock();
   distanciaAcumM = 0;
   vamAcumWh = 0;
   tiempoSubidaSeg = 0;
@@ -5158,6 +5202,7 @@ function finalizarSesion(automatica) {
   mostrarResumenPost(sesion);
 }
 function resetearHUD() {
+  soltarWakeLock();
   document.getElementById('btnIniciar').disabled = false;
   document.getElementById('btnPausar').disabled = true;
   document.getElementById('btnPausar').textContent = 'Pausar';
