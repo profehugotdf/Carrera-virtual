@@ -192,7 +192,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v86</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v87</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2471,6 +2471,26 @@
        actualizarFormaCompartida() ya integrada: con pasosVivo usa
        ese valor (no el promedio); sin pasosVivo (ej. TCX importado)
        cae al respaldo de v85; sin ningún dato da null. 3/3 OK.
+   v87: pedido de Hugo, pensando en su hermano (reloj Samsung, sin
+       banda compatible con la app) — al finalizar una sesión SIN
+       ningún dato de pulso (útil sobre todo en "Aire libre" por GPS,
+       pero funciona en cualquier modo), se ofrece cargar pulso
+       promedio y máximo a mano con dos prompt(), leídos de otro
+       reloj/app aparte. Solo se pregunta si: (a) se finalizó a mano
+       (no en el cierre automático por meta — ese sigue guardándose
+       solo, sin interrumpir con un prompt), y (b) no hubo NINGÚN
+       dato de pulso real en toda la sesión (si hay banda conectada,
+       no se pregunta nada ni se pisa el dato real). Cancelar o dejar
+       vacío el prompt no cambia nada — la sesión se guarda igual que
+       hoy, sin pulso, como si esto no existiera. pulsoPromedio/
+       pulsoMax pasaron de const a let para poder pisarlos con el
+       valor cargado antes de armar el objeto de sesión.
+       Probado en aislamiento (sin prompt() real, no existe en Node):
+       los 4 cruces de la condición (manual/automático × con/sin
+       pulso) dan el resultado esperado — solo pregunta en el caso
+       manual+sin pulso, los otros tres casos no interrumpen nada.
+       4/4 OK. Confirmado también que la condición integrada en el
+       archivo es exactamente la misma que se probó.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -5193,8 +5213,23 @@ function finalizarSesion(automatica) {
   const ritmosValidos = puntosSesion.filter(p => p.ritmo).map(p => p.ritmo);
   const ritmoPromedioSegKm = ritmosValidos.length ? promedio(ritmosValidos) : null;
   const pulsosValidos = puntosSesion.filter(p => p.pulso).map(p => p.pulso);
-  const pulsoPromedio = pulsosValidos.length ? Math.round(promedio(pulsosValidos)) : null;
-  const pulsoMax = pulsosValidos.length ? Math.max(...pulsosValidos) : null;
+  let pulsoPromedio = pulsosValidos.length ? Math.round(promedio(pulsosValidos)) : null;
+  let pulsoMax = pulsosValidos.length ? Math.max(...pulsosValidos) : null;
+  // Carga manual de pulso — pedido de Hugo para su hermano (sin banda compatible con la app): si
+  // corrió al aire libre por GPS y no hubo NINGÚN dato de pulso en toda la sesión, se ofrece
+  // cargarlo a mano antes de guardar, leído de otro reloj/app aparte (v87). Solo al finalizar a
+  // mano (no en el cierre automático por meta, que se guarda solo sin interrumpir) y solo cuando
+  // no hay banda conectada — si ya hay dato real, no se pregunta nada, no se pisa lo real.
+  if (!automatica && pulsoPromedio == null) {
+    const prom = prompt('¿Pulso promedio de la sesión? (bpm — dejalo vacío si no lo sabés)');
+    const promNum = parseInt(prom, 10);
+    if (promNum > 0) {
+      pulsoPromedio = promNum;
+      const max = prompt('¿Pulso máximo de la sesión? (bpm — opcional)');
+      const maxNum = parseInt(max, 10);
+      if (maxNum > 0) pulsoMax = maxNum;
+    }
+  }
   const cadenciasValidas = puntosSesion.filter(p => p.cadencia).map(p => p.cadencia);
   const cadenciaPromedio = cadenciasValidas.length ? Math.round(promedio(cadenciasValidas)) : null;
   // Promedios de Running Dynamics (ANT+) — pedido de Hugo: que aparezcan en la información de la
