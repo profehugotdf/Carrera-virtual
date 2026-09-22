@@ -4,6 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Correr</title>
+<!-- PWA (v88, pedido de Hugo): permite instalar la app y que abra sin conexión. La primera
+     apertura sigue necesitando internet (para que el navegador baje la página y el Service
+     Worker la guarde); de ahí en adelante abre offline. -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0A0D10">
 <style>
   :root{
     --bg:#0A0D10;
@@ -192,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v87</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v88</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2491,6 +2496,35 @@
        manual+sin pulso, los otros tres casos no interrumpen nada.
        4/4 OK. Confirmado también que la condición integrada en el
        archivo es exactamente la misma que se probó.
+   v88: pedido de Hugo — que la app abra sin conexión a internet.
+       Convertida en PWA instalable: <link rel="manifest"> +
+       registro de sw.js en la INICIALIZACIÓN (con 'load' para no
+       competir con el arranque de la app; si el navegador no
+       soporta Service Worker, o falla el registro, la app sigue
+       funcionando normal, solo sin caché offline — no rompe nada).
+       Dos archivos nuevos, aparte del HTML (un Service Worker NO
+       puede vivir inline en la página, es una restricción real del
+       navegador, no una preferencia): manifest.json (nombre, ícono,
+       color, start_url) y sw.js (la lógica de caché). Se generaron
+       también icono-192.png/icono-512.png (una figura de corredor
+       simple en el teal de --ritmo sobre el fondo oscuro de la app).
+       Estrategia del Service Worker: NETWORK FIRST, no cache-first
+       — Hugo actualiza esta app seguido, así que siempre intenta
+       traer la versión más nueva de la red primero (y de paso
+       actualiza la caché con lo que trajo); solo cae a lo guardado
+       en caché cuando falla la red (sin conexión). Así nunca se
+       queda pegado mostrando una versión vieja mientras haya
+       internet, a diferencia de un cache-first típico.
+       ASUME que el archivo está subido a GitHub como "index.html"
+       (es el único nombre que Pages sirve solo en la raíz de
+       Carrera-virtual/, que es como se abre la app hoy) — si el
+       nombre real es otro, avisar para ajustar start_url en el
+       manifest y la lista ARCHIVOS_CACHE del sw.js.
+       Probado en aislamiento (mockeando caches/fetch, que no
+       existen en Node): con red, sirve la respuesta nueva y
+       actualiza la caché; sin red pero con esa entrada ya cacheada,
+       sirve lo guardado; sin red y sin esa entrada puntual, cae al
+       fallback general de index.html. 3/3 OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6999,6 +7033,13 @@ document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
   else if (escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa')) iniciarBucleEscena();
 });
+// Registro del Service Worker (v88) — si falla o el navegador no lo soporta, la app sigue
+// funcionando normal, solo sin caché offline. 'load' para no competir con el arranque de la app.
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch((e) => logBLE('Service Worker no se pudo registrar: ' + e.message, '#d29922'));
+  });
+}
 </script>
 </body>
 </html>
