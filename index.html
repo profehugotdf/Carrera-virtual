@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v89</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v90</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2562,6 +2562,24 @@
        después que las líneas reales integradas en ajustarVelocidad
        Manual()/ajustarPendiente() son exactamente las mismas que se
        probaron, no una reescritura.
+   v90: primera prueba real con nRF Connect (BLE genérico, sin pasar
+       todavía por el código de Correr) — encontró que esa app manda
+       el valor del campo "Write" como TEXTO literal, no como byte
+       crudo, sin selector de formato visible para cambiarlo (probado
+       "0x01" y "01": las dos veces el ESP32 recibió 48, el código
+       ASCII de '0', porque las dos arrancan con ese dígito). En vez
+       de seguir peleando con el formato de esa app de prueba, el
+       protocolo cambió: el comando ahora es el CARÁCTER '1'/'2'/'3'/
+       '4' (ASCII 49-52), no el byte crudo 1-4 — cambio hecho del
+       lado del firmware (ver .ino, v3). Esta versión es la que
+       actualiza correr.html para que coincida: enviarComandoCinta()
+       ahora manda 48+comando (ej. comando=1 -> byte 49 -> carácter
+       '1') en vez del comando crudo. Sin este cambio, cuando se
+       pruebe el botón real de la app, iba a mandar 1/2/3/4 crudos y
+       el firmware iba a rechazarlos todos como "comando desconocido"
+       — se encontró el desajuste ANTES de que pasara, revisando el
+       .ino ya actualizado contra este archivo, todavía sin tocar.
+       Probado: 48+1..48+4 da los códigos ASCII de '1'..'4' exactos.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3340,12 +3358,17 @@ async function conectarCintaBLE() {
     logBLE('ERROR conectando cinta: ' + e.message, '#f85149');
   }
 }
-// Comandos: 1=Vel+, 2=Vel-, 3=Pend+, 4=Pend- — tienen que coincidir con el enum Comando del .ino.
+// Comandos: 1=Vel+, 2=Vel-, 3=Pend+, 4=Pend- (número simple acá, como siempre) — pero el firmware
+// pasó a esperar el CARÁCTER de texto '1'/'2'/'3'/'4' (v3 del .ino), no el byte crudo: al probarlo
+// con nRF Connect, esa app mandaba lo escrito como texto literal, no como byte, y no se encontró
+// forma de cambiarle el formato — así que el protocolo se adaptó a eso en los dos lados en vez de
+// seguir peleando con la app de prueba. 48 es el código ASCII de '0'; sumarle el comando (1-4) da
+// el código de '1'-'4' — mismo truco que "sumar '0'" para pasar un dígito a su carácter.
 // Sin conexión, no hace nada (silencioso a propósito: los botones +/- siempre tienen que seguir
 // funcionando para el cálculo interno de la app, estén o no conectados a un ESP32 real).
 function enviarComandoCinta(comando) {
   if (!cintaCaracteristica) return;
-  cintaCaracteristica.writeValue(new Uint8Array([comando])).catch((e) => {
+  cintaCaracteristica.writeValue(new Uint8Array([48 + comando])).catch((e) => {
     logBLE('No se pudo mandar el comando a la cinta: ' + e.message, '#f85149');
   });
 }
