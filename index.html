@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v88</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v89</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -238,6 +238,11 @@
         <button class="btn chico" id="btnConectarBandaManual" onclick="conectarRelojBLE()">Conectar banda (cadencia real + pulso, BLE)</button>
         <button class="btn chico" id="btnConectarSoloPulsoManual" onclick="conectarBandaHR()" style="margin-top:6px;">Conectar solo pulso (si el de arriba no encuentra la banda)</button>
         <div class="estado-conexion" id="estadoBandaManual">Sin conectar. La velocidad la manejás con los botones +/- de arriba; la cadencia y el pulso, si conectás la banda, se toman en vivo del sensor en vez del número de acá abajo.</div>
+
+        <div style="border-top:1px solid var(--borde); margin-top:12px; padding-top:10px;">
+          <button class="btn chico" id="btnConectarCinta" onclick="conectarCintaBLE()">Conectar cinta por Bluetooth (ESP32)</button>
+          <div class="estado-conexion" id="estadoCintaBLE">Sin conectar. Opcional — sin esto, los botones +/- de arriba solo cambian el número que usa la app para sus cálculos. Con el ESP32 conectado, cada toque también le aprieta el botón real a la cinta.</div>
+        </div>
 
         <div style="border-top:1px solid var(--borde); margin-top:12px; padding-top:10px;">
           <label style="display:flex; align-items:center; gap:8px;">
@@ -2525,6 +2530,38 @@
        actualiza la caché; sin red pero con esa entrada ya cacheada,
        sirve lo guardado; sin red y sin esa entrada puntual, cae al
        fallback general de index.html. 3/3 OK.
+   v89: lado de Correr del control de la cinta por Bluetooth (ESP32 +
+       optoacopladores) — el firmware (correr_cinta_ble.ino) se armó
+       aparte, este es el código que le habla desde la app. Servicio
+       BLE propio, un byte por comando (1=Vel+, 2=Vel-, 3=Pend+,
+       4=Pend-) — mismos UUID de los dos lados, verificado que
+       coinciden carácter por carácter contra el .ino.
+       Nuevo botón "Conectar cinta por Bluetooth (ESP32)" en el panel
+       de modo manual, mismo patrón que conectarBandaHR()/
+       conectarRelojBLE() ya existentes (conTimeout, logBLE, estados
+       ok/err). enviarComandoCinta() no hace nada si no hay conexión
+       — a propósito: los botones +/- de velocidad/pendiente tienen
+       que seguir funcionando igual que siempre para el cálculo
+       interno de la app, con o sin ESP32 conectado, así que conectar
+       la cinta es un agregado opcional, nunca un requisito.
+       ajustarVelocidadManual(delta)/ajustarPendiente(delta) ahora
+       mandan el comando según el signo de delta (positivo=+, negativo
+       =-) antes de actualizar el número interno de siempre — no se
+       tocó ninguna otra lógica de esas dos funciones.
+       PENDIENTE, no verificado con hardware real (Hugo todavía no
+       terminó de armar Pendiente con el optoacoplador, y ni Velocidad
+       se probó todavía por BLE de punta a punta): todo esto asume
+       que el firmware funciona tal cual quedó escrito. Cuando se
+       pruebe con la cinta real, revisar primero acá si el problema
+       persiste incluso probando el ESP32 solo con nRF Connect (ver
+       nota en el .ino) — así se sabe de qué lado está el error antes
+       de tocar cualquiera de los dos códigos a ciegas.
+       Probado en aislamiento: el mapeo botón->comando (delta positivo
+       de velocidad/pendiente -> comando 1/3, negativo -> 2/4) da los
+       valores que espera el enum Comando del firmware. Confirmado
+       después que las líneas reales integradas en ajustarVelocidad
+       Manual()/ajustarPendiente() son exactamente las mismas que se
+       probaron, no una reescritura.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3256,6 +3293,63 @@ async function conectarBandaHR() {
     logBLE('ERROR: ' + e.message, '#f85149');
   }
 }
+
+/* ============================================================
+   CONTROL DE LA CINTA POR BLUETOOTH (ESP32 + optoacopladores)
+   Servicio BLE propio del firmware de Correr para el ESP32 — ver
+   correr_cinta_ble.ino. Un solo byte por comando: 1=Vel+, 2=Vel-,
+   3=Pend+, 4=Pend-. Los UUID acá tienen que ser IDÉNTICOS a los del
+   firmware; si se cambian de un lado hay que cambiarlos del otro.
+   ============================================================ */
+const CINTA_SERVICIO_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+const CINTA_CARACTERISTICA_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+let cintaCaracteristica = null; // referencia GATT para escribir comandos, null = sin conectar
+
+async function conectarCintaBLE() {
+  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+  const estadoEl = document.getElementById('estadoCintaBLE');
+  try {
+    logBLE('— Conectar cinta (ESP32): abriendo selector…');
+    estadoEl.textContent = 'Buscando el ESP32...';
+    estadoEl.className = 'estado-conexion';
+    const device = await navigator.bluetooth.requestDevice({
+      filters: [{ services: [CINTA_SERVICIO_UUID] }]
+    });
+    logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
+    device.addEventListener('gattserverdisconnected', () => {
+      cintaCaracteristica = null;
+      estadoEl.textContent = 'Desconectado.';
+      estadoEl.className = 'estado-conexion';
+      logBLE('Cinta (ESP32) desconectada', '#d29922');
+    });
+    let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
+    let server;
+    try {
+      server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — revisá que el ESP32 esté prendido y anunciándose.');
+    } finally { clearInterval(iv); }
+    logBLE('GATT conectado (cinta)', '#3fb950');
+    const servicio = await server.getPrimaryService(CINTA_SERVICIO_UUID);
+    cintaCaracteristica = await servicio.getCharacteristic(CINTA_CARACTERISTICA_UUID);
+    logBLE('Servicio de la cinta + característica OK', '#3fb950');
+    estadoEl.textContent = 'Cinta conectada (' + (device.name || 'ESP32') + ') — los botones +/- ya le aprietan el botón real.';
+    estadoEl.className = 'estado-conexion ok';
+  } catch (e) {
+    cintaCaracteristica = null;
+    estadoEl.textContent = 'No se pudo conectar: ' + e.message;
+    estadoEl.className = 'estado-conexion err';
+    logBLE('ERROR conectando cinta: ' + e.message, '#f85149');
+  }
+}
+// Comandos: 1=Vel+, 2=Vel-, 3=Pend+, 4=Pend- — tienen que coincidir con el enum Comando del .ino.
+// Sin conexión, no hace nada (silencioso a propósito: los botones +/- siempre tienen que seguir
+// funcionando para el cálculo interno de la app, estén o no conectados a un ESP32 real).
+function enviarComandoCinta(comando) {
+  if (!cintaCaracteristica) return;
+  cintaCaracteristica.writeValue(new Uint8Array([comando])).catch((e) => {
+    logBLE('No se pudo mandar el comando a la cinta: ' + e.message, '#f85149');
+  });
+}
+
 function handleHR(event) {
   ultimoDatoBandaAt = Date.now();
   if (!primerDatoHrLogueado) { primerDatoHrLogueado = true; logBLE('PRIMER DATO de pulso recibido', '#3fb950'); }
@@ -3896,6 +3990,7 @@ function actualizarTestVma(tSeg) {
   document.getElementById('vmaDetalle').textContent = 'Test VMA · escalón ' + e.numeroEscalon + ' · faltan ' + e.segundosRestantes + 's';
 }
 function ajustarVelocidadManual(delta) {
+  enviarComandoCinta(delta > 0 ? 1 : 2); // Vel+/Vel- — no hace nada si no hay cinta BLE conectada
   velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
   actual.velocidad = velocidadManualKmh / 3.6; // km/h -> m/s, mismo dato que usa tick() para ritmo/distancia
   // Reflejarlo también en el tile grande del ritmo: si la sesión todavía no arrancó, tick() no
@@ -3917,6 +4012,7 @@ function actualizarManual() {
    PENDIENTE
    ============================================================ */
 function ajustarPendiente(delta) {
+  enviarComandoCinta(delta > 0 ? 3 : 4); // Pend+/Pend- — no hace nada si no hay cinta BLE conectada
   pendienteActual = Math.round((pendienteActual + delta) * 10) / 10;
   if (pendienteActual < 0) pendienteActual = 0;
   if (pendienteActual > 25) pendienteActual = 25;
