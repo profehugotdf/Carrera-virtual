@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v90</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v91</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2580,6 +2580,38 @@
        — se encontró el desajuste ANTES de que pasara, revisando el
        .ino ya actualizado contra este archivo, todavía sin tocar.
        Probado: 48+1..48+4 da los códigos ASCII de '1'..'4' exactos.
+   v91: Hugo probó con la cinta real (LEDs indicadores del optoaco-
+       plador, uno por canal) y encontró que sosteniendo apretado el
+       botón +/- de la app, no todos los pulsos prendían el LED —
+       pero sí andaba bien con toques sueltos y lentos. Causa real:
+       iniciarAjusteContinuo() (la auto-repetición de mantener apre-
+       tado) llega a llamar a ajustarVelocidadManual/ajustarPendiente
+       cada 90ms después de 10 pasos — mucho más rápido que el
+       cooldown de 300ms que tiene el firmware del ESP32 (agregado en
+       la sesión anterior para frenar un bombardeo de escrituras BLE
+       de nRF Connect, no relacionado con esto). La mayoría de esos
+       comandos rápidos quedaban descartados del lado del ESP32, en
+       silencio, sin ningún error visible.
+       Arreglado del lado de la app, no del firmware (el cooldown del
+       firmware sigue haciendo falta para lo de nRF Connect): agregado
+       un throttle propio en enviarComandoCinta(), 350ms — como mucho
+       un comando real hacia la cinta en ese lapso, aunque el número
+       en pantalla de la app siga subiendo rápido mientras se sostiene
+       el botón (el throttle no toca ajustarVelocidadManual ni
+       ajustarPendiente, solo el envío BLE). 350 se eligió apenas por
+       encima del cooldown del firmware (300), para no perder el
+       primer comando real por una diferencia de milisegundos entre
+       los dos relojes.
+       Probado en aislamiento: 20 llamadas simuladas cada 90ms (el
+       peor caso, auto-repetición sostenida) dejan pasar solo 4
+       comandos reales, a ~360ms de distancia entre sí — y un toque
+       suelto y aislado (sin ráfaga alrededor) siempre se manda,
+       nunca se pierde por el throttle. Confirmado que la condición
+       real integrada en el archivo es la misma que se probó.
+       PENDIENTE: Hugo todavía no confirmó con la cinta real si esto
+       resuelve el síntoma del todo — el firmware volvió a 150ms de
+       pulso (estaba en 800ms para una prueba de percepción anterior,
+       ver .ino v5) para retomar la prueba en condiciones normales.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3366,8 +3398,20 @@ async function conectarCintaBLE() {
 // el código de '1'-'4' — mismo truco que "sumar '0'" para pasar un dígito a su carácter.
 // Sin conexión, no hace nada (silencioso a propósito: los botones +/- siempre tienen que seguir
 // funcionando para el cálculo interno de la app, estén o no conectados a un ESP32 real).
+// Throttle propio, del lado de la app — Hugo encontró que sosteniendo el botón +/- apretado, la
+// auto-repetición de iniciarAjusteContinuo() llega a mandar un comando cada 90ms, mucho más rápido
+// que el cooldown de 300ms que tiene el firmware del ESP32 (agregado para frenar el bombardeo de
+// nRF Connect) — así que la mayoría de esos comandos quedaban descartados en silencio del otro
+// lado, y el LED del optoacoplador no prendía en cada uno. En vez de bajar el cooldown del firmware
+// (sigue haciendo falta para aquello), se frena acá: como mucho un comando real cada 350ms hacia la
+// cinta, aunque el número en pantalla de la app siga subiendo rápido mientras se sostiene el botón.
+let ultimoComandoCintaEnviadoEn = 0;
+const COOLDOWN_COMANDO_CINTA_MS = 350;
 function enviarComandoCinta(comando) {
   if (!cintaCaracteristica) return;
+  const ahora = Date.now();
+  if (ahora - ultimoComandoCintaEnviadoEn < COOLDOWN_COMANDO_CINTA_MS) return;
+  ultimoComandoCintaEnviadoEn = ahora;
   cintaCaracteristica.writeValue(new Uint8Array([48 + comando])).catch((e) => {
     logBLE('No se pudo mandar el comando a la cinta: ' + e.message, '#f85149');
   });
