@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v91</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v92</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2612,6 +2612,32 @@
        resuelve el síntoma del todo — el firmware volvió a 150ms de
        pulso (estaba en 800ms para una prueba de percepción anterior,
        ver .ino v5) para retomar la prueba en condiciones normales.
+       (Resuelto después del lado del firmware, .ino v6: la causa real
+       era una condición de carrera entre los dos núcleos del ESP32.
+       Con v6, Hugo confirmó que los botones +/- prenden el LED testigo
+       en cada toque.)
+   v92: pedido de Hugo — que la cinta cambie sola en cada cambio de
+       velocidad de la sesión (plan por bloques y test de VMA), no
+       solo con los botones +/-. El throttle de v91 se reemplaza por
+       una COLA de comandos (uno cada 400ms): un cambio de bloque puede
+       necesitar muchos toques seguidos (ej. 9.0 -> 7.5 = 15 toques de
+       "−") y con el throttle se perdían casi todos.
+       velCintaEstimadaKmh = lo que la app cree que marca la cinta. Se
+       fija con un prompt al Iniciar (solo si la cinta está conectada
+       por BLE y la sesión tiene plan o test VMA) y se actualiza con
+       cada toque, manual o del plan. moverCintaA(objetivo) encola la
+       diferencia en toques de PASO_CINTA_KMH (0.1, PENDIENTE confirmar
+       que la cinta de Hugo cambia 0.1 por toque). Sin referencia
+       (prompt cancelado), el plan no mueve la cinta y solo avisa como
+       antes. Al desconectarse la cinta se vacía la cola y se borra la
+       referencia. La app no puede enterarse si alguien aprieta los
+       botones físicos de la cinta: eso la desincroniza.
+       Probado extrayendo las funciones reales del archivo con BLE
+       simulado, usando el plan de la captura de Hugo: referencia 1.0
+       -> 6.7 = 57 toques, incremental hasta 9.0 = 23, bajada a 7.5 =
+       15 de "−", incremental a 6.4 = 11; suma neta exacta 1.0 + 5.4 =
+       6.4, sin error de redondeo acumulado. Sin referencia no manda
+       nada. 5/5 OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3368,6 +3394,8 @@ async function conectarCintaBLE() {
     logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
     device.addEventListener('gattserverdisconnected', () => {
       cintaCaracteristica = null;
+      vaciarColaCinta();
+      velCintaEstimadaKmh = null; // al reconectar hay que volver a cargar la velocidad de referencia
       estadoEl.textContent = 'Desconectado.';
       estadoEl.className = 'estado-conexion';
       logBLE('Cinta (ESP32) desconectada', '#d29922');
@@ -3405,16 +3433,53 @@ async function conectarCintaBLE() {
 // lado, y el LED del optoacoplador no prendía en cada uno. En vez de bajar el cooldown del firmware
 // (sigue haciendo falta para aquello), se frena acá: como mucho un comando real cada 350ms hacia la
 // cinta, aunque el número en pantalla de la app siga subiendo rápido mientras se sostiene el botón.
-let ultimoComandoCintaEnviadoEn = 0;
-const COOLDOWN_COMANDO_CINTA_MS = 350;
-function enviarComandoCinta(comando) {
-  if (!cintaCaracteristica) return;
-  const ahora = Date.now();
-  if (ahora - ultimoComandoCintaEnviadoEn < COOLDOWN_COMANDO_CINTA_MS) return;
-  ultimoComandoCintaEnviadoEn = ahora;
+// v92: el throttle de v91 (descartar comandos dentro de 350ms) se reemplaza por una COLA: los
+// comandos ya no se pierden, se mandan de a uno cada INTERVALO_COLA_CINTA_MS. Hace falta para
+// que el plan por bloques pueda mover la cinta varios pasos seguidos (ej. 9.0 -> 7.5 son 15
+// toques de "−") sin que el cooldown de 300ms del firmware se coma la mayoría. 400ms deja margen
+// sobre ese cooldown y sobre el pulso de 150ms.
+const INTERVALO_COLA_CINTA_MS = 400;
+// Cuánto cambia la cinta REAL por cada toque de botón. PENDIENTE de confirmar con la cinta de
+// Hugo — si cada toque sube/baja otra cantidad, se corrige solo acá.
+const PASO_CINTA_KMH = 0.1;
+let colaCinta = [];
+let colaCintaTimer = null;
+// Lo que la app cree que marca la cinta ahora mismo. null = no se sabe (no se cargó la velocidad
+// de referencia al iniciar): en ese caso el plan NO mueve la cinta, porque calcularía mal la
+// cantidad de toques. Se fija al iniciar una sesión con plan/test VMA (ver iniciarSesion) y se
+// actualiza con cada toque que la app manda.
+let velCintaEstimadaKmh = null;
+function encolarComandoCinta(comando, veces) {
+  if (!cintaCaracteristica || !(veces > 0)) return;
+  for (let i = 0; i < veces; i++) colaCinta.push(comando);
+  if (!colaCintaTimer) procesarColaCinta();
+}
+function procesarColaCinta() {
+  if (!cintaCaracteristica || colaCinta.length === 0) { colaCintaTimer = null; return; }
+  const comando = colaCinta.shift();
   cintaCaracteristica.writeValue(new Uint8Array([48 + comando])).catch((e) => {
     logBLE('No se pudo mandar el comando a la cinta: ' + e.message, '#f85149');
   });
+  colaCintaTimer = setTimeout(procesarColaCinta, INTERVALO_COLA_CINTA_MS);
+}
+function vaciarColaCinta() {
+  colaCinta = [];
+  if (colaCintaTimer) { clearTimeout(colaCintaTimer); colaCintaTimer = null; }
+}
+// Un toque suelto (botones +/- de la app) — misma firma de siempre, ahora pasa por la cola.
+function enviarComandoCinta(comando) {
+  encolarComandoCinta(comando, 1);
+}
+// Lleva la cinta real desde lo que la app cree que marca hasta objetivoKmh, encolando la
+// cantidad de toques de Vel+/Vel- que haga falta. Devuelve true si efectivamente mandó algo.
+function moverCintaA(objetivoKmh) {
+  if (!cintaCaracteristica || velCintaEstimadaKmh == null || objetivoKmh == null) return false;
+  const pasos = Math.round((objetivoKmh - velCintaEstimadaKmh) / PASO_CINTA_KMH);
+  if (pasos === 0) return false;
+  encolarComandoCinta(pasos > 0 ? 1 : 2, Math.abs(pasos));
+  velCintaEstimadaKmh = Math.round((velCintaEstimadaKmh + pasos * PASO_CINTA_KMH) * 10) / 10;
+  logBLE('Cinta: ' + Math.abs(pasos) + ' toque(s) de ' + (pasos > 0 ? '+' : '−') + ' → ' + velCintaEstimadaKmh.toFixed(1) + ' km/h', '#4FD8C4');
+  return true;
 }
 
 function handleHR(event) {
@@ -3970,7 +4035,9 @@ function actualizarPlan(tSeg, zonaActual) {
     velocidadManualKmh = est.velocidadObjetivo;
     actual.velocidad = velocidadManualKmh / 3.6;
     document.getElementById('hudKmh').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
-    toast('Poné la cinta a ' + est.velocidadObjetivo.toFixed(1) + ' km/h');
+    // v92: con la cinta conectada por BLE y la velocidad de referencia cargada, la mueve sola
+    const movio = moverCintaA(est.velocidadObjetivo);
+    toast((movio ? 'Cinta → ' : 'Poné la cinta a ') + est.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Plan — ' + est.etiqueta + ' · ' + est.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (est.velocidadObjetivo == null && planUltimoObjetivo !== null) {
     // entró a un bloque libre: NO se toca la velocidad, la manejás vos con los botones
@@ -4046,7 +4113,8 @@ function actualizarTestVma(tSeg) {
     velocidadManualKmh = e.velocidadObjetivo;
     actual.velocidad = velocidadManualKmh / 3.6;
     document.getElementById('hudKmh').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
-    toast('Escalón ' + e.numeroEscalon + ': subí la cinta a ' + e.velocidadObjetivo.toFixed(1) + ' km/h');
+    const movio = moverCintaA(e.velocidadObjetivo); // v92: igual que el plan por bloques
+    toast('Escalón ' + e.numeroEscalon + ': ' + (movio ? 'cinta → ' : 'subí la cinta a ') + e.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Test VMA — escalón ' + e.numeroEscalon + ' a ' + e.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (!testVmaAvisado && e.segundosRestantes <= 5) {
     testVmaAvisado = true;
@@ -4058,6 +4126,11 @@ function actualizarTestVma(tSeg) {
 }
 function ajustarVelocidadManual(delta) {
   enviarComandoCinta(delta > 0 ? 1 : 2); // Vel+/Vel- — no hace nada si no hay cinta BLE conectada
+  // v92: cada toque manual también mueve lo que la app cree que marca la cinta, así un cambio de
+  // bloque posterior calcula los toques desde la velocidad real y no desde una vieja.
+  if (cintaCaracteristica && velCintaEstimadaKmh != null) {
+    velCintaEstimadaKmh = Math.max(0, Math.round((velCintaEstimadaKmh + (delta > 0 ? PASO_CINTA_KMH : -PASO_CINTA_KMH)) * 10) / 10);
+  }
   velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
   actual.velocidad = velocidadManualKmh / 3.6; // km/h -> m/s, mismo dato que usa tick() para ritmo/distancia
   // Reflejarlo también en el tile grande del ritmo: si la sesión todavía no arrancó, tick() no
@@ -4991,6 +5064,23 @@ function iniciarSesion() {
   if (usaPlan && haceTestVma) { toast('Elegí una sola cosa: plan por bloques o test de VMA'); return; }
   if (usaPlan && haceTestUmbral) { toast('Elegí una sola cosa: plan por bloques o test de umbral'); return; }
   if (haceTestVma && haceTestUmbral) { toast('Elegí una sola cosa: test de VMA o test de umbral'); return; }
+
+  // v92: si la cinta está conectada por BLE y la sesión va a imponer velocidades (plan o test
+  // VMA), hace falta saber qué marca la cinta AHORA para calcular cuántos toques mandar en cada
+  // cambio. Cancelar deja la referencia en null: la sesión arranca igual, pero la cinta se
+  // maneja a mano como antes (el plan solo avisa).
+  if (cintaCaracteristica && (usaPlan || haceTestVma)) {
+    vaciarColaCinta();
+    const resp = prompt('¿Qué velocidad marca la cinta AHORA? (km/h)\nArrancala antes con su botón Start.', '');
+    const v = resp == null ? NaN : parseFloat(String(resp).replace(',', '.'));
+    if (v > 0) {
+      velCintaEstimadaKmh = Math.round(v * 10) / 10;
+      logBLE('Cinta: velocidad de referencia ' + velCintaEstimadaKmh.toFixed(1) + ' km/h', '#4FD8C4');
+    } else {
+      velCintaEstimadaKmh = null;
+      toast('Sin velocidad de referencia: el plan no va a mover la cinta');
+    }
+  }
 
   sesionActiva = true;
   sesionPausada = false;
