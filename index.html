@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v93</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v95</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2675,6 +2675,48 @@
        a 0.1 hasta 9.0; rampa con un toque manual en el medio termina
        igual en app y cinta (7.6); mezcla de franjas en 8 velocidades de
        prueba y mezcla de poses al 25% exactas. Todo OK.
+   v94: pedido de Hugo — mejor apariencia de los corredores y del entorno.
+       Las poses del Editor siguen intactas: solo cambia cómo se pinta
+       la figura, y solo en modo detalle (escena en vivo y fantasma).
+       El editor y el replay siguen con la figura simple de siempre.
+       - Corredor: pelo (de espaldas no se ve la cara, solo la nuca),
+         cuello y orejas; hombros redondeados; remera con franjas
+         laterales, costura central y cuello; manga corta hasta mitad
+         del brazo; pantorrilla y antebrazo un tono más oscuros para dar
+         volumen; medias blancas; zapatillas con franja de color; ruedo
+         del short y separación entre piernas. Piel menos anaranjada.
+       - Fantasma: la misma figura detallada, en tonos claros y con un
+         brillo celeste, para que no se confunda con otro corredor.
+       - Sendero: pasó de asfalto gris con cordón rojo y blanco (parecía
+         una ruta o un circuito) a ripio con bordes de pasto, sin línea
+         central, con piedritas fijas al terreno (no parpadean al
+         avanzar). Mojón cada 100 m con la distancia cuando está cerca.
+         Lengas lejanas más desvaídas (perspectiva atmosférica).
+       - Pista: tartán rojizo con 6 carriles de línea continua (antes un
+         solo color arena con línea discontinua). Tribunas con techo y
+         público; esa mejora también alcanza a la pista cubierta.
+       - Cielo (sendero y pista al aire libre): sol bajo con resplandor
+         y nubes que derivan despacio, ubicados por rumbo — se mueven en
+         las curvas y en la pista dan la vuelta junto con el óvalo.
+       - roadBands: las opciones nuevas (cordon, lineaCentral,
+         contrasteBandas, carriles, ripio, sol, nubes) son todas
+         opcionales por escena; sin ellas dibuja igual que antes.
+       Probado renderizando la escena real en navegador sin pantalla,
+       sendero y pista, sin errores de página. Las piedritas del primer
+       intento quedaron grandes y oscuras (parecían pozos): se achicaron,
+       se aclararon y se hicieron más densas.
+   v95: pulido de la v94 después de renderizarla de nuevo.
+       - Costuras entre tramos del camino: cada tramo era un polígono
+         aparte y el suavizado de bordes dejaba una línea finita por la
+         que se veía el suelo oscuro — en el ripio parecían franjas
+         horizontales marcadas. Ahora cada tramo también se contornea
+         con su mismo color (0,8 px). Vale para sendero, pista y replay.
+       - Nubes: 24 en vez de 6 (una cada ~15° de horizonte). La cámara
+         abarca unos 55°, y con 6 casi siempre se veía una sola.
+       - Franja oscura suave arriba de la escena, detrás de los datos:
+         con más nubes, a veces quedaban números blancos sobre blanco.
+       Probado renderizando la escena real (sendero con 6% y pista, con
+       fantasma) en navegador sin pantalla, sin errores de página.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4238,11 +4280,42 @@ function hexRgba(hex, a) {
 }
 const SCENES = {
   rural: { label: 'Rural', sky: ['#5bb0e6', '#bfe6f5'], ground: '#213524', asphalt: '#4c5661', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 1, decor: 'trees' },
-  velodromo_open: { label: 'Pista al aire libre', sky: ['#5bb0e6', '#bfe6f5'], ground: '#3a6b3d', asphalt: '#b8956a', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 0.5, decor: 'stands' },
+  velodromo_open: { label: 'Pista al aire libre', sky: ['#5bb0e6', '#bfe6f5'], ground: '#3a6b3d', asphalt: '#b8563f', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 0.5, decor: 'stands',
+    // v94: pista de tartán con carriles marcados (antes un solo color arena con línea discontinua)
+    carriles: 6, lineaCentral: false, contrasteBandas: [1.03, 0.97], sol: true, nubes: true },
   // v93: paisaje fueguino para el sendero — montañas nevadas, canal y lengas
-  fueguino: { label: 'Fueguino', sky: ['#3a6d93', '#d9c8a4'], ground: '#4d5c33', asphalt: '#4c5661', mtnCol: ['#6d8aa5', '#3f5a70'], mtnAmp: 2.2, decor: 'lengas', nieve: true, canal: true },
+  fueguino: { label: 'Fueguino', sky: ['#3a6d93', '#d9c8a4'], ground: '#4d5c33', asphalt: '#8b7d63', mtnCol: ['#6d8aa5', '#3f5a70'], mtnAmp: 2.2, decor: 'lengas', nieve: true, canal: true,
+    // v94: sendero de ripio (no una ruta): bordes de pasto, sin línea central, piedritas, sol y nubes
+    cordon: ['#6e7c47', '#62703f'], lineaCentral: false, contrasteBandas: [1.03, 0.97], ripio: true, sol: true, nubes: true },
   velodromo: { label: 'Pista cubierta', sky: ['#171b22', '#2a323d'], ground: '#2e4a2f', asphalt: '#c9a768', mtnCol: ['#333a44', '#242931'], mtnAmp: 0.6, decor: 'stands' },
 };
+// v94: sol bajo con resplandor y nubes que derivan despacio. Ubicados por rumbo (azimut) respecto
+// de la cámara: en las curvas se desplazan, y en la pista dan la vuelta junto con el óvalo.
+function dibujarSol(ctx, w, horizon, camB) {
+  const rel = Math.atan2(Math.sin(0.55 - camB), Math.cos(0.55 - camB));
+  if (Math.cos(rel) < 0.2) return;
+  const x = w / 2 + Math.sin(rel) * w * 0.9, y = horizon * 0.42;
+  const g = ctx.createRadialGradient(x, y, 0, x, y, horizon * 0.55);
+  g.addColorStop(0, 'rgba(255,244,214,.95)'); g.addColorStop(0.12, 'rgba(255,236,190,.8)'); g.addColorStop(1, 'rgba(255,230,180,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, horizon);
+}
+function dibujarNubes(ctx, w, horizon, camB) {
+  const deriva = performance.now() / 1000 * 0.004;
+  // v95: 24 nubes (antes 6), una cada ~15° de horizonte: la cámara abarca unos 55°, así que
+  // siempre quedan 3 o 4 a la vista
+  for (let i = 0; i < 24; i++) {
+    const az = i * 0.262 + 0.12 * Math.sin(i * 2.7) + deriva, rel = Math.atan2(Math.sin(az - camB), Math.cos(az - camB));
+    if (Math.cos(rel) < 0.15) continue;
+    const x = w / 2 + Math.sin(rel) * w * 1.1, y = horizon * (0.12 + 0.09 * (i % 4));
+    const t = horizon * (0.05 + 0.025 * ((i * 7) % 3));
+    ctx.fillStyle = 'rgba(255,255,255,' + (0.62 + 0.08 * (i % 3)) + ')';
+    ctx.beginPath();
+    ctx.ellipse(x, y, t * 1.6, t * 0.55, 0, 0, 7);
+    ctx.ellipse(x - t * 0.8, y + t * 0.1, t * 0.9, t * 0.45, 0, 0, 7);
+    ctx.ellipse(x + t * 0.7, y - t * 0.15, t * 1.0, t * 0.6, 0, 0, 7);
+    ctx.fill();
+  }
+}
 function drawMountains(ctx, w, horizon, camB, sc) {
   const layers = [{ amp: 0.10, freq: 0.9, pan: 55, col: sc.mtnCol[0] }, { amp: 0.17, freq: 1.5, pan: 100, col: sc.mtnCol[1] }];
   for (const L of layers) {
@@ -4279,18 +4352,23 @@ function drawMountains(ctx, w, horizon, camB, sc) {
   }
 }
 function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
-  if (decor === 'stands') {
-    const sw = th * 0.7, sh = th * (1.0 + 0.3 * Math.abs(seed)), tiers = 4;
-    ctx.fillStyle = '#3a4048';
-    ctx.fillRect(tx - sw / 2, ty - sh, sw, sh);
-    for (let tI = 0; tI < tiers; tI++) {
-      const yy = ty - sh + (tI / tiers) * sh;
-      ctx.fillStyle = (Math.sin(seed * 17 + tI * 4) > 0) ? '#c94b4b' : '#e6edf3';
-      ctx.globalAlpha = 0.75;
-      for (let c = 0; c < 3; c++) { if (Math.sin(seed * 23 + tI * 5 + c * 9) > -0.2) ctx.fillRect(tx - sw / 2 + c * (sw / 3) + sw * 0.05, yy + sh * 0.03, sw / 3 * 0.7, sh / tiers * 0.5); }
-      ctx.globalAlpha = 1;
+  if (decor === 'stands') { // v94: tribuna con techo y público
+    const sw = th * 0.7, sh = th * (1.0 + 0.3 * Math.abs(seed)), filas = 4;
+    ctx.fillStyle = '#59616b'; ctx.fillRect(tx - sw / 2, ty - sh, sw, sh);
+    ctx.fillStyle = '#3a4048'; ctx.fillRect(tx - sw / 2 - sw * 0.06, ty - sh - sh * 0.08, sw * 1.12, sh * 0.1);
+    const colores = ['#e6edf3', '#c94b4b', '#3d7ec9', '#E8B84B', '#6FDD8E', '#2b2f36'];
+    const r = Math.max(0.6, sw * 0.045), porFila = Math.max(3, Math.floor(sw / (r * 2.6)));
+    for (let f = 0; f < filas; f++) {
+      const yy = ty - sh + sh * (0.2 + f * 0.2);
+      for (let c = 0; c < porFila; c++) {
+        const n = Math.sin(seed * 31 + f * 7.1 + c * 3.7) * 1000;
+        if (n - Math.floor(n) < 0.25) continue; // algunos lugares vacíos
+        ctx.fillStyle = colores[Math.floor((n - Math.floor(n)) * 997) % colores.length];
+        ctx.beginPath(); ctx.arc(tx - sw / 2 + (c + 0.5) * (sw / porFila), yy, r, 0, 7); ctx.fill();
+      }
     }
   } else if (decor === 'lengas') { // v93: lengas, algunas con colores de otoño
+    ctx.save(); ctx.globalAlpha *= 0.5 + 0.5 * Math.min(1, th / 45); // v94: las lejanas, más desvaídas
     ctx.fillStyle = '#4a3527'; ctx.fillRect(tx - th * 0.05, ty - th * 0.38, th * 0.1, th * 0.38);
     const otono = Math.sin(seed * 91.7) > 0.2;
     const tonos = otono ? ['#8a4b1f', '#b8742a', '#d49a3a'] : ['#2f4a2c', '#3f6236', '#557a44'];
@@ -4298,6 +4376,7 @@ function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
       ctx.fillStyle = tonos[i];
       ctx.beginPath(); ctx.ellipse(tx + (i - 1) * th * 0.12, ty - th * (0.55 + i * 0.12), th * (0.26 - i * 0.04), th * (0.2 - i * 0.02), 0, 0, 7); ctx.fill();
     }
+    ctx.restore();
   } else { // trees
     ctx.fillStyle = '#5a4634'; ctx.fillRect(tx - th * 0.05, ty - th * 0.32, th * 0.1, th * 0.32);
     ctx.fillStyle = (seed > 0) ? '#2f6b39' : '#367a3f';
@@ -4317,6 +4396,8 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
   const sky = ctx.createLinearGradient(0, 0, 0, horizon);
   sky.addColorStop(0, sc.sky[0]); sky.addColorStop(1, sc.sky[1]);
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, horizon);
+  if (sc.sol) dibujarSol(ctx, w, horizon, camB);
+  if (sc.nubes) dibujarNubes(ctx, w, horizon, camB);
   drawMountains(ctx, w, horizon, camB, sc);
   const fogH = Math.round(h * 0.10);
   const fog = ctx.createLinearGradient(0, horizon - fogH * 0.5, 0, horizon + fogH);
@@ -4324,7 +4405,8 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
   ctx.fillStyle = fog; ctx.fillRect(0, horizon - fogH * 0.5, w, fogH * 1.5);
   ctx.fillStyle = sc.ground; ctx.fillRect(0, horizon, w, h - horizon);
   const gShade = Math.max(0.72, Math.min(1.15, 1 - gAhead * 0.02));
-  const asphaltL = shadeHex(sc.asphalt, gShade * 1.1), asphaltD = shadeHex(sc.asphalt, gShade * 0.96);
+  const cb = sc.contrasteBandas || [1.1, 0.96], cord = sc.cordon || ['#eeeeee', '#d8452f'];
+  const asphaltL = shadeHex(sc.asphalt, gShade * cb[0]), asphaltD = shadeHex(sc.asphalt, gShade * cb[1]);
   const BANK_K = 0.5;
   const S = []; let x = 0, prevSeg = 0, cum = 0;
   for (let i = 0; i <= N; i++) {
@@ -4339,12 +4421,35 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
     const bo = b.bank * b.hw * BANK_K, ao = a.bank * a.hw * BANK_K;
     const bLY = b.y - bo, bRY = b.y + bo, aLY = a.y - ao, aRY = a.y + ao;
     const rb = Math.max(1.5, b.hw * 0.26), ra = Math.max(1, a.hw * 0.26);
-    ctx.fillStyle = light ? '#eeeeee' : '#d8452f';
-    ctx.beginPath(); ctx.moveTo(b.cx - b.hw - rb, bLY); ctx.lineTo(b.cx - b.hw, bLY); ctx.lineTo(a.cx - a.hw, aLY); ctx.lineTo(a.cx - a.hw - ra, aLY); ctx.closePath(); ctx.fill();
-    ctx.beginPath(); ctx.moveTo(b.cx + b.hw + rb, bRY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx + a.hw + ra, aRY); ctx.closePath(); ctx.fill();
-    ctx.fillStyle = light ? asphaltL : asphaltD;
-    ctx.beginPath(); ctx.moveTo(b.cx - b.hw, bLY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx - a.hw, aLY); ctx.closePath(); ctx.fill();
-    if (light) {
+    // v95: cada tramo se rellena y se contornea con su mismo color (0,8 px): el suavizado de bordes
+    // dejaba una costura finita entre tramos por la que se veía el suelo oscuro — en el ripio
+    // aparecían como franjas horizontales marcadas.
+    ctx.lineWidth = 0.8; ctx.lineJoin = 'round';
+    ctx.fillStyle = ctx.strokeStyle = light ? cord[0] : cord[1];
+    ctx.beginPath(); ctx.moveTo(b.cx - b.hw - rb, bLY); ctx.lineTo(b.cx - b.hw, bLY); ctx.lineTo(a.cx - a.hw, aLY); ctx.lineTo(a.cx - a.hw - ra, aLY); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(b.cx + b.hw + rb, bRY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx + a.hw + ra, aRY); ctx.closePath(); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle = light ? asphaltL : asphaltD;
+    ctx.beginPath(); ctx.moveTo(b.cx - b.hw, bLY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx - a.hw, aLY); ctx.closePath(); ctx.fill(); ctx.stroke();
+    if (sc.carriles) { // v94: líneas de carril continuas
+      ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = Math.max(0.6, b.hw * 0.012);
+      ctx.beginPath();
+      for (let k = 1; k < sc.carriles; k++) {
+        const fr = -1 + 2 * k / sc.carriles;
+        ctx.moveTo(b.cx + fr * b.hw, b.y + fr * bo); ctx.lineTo(a.cx + fr * a.hw, a.y + fr * ao);
+      }
+      ctx.stroke();
+    }
+    if (sc.ripio && b.hw > 10) { // v94: piedritas fijas al terreno (no parpadean al avanzar)
+      for (let dp = Math.ceil(b.d / 0.35) * 0.35; dp < a.d; dp += 0.35) {
+        const n = Math.sin(dp * 12.9898) * 43758.5453, fr = (n - Math.floor(n)) * 2 - 1;
+        const n2 = Math.sin(dp * 78.233) * 12543.1, claro = (n2 - Math.floor(n2)) > 0.5;
+        const tt = (dp - b.d) / ((a.d - b.d) || 1);
+        const hw = b.hw + (a.hw - b.hw) * tt;
+        ctx.fillStyle = claro ? 'rgba(235,225,205,.35)' : 'rgba(58,48,36,.28)';
+        ctx.beginPath(); ctx.ellipse(b.cx + (a.cx - b.cx) * tt + fr * hw * 0.85, b.y + (a.y - b.y) * tt, hw * 0.014, hw * 0.006, 0, 0, 7); ctx.fill();
+      }
+    }
+    if (light && sc.lineaCentral !== false) {
       const cb = Math.max(1, b.hw * 0.06), ca = Math.max(0.7, a.hw * 0.06);
       ctx.fillStyle = '#efe7c8';
       ctx.beginPath(); ctx.moveTo(b.cx - cb, b.y); ctx.lineTo(b.cx + cb, b.y); ctx.lineTo(a.cx + ca, a.y); ctx.lineTo(a.cx - ca, a.y); ctx.closePath(); ctx.fill();
@@ -4473,7 +4578,10 @@ function dibujarFantasmaEscena(ctx, S, dFant, youS, velMS) {
     if (q) drawRunnerRear(ctx, q.cx, q.y, tam(q), ghostRunnerPhase - i * 0.4, '#9fb0c0', 0.1 / i, velMS);
   }
   const gs = tam(p);
-  drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, velMS);
+  ctx.save(); // v94: brillo celeste para que se lea como fantasma y no como otro corredor
+  ctx.shadowColor = 'rgba(170,220,255,.9)'; ctx.shadowBlur = Math.max(4, gs * 0.8);
+  drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#b9cbd8', 0.5, velMS, true);
+  ctx.restore();
   const my = p.y - gs * 3.1 - 4;
   ctx.fillStyle = '#FF8A7A';
   ctx.beginPath(); ctx.moveTo(p.cx - 6, my - 8); ctx.lineTo(p.cx + 6, my - 8); ctx.lineTo(p.cx, my); ctx.closePath(); ctx.fill();
@@ -4522,6 +4630,22 @@ function renderEscena() {
   dibujarHudEscena(ctx, w, h);
   actualizarLineaVuelta();
 }
+// v94: mojón cada 100 m al costado del sendero; cerca, muestra la distancia
+function dibujarMojones(ctx, S) {
+  for (let k = Math.ceil(distanciaAcumM / 100); k * 100 <= distanciaAcumM + 260; k++) {
+    const p = roadPointAt(S, k * 100);
+    if (!p || p.hw < 3) continue;
+    const x = p.cx + p.hw * 1.3, alto = p.hw * 0.42, ancho = Math.max(1.5, p.hw * 0.09);
+    ctx.fillStyle = '#f2efe6'; ctx.fillRect(x - ancho / 2, p.y - alto, ancho, alto);
+    ctx.fillStyle = '#c0392b'; ctx.fillRect(x - ancho / 2, p.y - alto, ancho, alto * 0.25);
+    if (p.hw > 22) {
+      ctx.font = '700 ' + Math.min(16, Math.round(p.hw * 0.16)) + 'px system-ui'; ctx.textAlign = 'left';
+      ctx.fillStyle = '#ffffff'; ctx.shadowColor = 'rgba(0,0,0,.6)'; ctx.shadowBlur = 4;
+      ctx.fillText((k / 10).toFixed(1) + ' km', x + ancho, p.y - alto * 0.6);
+      ctx.shadowBlur = 0;
+    }
+  }
+}
 // v93: zona actual para la escena — por pulso si hay banda y umbral de pulso, si no por ritmo
 const COLORES_ZONA_HEX = ['#4FD8C4', '#6FDD8E', '#E8D24B', '#F08B3C', '#FF5A5F'];
 function zonaActualEscena() {
@@ -4550,6 +4674,11 @@ function dibujarHudEscena(ctx, w, h) {
   const mono = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
   const sans = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
   ctx.save();
+  // v95: franja oscura suave detrás de los datos — con las nubes nuevas, a veces quedaban
+  // números blancos sobre fondo blanco
+  const velo = ctx.createLinearGradient(0, 0, 0, 84);
+  velo.addColorStop(0, 'rgba(4,7,10,.45)'); velo.addColorStop(1, 'rgba(4,7,10,0)');
+  ctx.fillStyle = velo; ctx.fillRect(0, 0, w, 84);
   ctx.shadowColor = 'rgba(0,0,0,.65)'; ctx.shadowBlur = 6;
   ctx.textAlign = 'left';
   const ritmo = v > 0.3 ? segAMMSS(1000 / v) : '--:--';
@@ -4582,6 +4711,7 @@ function dibujarEscenaSendero(ctx, w, h) {
   const bFn = d => 0.16 * Math.sin(d / 150) + 0.07 * Math.sin(d / 57 + 1.3);
   const eFn = d => d * (pendienteActual / 100); // usa la pendiente en vivo como si fuera una subida constante
   const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.fueguino, null);
+  dibujarMojones(ctx, S);
   const youS = Math.max(20, h * 0.135);
   let gapM = null, deltaSeg = null;
   if (puntosFantasma) {
@@ -5082,9 +5212,11 @@ function espejarEditorInstante() {
 // un desplazamiento vertical de cuerpo entero (bounce) — reusa segmentoGrueso/shadeHex, mismo
 // estilo que drawRunnerRear, pero SIN animación propia: la pose es la que dicen los campos.
 function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra) {
-  const skin = '#e8934c', zapatilla = '#20242b';
-  const shorts = shadeHex(jersey, 0.42);
   const detalle = !!(extra && extra.detalle), incl = (extra && extra.inclinacion) || 0;
+  // v94: en modo detalle, piel menos anaranjada y con sombra; el editor sigue viendo la figura simple
+  const skin = detalle ? '#d9956b' : '#e8934c', skinSombra = shadeHex(detalle ? '#d9956b' : '#e8934c', 0.84);
+  const zapatilla = '#20242b', acento = '#FF6B57', pelo = '#2b211b';
+  const shorts = shadeHex(jersey, 0.42);
   const gy = gyBase - (bounce || 0) * s;
   // v93: en subida el torso se inclina hacia adelante — de espaldas se ve más corto y la cabeza más baja
   const hipY = gy - 1.35 * s, shY = gy - 2.35 * s + incl * s * 0.22, headY = gy - 2.66 * s + incl * s * 0.3, lean = s * 0.05;
@@ -5100,11 +5232,20 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra
     const footX = hipX + side * d.footX * s, footY = hipY + d.footY * s;
     const anchoRodilla = Math.max(s * 0.05, d.anchoRodilla * s);
     segmentoGrueso(ctx, hipX, hipY, kneeX, kneeY, s * 0.30, anchoRodilla, skin);
-    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, anchoRodilla, s * 0.14, skin);
+    // v94 (detalle): pantorrilla un tono más oscura (da volumen) y media blanca sobre la zapatilla
+    segmentoGrueso(ctx, kneeX, kneeY, footX, footY, anchoRodilla, s * 0.14, detalle ? skinSombra : skin);
+    if (detalle) {
+      const t0 = 0.8, mx = kneeX + (footX - kneeX) * t0, my = kneeY + (footY - kneeY) * t0;
+      segmentoGrueso(ctx, mx, my, footX, footY, s * 0.15, s * 0.15, '#f1f0ea');
+    }
     const escalaPie = Math.max(0.1, d.escalaPie);
     ctx.save(); ctx.translate(footX, footY + s * 0.05);
     ctx.fillStyle = zapatilla;
     ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
+    if (detalle) { // v94: franja de color en la zapatilla
+      ctx.fillStyle = acento;
+      ctx.beginPath(); ctx.ellipse(0, -s * 0.025 * escalaPie, s * 0.13 * escalaPie, s * 0.022 * escalaPie, 0, 0, 7); ctx.fill();
+    }
     // v93 (detalle): con el pie arriba se ve la suela
     if (detalle && gyBase - footY > s * 0.25) {
       ctx.fillStyle = '#e7e2d6';
@@ -5117,6 +5258,12 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra
   ctx.fillStyle = shorts;
   ctx.beginPath(); ctx.moveTo(cx - s * 0.27, hipY - s * 0.1); ctx.lineTo(cx + s * 0.27, hipY - s * 0.1);
   ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
+  if (detalle) { // v94: ruedo más oscuro y la separación entre piernas
+    ctx.strokeStyle = shadeHex(jersey, 0.3); ctx.lineWidth = s * 0.035;
+    ctx.beginPath(); ctx.moveTo(cx - s * 0.21, hipY + s * 0.26); ctx.lineTo(cx + s * 0.21, hipY + s * 0.26); ctx.stroke();
+    ctx.fillStyle = shadeHex(jersey, 0.28);
+    ctx.beginPath(); ctx.moveTo(cx - s * 0.03, hipY + s * 0.28); ctx.lineTo(cx, hipY + s * 0.12); ctx.lineTo(cx + s * 0.03, hipY + s * 0.28); ctx.closePath(); ctx.fill();
+  }
 
   const hipHW = s * 0.26, shHW = hipHW * 1.275;
   if (detalle) { // v93: luz desde arriba a la izquierda sobre la remera
@@ -5125,21 +5272,66 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra
     ctx.fillStyle = g;
   } else ctx.fillStyle = jersey;
   ctx.beginPath();
-  ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
-  ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
+  if (detalle) { // v94: hombros redondeados en vez de un trapecio recto
+    const ax = cx + lean, mY = (hipY + shY) / 2;
+    ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
+    ctx.quadraticCurveTo(ax + shHW + s * 0.02, mY, ax + shHW, shY + s * 0.06);
+    ctx.quadraticCurveTo(ax + shHW * 0.92, shY - s * 0.05, ax + shHW * 0.4, shY - s * 0.06);
+    ctx.lineTo(ax - shHW * 0.4, shY - s * 0.06);
+    ctx.quadraticCurveTo(ax - shHW * 0.92, shY - s * 0.05, ax - shHW, shY + s * 0.06);
+    ctx.quadraticCurveTo(ax - shHW - s * 0.02, mY, cx - hipHW, hipY - s * 0.05);
+  } else {
+    ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
+    ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
+  }
   ctx.closePath(); ctx.fill();
+  if (detalle) { // v94: franjas laterales claras, costura central y cuello
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = shadeHex(jersey, 1.5); ctx.lineWidth = s * 0.04;
+    for (const lado of [-1, 1]) {
+      ctx.beginPath(); ctx.moveTo(cx + lado * (hipHW - s * 0.05), hipY - s * 0.08);
+      ctx.lineTo(cx + lean + lado * (shHW - s * 0.07), shY + s * 0.1); ctx.stroke();
+    }
+    ctx.strokeStyle = 'rgba(0,0,0,.14)'; ctx.lineWidth = s * 0.02;
+    ctx.beginPath(); ctx.moveTo(cx + lean, shY + s * 0.06); ctx.lineTo(cx, hipY - s * 0.1); ctx.stroke();
+    ctx.strokeStyle = shadeHex(jersey, 0.62); ctx.lineWidth = s * 0.04;
+    ctx.beginPath(); ctx.moveTo(cx + lean - s * 0.12, shY - s * 0.05);
+    ctx.quadraticCurveTo(cx + lean, shY + s * 0.04, cx + lean + s * 0.12, shY - s * 0.05); ctx.stroke();
+  }
 
   function arm(side, d) {
     const shX = cx + side * s * 0.30 + lean;
     const elX = shX + side * d.elX * s, elY = shY + d.elY * s;
     const wrX = shX + side * d.wrX * s, wrY = shY + d.wrY * s;
-    segmentoGrueso(ctx, shX, shY, elX, elY, s * 0.20, s * 0.15, jersey);
-    segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
+    if (detalle) { // v94: brazo con piel y manga corta hasta la mitad
+      segmentoGrueso(ctx, shX, shY, elX, elY, s * 0.18, s * 0.14, skin);
+      const mx = shX + (elX - shX) * 0.5, my = shY + (elY - shY) * 0.5;
+      segmentoGrueso(ctx, shX, shY, mx, my, s * 0.22, s * 0.19, jersey);
+      segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.14, s * 0.11, skinSombra);
+    } else {
+      segmentoGrueso(ctx, shX, shY, elX, elY, s * 0.20, s * 0.15, jersey);
+      segmentoGrueso(ctx, elX, elY, wrX, wrY, s * 0.15, s * 0.11, skin);
+    }
   }
   arm(-1, dIzq); arm(1, dDer);
 
+  const hx = cx + lean;
+  if (detalle) { // v94: cuello y orejas
+    segmentoGrueso(ctx, hx, shY + s * 0.02, hx, headY + s * 0.14, s * 0.15, s * 0.13, skinSombra);
+    ctx.fillStyle = skinSombra;
+    for (const lado of [-1, 1]) { ctx.beginPath(); ctx.ellipse(hx + lado * s * 0.195, headY + s * 0.03, s * 0.045, s * 0.07, 0, 0, 7); ctx.fill(); }
+  }
   ctx.fillStyle = skin;
-  ctx.beginPath(); ctx.ellipse(cx + lean, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(hx, headY, s * 0.20, s * 0.22, 0, 0, 7); ctx.fill();
+  if (detalle) { // v94: de espaldas se ve el pelo, no la cara — solo asoma la nuca
+    ctx.save();
+    ctx.beginPath(); ctx.rect(hx - s * 0.3, headY - s * 0.4, s * 0.6, s * 0.48); ctx.clip();
+    ctx.fillStyle = pelo;
+    ctx.beginPath(); ctx.ellipse(hx, headY - s * 0.01, s * 0.207, s * 0.228, 0, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = s * 0.03;
+    ctx.beginPath(); ctx.arc(hx - s * 0.04, headY - s * 0.08, s * 0.12, Math.PI * 1.1, Math.PI * 1.45); ctx.stroke();
+  }
 }
 function renderEditorPose() {
   const cv = document.getElementById('canvasEditor');
