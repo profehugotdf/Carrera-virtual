@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v92</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v93</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2638,6 +2638,43 @@
        15 de "−", incremental a 6.4 = 11; suma neta exacta 1.0 + 5.4 =
        6.4, sin error de redondeo acumulado. Sin referencia no manda
        nada. 5/5 OK.
+   v93: mejoras de la animación en vivo, pedido de Hugo a partir de una
+       demo aparte. Regla: el Editor de animación sigue mandando en la
+       zancada — nada de esto reemplaza sus poses, solo se suma encima.
+       - Sendero con paisaje fueguino (SCENES.fueguino): montañas con
+         nieve solo en las cumbres, el canal con reflejos que se mueven
+         y lengas (algunas en otoño) como decorado lateral. El sendero
+         ahora tiene curvas suaves (antes era recto), así las montañas
+         se desplazan con profundidad. La pista no cambia de escenario.
+       - Mezcla entre franjas del editor: a ±0.5 km/h de cada umbral
+         (6, 10, 15) mezcla de a poco las poses de las dos franjas, en
+         vez del salto brusco al cruzar el umbral. Fuera de esa ventana
+         usa la franja pura tal como la ajustó Hugo.
+       - Sobre la pose del editor (solo en la escena en vivo, no en el
+         editor ni en el replay): luz en la remera, suela visible con el
+         pie arriba, sombra que se achica según el rebote del editor, y
+         torso inclinado hacia adelante según la pendiente de la cinta.
+       - Fantasma con estela y un marcador sobre la cabeza. Su cartel de
+         distancia pasó de arriba al centro a abajo a la izquierda:
+         arriba ahora van los datos, y en el centro tapaba al fantasma
+         cuando estaba cerca del horizonte (visto en la prueba).
+       - Halo de zona: los bordes toman el color de la zona actual (por
+         pulso con umbral cargado; si no, por ritmo) y laten al ritmo
+         del pulso real.
+       - Datos sobre la escena: ritmo, km/h, distancia, pendiente, pulso
+         y chip de zona.
+       - Velocidad que acompaña a la cinta: cuando el plan o el test VMA
+         mueven la cinta por BLE, la velocidad de la app (ritmo,
+         distancia, animación) sube de a 0.1 a medida que se manda cada
+         toque, en vez de saltar al objetivo mientras la cinta todavía
+         acelera. Los toques manuales también llevan su velocidad
+         resultante, así no se desfasan si caen en medio de una rampa.
+       Probado: escena real renderizada en navegador sin pantalla con
+       datos simulados (sendero con 6% y pista, con fantasma), sin
+       errores de página; rampa 7.0 -> 9.0 = 20 toques y la app sube de
+       a 0.1 hasta 9.0; rampa con un toque manual en el medio termina
+       igual en app y cinta (7.6); mezcla de franjas en 8 velocidades de
+       prueba y mezcla de poses al 25% exactas. Todo OK.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3449,17 +3486,29 @@ let colaCintaTimer = null;
 // cantidad de toques. Se fija al iniciar una sesión con plan/test VMA (ver iniciarSesion) y se
 // actualiza con cada toque que la app manda.
 let velCintaEstimadaKmh = null;
-function encolarComandoCinta(comando, veces) {
+// v93: cada ítem de la cola puede llevar la velocidad que va a marcar la cinta después de ese
+// toque (velTras). Al mandarlo, la app pasa a usar esa velocidad para ritmo, distancia y animación:
+// en un cambio de bloque la velocidad sube de a 0.1 al mismo paso que la cinta real, en vez de
+// saltar de golpe al objetivo mientras la cinta todavía está acelerando.
+function encolarComandoCinta(comando, veces, velTras) {
   if (!cintaCaracteristica || !(veces > 0)) return;
-  for (let i = 0; i < veces; i++) colaCinta.push(comando);
+  for (let i = 0; i < veces; i++) colaCinta.push({ comando, velTras: velTras ? velTras[i] : null });
   if (!colaCintaTimer) procesarColaCinta();
+}
+function aplicarVelocidadCinta(kmh) {
+  velocidadManualKmh = kmh;
+  actual.velocidad = kmh / 3.6;
+  const v = actual.velocidad;
+  document.getElementById('hudRitmo').textContent = v > 0.1 ? segAMMSS(1000 / v) : '--:--';
+  document.getElementById('hudKmh').textContent = v > 0.1 ? kmh.toFixed(1) + ' km/h' : '-- km/h';
 }
 function procesarColaCinta() {
   if (!cintaCaracteristica || colaCinta.length === 0) { colaCintaTimer = null; return; }
-  const comando = colaCinta.shift();
-  cintaCaracteristica.writeValue(new Uint8Array([48 + comando])).catch((e) => {
+  const item = colaCinta.shift();
+  cintaCaracteristica.writeValue(new Uint8Array([48 + item.comando])).catch((e) => {
     logBLE('No se pudo mandar el comando a la cinta: ' + e.message, '#f85149');
   });
+  if (item.velTras != null) aplicarVelocidadCinta(item.velTras);
   colaCintaTimer = setTimeout(procesarColaCinta, INTERVALO_COLA_CINTA_MS);
 }
 function vaciarColaCinta() {
@@ -3476,7 +3525,9 @@ function moverCintaA(objetivoKmh) {
   if (!cintaCaracteristica || velCintaEstimadaKmh == null || objetivoKmh == null) return false;
   const pasos = Math.round((objetivoKmh - velCintaEstimadaKmh) / PASO_CINTA_KMH);
   if (pasos === 0) return false;
-  encolarComandoCinta(pasos > 0 ? 1 : 2, Math.abs(pasos));
+  const paso = pasos > 0 ? PASO_CINTA_KMH : -PASO_CINTA_KMH, velTras = [];
+  for (let i = 1; i <= Math.abs(pasos); i++) velTras.push(Math.round((velCintaEstimadaKmh + paso * i) * 10) / 10);
+  encolarComandoCinta(pasos > 0 ? 1 : 2, Math.abs(pasos), velTras);
   velCintaEstimadaKmh = Math.round((velCintaEstimadaKmh + pasos * PASO_CINTA_KMH) * 10) / 10;
   logBLE('Cinta: ' + Math.abs(pasos) + ' toque(s) de ' + (pasos > 0 ? '+' : '−') + ' → ' + velCintaEstimadaKmh.toFixed(1) + ' km/h', '#4FD8C4');
   return true;
@@ -4032,11 +4083,10 @@ function actualizarPlan(tSeg, zonaActual) {
   est = pasoPlan(progresoPlan, planActivo, tSeg, zonaActual);
   if (est.velocidadObjetivo != null && est.velocidadObjetivo !== planUltimoObjetivo) {
     planUltimoObjetivo = est.velocidadObjetivo;
-    velocidadManualKmh = est.velocidadObjetivo;
-    actual.velocidad = velocidadManualKmh / 3.6;
-    document.getElementById('hudKmh').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
-    // v92: con la cinta conectada por BLE y la velocidad de referencia cargada, la mueve sola
+    // v92: con la cinta conectada por BLE y la velocidad de referencia cargada, la mueve sola.
+    // v93: en ese caso la velocidad de la app sube toque a toque junto con la cinta (ver cola).
     const movio = moverCintaA(est.velocidadObjetivo);
+    if (!movio) aplicarVelocidadCinta(est.velocidadObjetivo);
     toast((movio ? 'Cinta → ' : 'Poné la cinta a ') + est.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Plan — ' + est.etiqueta + ' · ' + est.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (est.velocidadObjetivo == null && planUltimoObjetivo !== null) {
@@ -4110,10 +4160,8 @@ function actualizarTestVma(tSeg) {
   if (e.escalonIndex !== testVmaEscalonPrevio) {
     testVmaEscalonPrevio = e.escalonIndex;
     testVmaAvisado = false;
-    velocidadManualKmh = e.velocidadObjetivo;
-    actual.velocidad = velocidadManualKmh / 3.6;
-    document.getElementById('hudKmh').textContent = velocidadManualKmh.toFixed(1) + ' km/h';
-    const movio = moverCintaA(e.velocidadObjetivo); // v92: igual que el plan por bloques
+    const movio = moverCintaA(e.velocidadObjetivo); // v92/v93: igual que el plan por bloques
+    if (!movio) aplicarVelocidadCinta(e.velocidadObjetivo);
     toast('Escalón ' + e.numeroEscalon + ': ' + (movio ? 'cinta → ' : 'subí la cinta a ') + e.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Test VMA — escalón ' + e.numeroEscalon + ' a ' + e.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (!testVmaAvisado && e.segundosRestantes <= 5) {
@@ -4125,11 +4173,12 @@ function actualizarTestVma(tSeg) {
   document.getElementById('vmaDetalle').textContent = 'Test VMA · escalón ' + e.numeroEscalon + ' · faltan ' + e.segundosRestantes + 's';
 }
 function ajustarVelocidadManual(delta) {
-  enviarComandoCinta(delta > 0 ? 1 : 2); // Vel+/Vel- — no hace nada si no hay cinta BLE conectada
   // v92: cada toque manual también mueve lo que la app cree que marca la cinta, así un cambio de
   // bloque posterior calcula los toques desde la velocidad real y no desde una vieja.
+  let velTrasToque = null;
   if (cintaCaracteristica && velCintaEstimadaKmh != null) {
     velCintaEstimadaKmh = Math.max(0, Math.round((velCintaEstimadaKmh + (delta > 0 ? PASO_CINTA_KMH : -PASO_CINTA_KMH)) * 10) / 10);
+    velTrasToque = [velCintaEstimadaKmh];
   }
   velocidadManualKmh = Math.max(0, Math.round((velocidadManualKmh + delta) * 10) / 10);
   actual.velocidad = velocidadManualKmh / 3.6; // km/h -> m/s, mismo dato que usa tick() para ritmo/distancia
@@ -4139,6 +4188,9 @@ function ajustarVelocidadManual(delta) {
   const v = actual.velocidad;
   document.getElementById('hudRitmo').textContent = v > 0.1 ? segAMMSS(1000 / v) : '--:--';
   document.getElementById('hudKmh').textContent = v > 0.1 ? velocidadManualKmh.toFixed(1) + ' km/h' : '-- km/h';
+  // Vel+/Vel- a la cinta (no hace nada sin cinta BLE). Va al final: si la cola está vacía se
+  // manda en el acto y su velTras deja la velocidad igual a la de la cinta.
+  encolarComandoCinta(delta > 0 ? 1 : 2, 1, velTrasToque);
 }
 function actualizarManual() {
   const ritmoTxt = document.getElementById('manualRitmo').value;
@@ -4187,19 +4239,43 @@ function hexRgba(hex, a) {
 const SCENES = {
   rural: { label: 'Rural', sky: ['#5bb0e6', '#bfe6f5'], ground: '#213524', asphalt: '#4c5661', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 1, decor: 'trees' },
   velodromo_open: { label: 'Pista al aire libre', sky: ['#5bb0e6', '#bfe6f5'], ground: '#3a6b3d', asphalt: '#b8956a', mtnCol: ['#7492ad', '#54718d'], mtnAmp: 0.5, decor: 'stands' },
+  // v93: paisaje fueguino para el sendero — montañas nevadas, canal y lengas
+  fueguino: { label: 'Fueguino', sky: ['#3a6d93', '#d9c8a4'], ground: '#4d5c33', asphalt: '#4c5661', mtnCol: ['#6d8aa5', '#3f5a70'], mtnAmp: 2.2, decor: 'lengas', nieve: true, canal: true },
   velodromo: { label: 'Pista cubierta', sky: ['#171b22', '#2a323d'], ground: '#2e4a2f', asphalt: '#c9a768', mtnCol: ['#333a44', '#242931'], mtnAmp: 0.6, decor: 'stands' },
 };
 function drawMountains(ctx, w, horizon, camB, sc) {
   const layers = [{ amp: 0.10, freq: 0.9, pan: 55, col: sc.mtnCol[0] }, { amp: 0.17, freq: 1.5, pan: 100, col: sc.mtnCol[1] }];
   for (const L of layers) {
     const base = horizon, amp = L.amp * sc.mtnAmp * horizon, phase = camB * L.pan;
-    ctx.fillStyle = L.col; ctx.beginPath(); ctx.moveTo(0, base);
+    const cerro = new Path2D(); cerro.moveTo(0, base);
     for (let px = 0; px <= w; px += 6) {
       const t = (px / w) * 6.2832 * L.freq + phase;
       const yy = base - amp * (0.55 + 0.45 * Math.sin(t) + 0.28 * Math.sin(t * 2.3 + 1));
-      ctx.lineTo(px, yy);
+      cerro.lineTo(px, yy);
     }
-    ctx.lineTo(w, base); ctx.closePath(); ctx.fill();
+    cerro.lineTo(w, base); cerro.closePath();
+    ctx.fillStyle = L.col; ctx.fill(cerro);
+    if (sc.nieve) { // v93: nieve solo en las cumbres
+      ctx.save(); ctx.clip(cerro);
+      const cima = base - amp * 1.28;
+      const g = ctx.createLinearGradient(0, cima, 0, base - amp * 0.62);
+      g.addColorStop(0, 'rgba(246,249,252,1)'); g.addColorStop(0.55, 'rgba(236,242,247,.85)'); g.addColorStop(1, 'rgba(236,242,247,0)');
+      ctx.fillStyle = g; ctx.fillRect(0, cima, w, amp * 0.7);
+      ctx.restore();
+    }
+  }
+  if (sc.canal) { // v93: el canal al pie de las montañas, con reflejos que se mueven
+    const ch = Math.max(4, horizon * 0.05);
+    const agua = ctx.createLinearGradient(0, horizon - ch, 0, horizon);
+    agua.addColorStop(0, '#6d93ad'); agua.addColorStop(1, '#3d6680');
+    ctx.fillStyle = agua; ctx.fillRect(0, horizon - ch, w, ch);
+    const tt = performance.now() / 1000;
+    ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
+    for (let i = 0; i < 7; i++) {
+      const x = (((i * 97 + tt * 14 + camB * 120) % (w + 60)) + w + 60) % (w + 60) - 30;
+      const y = horizon - ch * 0.3 - (i % 3) * ch * 0.22;
+      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 16, y); ctx.stroke();
+    }
   }
 }
 function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
@@ -4213,6 +4289,14 @@ function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
       ctx.globalAlpha = 0.75;
       for (let c = 0; c < 3; c++) { if (Math.sin(seed * 23 + tI * 5 + c * 9) > -0.2) ctx.fillRect(tx - sw / 2 + c * (sw / 3) + sw * 0.05, yy + sh * 0.03, sw / 3 * 0.7, sh / tiers * 0.5); }
       ctx.globalAlpha = 1;
+    }
+  } else if (decor === 'lengas') { // v93: lengas, algunas con colores de otoño
+    ctx.fillStyle = '#4a3527'; ctx.fillRect(tx - th * 0.05, ty - th * 0.38, th * 0.1, th * 0.38);
+    const otono = Math.sin(seed * 91.7) > 0.2;
+    const tonos = otono ? ['#8a4b1f', '#b8742a', '#d49a3a'] : ['#2f4a2c', '#3f6236', '#557a44'];
+    for (let i = 0; i < 3; i++) {
+      ctx.fillStyle = tonos[i];
+      ctx.beginPath(); ctx.ellipse(tx + (i - 1) * th * 0.12, ty - th * (0.55 + i * 0.12), th * (0.26 - i * 0.04), th * (0.2 - i * 0.02), 0, 0, 7); ctx.fill();
     }
   } else { // trees
     ctx.fillStyle = '#5a4634'; ctx.fillRect(tx - th * 0.05, ty - th * 0.32, th * 0.1, th * 0.32);
@@ -4340,17 +4424,59 @@ function obtenerDatosCorredor() {
 // dibuja al corredor en la fase (radianes, igual convención que runnerPhase/ghostRunnerPhase —
 // una vuelta completa 0..2π es un ciclo de zancada entero) usando las poses reales del editor
 // para la franja de velocidad correspondiente, interpolando entre los 8 instantes de esa franja.
-function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, velocidadMS) {
+// v93: detalle (luz en la remera, suela, sombra según rebote) e inclinación (0..1, pendiente) son
+// opcionales y se agregan ENCIMA de las poses del editor, sin cambiarlas. Replay y editor no los pasan.
+function drawRunnerRear(ctx, cx, gy, s, fase, jersey, alpha, velocidadMS, detalle, inclinacion) {
   ctx.save(); ctx.globalAlpha = alpha == null ? 1 : alpha; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
-  const modo = claseVelocidad(velocidadMS);
-  const md = obtenerDatosCorredor()[modo];
+  const datos = obtenerDatosCorredor();
   const faseMod = ((fase % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI);
   const tGlobal = (faseMod / (2 * Math.PI)) * 8;
-  const dDer = interpolarLadoEnSecuencia(md.poses, 'der', tGlobal);
-  const dIzq = interpolarLadoEnSecuencia(md.poses, 'izq', tGlobal);
-  const bounce = interpolarBounceEnSecuencia(md.bounce, tGlobal);
-  dibujarPoseDesdeD(ctx, cx, gy, s, dDer, dIzq, bounce, jersey);
+  const poseDe = modo => ({
+    der: interpolarLadoEnSecuencia(datos[modo].poses, 'der', tGlobal),
+    izq: interpolarLadoEnSecuencia(datos[modo].poses, 'izq', tGlobal),
+    bounce: interpolarBounceEnSecuencia(datos[modo].bounce, tGlobal),
+  });
+  const m = mezclaFranjas(velocidadMS);
+  let pose = poseDe(m.a);
+  if (m.b && m.t > 0 && datos[m.b]) pose = mezclarPoses(pose, poseDe(m.b), m.t);
+  dibujarPoseDesdeD(ctx, cx, gy, s, pose.der, pose.izq, pose.bounce, jersey,
+    detalle ? { detalle: true, inclinacion: inclinacion || 0 } : null);
   ctx.restore();
+}
+// v93: cerca de cada umbral del editor (6, 10 y 15 km/h) mezcla de a poco las poses de las dos
+// franjas vecinas — antes, al pasar de 9.9 a 10.0 km/h la pose saltaba de trote a carrera de golpe.
+// Fuera de esa ventana de ±0.5 km/h usa la franja pura, exactamente como la ajustó Hugo.
+function mezclaFranjas(velocidadMS) {
+  const kmh = (velocidadMS || 0) * 3.6, ANCHO = 0.5;
+  const limites = [[6, 'caminata', 'trote'], [10, 'trote', 'carrera'], [15, 'carrera', 'sprint']];
+  for (const [lim, a, b] of limites) {
+    if (kmh > lim - ANCHO && kmh < lim + ANCHO) return { a, b, t: (kmh - (lim - ANCHO)) / (2 * ANCHO) };
+  }
+  return { a: claseVelocidad(velocidadMS), b: null, t: 0 };
+}
+function mezclarPoses(pa, pb, t) {
+  const lado = (a, b) => { const o = {}; EDITOR_CAMPOS.forEach(c => { o[c] = a[c] + (b[c] - a[c]) * t; }); return o; };
+  return { der: lado(pa.der, pb.der), izq: lado(pa.izq, pb.izq), bounce: pa.bounce + (pb.bounce - pa.bounce) * t };
+}
+// inclinación hacia adelante según la pendiente de la cinta: 0 en llano, 1 a partir de 15%
+function inclinacionCorredor() {
+  return Math.max(0, Math.min(1, (pendienteActual || 0) / 15));
+}
+// v93: fantasma con estela (3 copias tenues por delante) y un marcador sobre la cabeza,
+// para ubicarlo cuando está lejos y se ve chiquito
+function dibujarFantasmaEscena(ctx, S, dFant, youS, velMS) {
+  const p = roadPointAt(S, dFant);
+  if (!p) return;
+  const tam = q => Math.max(5, Math.min(youS * 0.8, q.hw * 0.14));
+  for (let i = 3; i >= 1; i--) {
+    const q = roadPointAt(S, dFant + i * 1.4);
+    if (q) drawRunnerRear(ctx, q.cx, q.y, tam(q), ghostRunnerPhase - i * 0.4, '#9fb0c0', 0.1 / i, velMS);
+  }
+  const gs = tam(p);
+  drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, velMS);
+  const my = p.y - gs * 3.1 - 4;
+  ctx.fillStyle = '#FF8A7A';
+  ctx.beginPath(); ctx.moveTo(p.cx - 6, my - 8); ctx.lineTo(p.cx + 6, my - 8); ctx.lineTo(p.cx, my); ctx.closePath(); ctx.fill();
 }
 
 
@@ -4392,12 +4518,70 @@ function renderEscena() {
   const { ctx, w, h } = roadCtxEscena;
   if (escenarioActual === 'pista') dibujarEscenaPista(ctx, w, h);
   else dibujarEscenaSendero(ctx, w, h);
+  dibujarHaloZona(ctx, w, h);
+  dibujarHudEscena(ctx, w, h);
   actualizarLineaVuelta();
 }
+// v93: zona actual para la escena — por pulso si hay banda y umbral de pulso, si no por ritmo
+const COLORES_ZONA_HEX = ['#4FD8C4', '#6FDD8E', '#E8D24B', '#F08B3C', '#FF5A5F'];
+function zonaActualEscena() {
+  const v = actual.velocidad || 0;
+  let z = (zonas.umbralPulso && actual.pulso) ? zonaPorPulso(actual.pulso, zonas.umbralPulso) : null;
+  if (z == null && zonas.umbralRitmoSegKm && v > 0.3) z = zonaPorRitmo(1000 / v, zonas.umbralRitmoSegKm);
+  return z;
+}
+// v93: los bordes de la escena toman el color de la zona y laten al ritmo del pulso real
+function dibujarHaloZona(ctx, w, h) {
+  const z = zonaActualEscena();
+  if (!z) return;
+  let latido = 0.5;
+  if (actual.pulso > 30) {
+    const periodo = 60 / actual.pulso, t = ((performance.now() / 1000) % periodo) / periodo;
+    latido = Math.min(1, Math.exp(-t * 9) + 0.5 * Math.exp(-Math.pow((t - 0.28) * 14, 2)));
+  }
+  const g = ctx.createRadialGradient(w / 2, h * 0.55, Math.min(w, h) * 0.35, w / 2, h * 0.55, Math.max(w, h) * 0.75);
+  g.addColorStop(0, hexRgba(COLORES_ZONA_HEX[z - 1], 0));
+  g.addColorStop(1, hexRgba(COLORES_ZONA_HEX[z - 1], 0.14 + 0.2 * latido));
+  ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+}
+// v93: ritmo, km/h, distancia, pendiente, pulso y zona sobre la escena
+function dibujarHudEscena(ctx, w, h) {
+  const v = actual.velocidad || 0, kmh = v * 3.6;
+  const mono = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
+  const sans = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  ctx.save();
+  ctx.shadowColor = 'rgba(0,0,0,.65)'; ctx.shadowBlur = 6;
+  ctx.textAlign = 'left';
+  const ritmo = v > 0.3 ? segAMMSS(1000 / v) : '--:--';
+  ctx.font = '700 30px ' + mono; ctx.fillStyle = '#4FD8C4'; ctx.fillText(ritmo, 12, 40);
+  const rw = ctx.measureText(ritmo).width;
+  ctx.font = '500 12px ' + sans; ctx.fillStyle = '#d6efe9'; ctx.fillText('/km', 15 + rw, 40);
+  ctx.font = '700 16px ' + mono; ctx.fillStyle = '#E8B84B';
+  ctx.fillText(kmh > 0.3 ? kmh.toFixed(1) + ' km/h' : '-- km/h', 12, 61);
+  ctx.textAlign = 'right'; ctx.fillStyle = '#ffffff'; ctx.font = '600 14px ' + mono;
+  ctx.fillText((distanciaAcumM / 1000).toFixed(2) + ' km', w - 12, 24);
+  ctx.fillText((pendienteActual || 0).toFixed(1) + ' %', w - 12, 43);
+  const z = zonaActualEscena();
+  let xp = w - 12;
+  if (z) {
+    ctx.shadowBlur = 0;
+    ctx.font = '700 12px ' + sans;
+    const zt = 'Z' + z, zw = ctx.measureText(zt).width + 12;
+    ctx.fillStyle = COLORES_ZONA_HEX[z - 1];
+    ctx.beginPath(); ctx.roundRect(w - 12 - zw, 51, zw, 17, 8.5); ctx.fill();
+    ctx.fillStyle = '#0A0D10'; ctx.textAlign = 'center'; ctx.fillText(zt, w - 12 - zw / 2, 64);
+    xp = w - 12 - zw - 6;
+    ctx.shadowBlur = 6;
+  }
+  ctx.textAlign = 'right'; ctx.fillStyle = '#ffffff'; ctx.font = '600 14px ' + mono;
+  ctx.fillText((actual.pulso ? actual.pulso : '--') + ' ppm', xp, 64);
+  ctx.restore();
+}
 function dibujarEscenaSendero(ctx, w, h) {
-  const bFn = () => 0; // sendero recto (sin ruta GPX real que trazar)
+  // v93: curvas suaves (antes era recto) para que el paisaje se mueva con profundidad
+  const bFn = d => 0.16 * Math.sin(d / 150) + 0.07 * Math.sin(d / 57 + 1.3);
   const eFn = d => d * (pendienteActual / 100); // usa la pendiente en vivo como si fuera una subida constante
-  const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.rural, null);
+  const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.fueguino, null);
   const youS = Math.max(20, h * 0.135);
   let gapM = null, deltaSeg = null;
   if (puntosFantasma) {
@@ -4405,10 +4589,9 @@ function dibujarEscenaSendero(ctx, w, h) {
     const distFant = interpolarDistanciaEnT(puntosFantasma, t);
     gapM = distanciaAcumM - distFant;
     deltaSeg = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
-    const p = roadPointAt(S, distFant);
-    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, repInterp(puntosFantasma, t, 'velocidad')); }
+    dibujarFantasmaEscena(ctx, S, distFant, youS, repInterp(puntosFantasma, t, 'velocidad'));
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad);
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad, true, inclinacionCorredor());
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
 }
 function dibujarLineaMeta(ctx, S) {
@@ -4438,10 +4621,9 @@ function dibujarEscenaPista(ctx, w, h) {
     lapDiff = calcularVueltaGap(gapM, LARGO_PISTA_M);
     const gd0 = ((gNow % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
     const relAhead = ((gd0 - d0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
-    const p = roadPointAt(S, d0 + relAhead);
-    if (p) { const gs = Math.max(5, Math.min(youS * 0.8, p.hw * 0.14)); drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#9fb0c0', 0.45, repInterp(puntosFantasma, t, 'velocidad')); }
+    dibujarFantasmaEscena(ctx, S, d0 + relAhead, youS, repInterp(puntosFantasma, t, 'velocidad'));
   }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad);
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad, true, inclinacionCorredor());
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff);
 }
 function dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff) {
@@ -4450,17 +4632,20 @@ function dibujarBadgeGap(ctx, w, gapM, deltaSeg, lapDiff) {
   let lbl = formatearGapMetros(gapM);
   if (lapDiff) lbl += '  (' + (lapDiff > 0 ? '+' : '') + lapDiff + ' vta)';
   const lbl2 = deltaSeg != null ? formatearDelta(deltaSeg) : '';
-  ctx.font = '700 15px system-ui'; ctx.textAlign = 'center';
+  // v93: abajo a la izquierda, al costado del corredor — arriba van los datos, y en el centro
+  // tapaba al fantasma cuando está cerca del horizonte
+  ctx.font = '700 14px system-ui'; ctx.textAlign = 'left';
   const tw = ctx.measureText(lbl).width;
   ctx.font = '600 12px system-ui';
   const tw2 = ctx.measureText(lbl2).width;
-  const boxW = Math.max(tw, tw2) + 14;
+  const boxW = Math.max(tw, tw2) + 14, boxH = lbl2 ? 38 : 22;
+  const h = roadCtxEscena ? roadCtxEscena.h : 320, bx = 10, by = h - boxH - 10;
   ctx.fillStyle = 'rgba(4,7,10,.72)';
-  ctx.fillRect(w / 2 - boxW / 2, 8, boxW, lbl2 ? 40 : 24);
-  ctx.font = '700 15px system-ui';
+  ctx.beginPath(); ctx.roundRect(bx, by, boxW, boxH, 8); ctx.fill();
+  ctx.font = '700 14px system-ui';
   ctx.fillStyle = ahead ? '#3fb950' : '#ff6b6b';
-  ctx.fillText(lbl, w / 2, 25);
-  if (lbl2) { ctx.font = '600 12px system-ui'; ctx.fillStyle = '#9aa5ad'; ctx.fillText(lbl2, w / 2, 42); }
+  ctx.fillText(lbl, bx + 7, by + 16);
+  if (lbl2) { ctx.font = '600 12px system-ui'; ctx.fillStyle = '#9aa5ad'; ctx.fillText(lbl2, bx + 7, by + 32); }
   ctx.textAlign = 'start';
 }
 function actualizarLineaVuelta() {
@@ -4896,14 +5081,18 @@ function espejarEditorInstante() {
 // dibuja al corredor completo a partir de datos de pose independientes por lado (dDer/dIzq) más
 // un desplazamiento vertical de cuerpo entero (bounce) — reusa segmentoGrueso/shadeHex, mismo
 // estilo que drawRunnerRear, pero SIN animación propia: la pose es la que dicen los campos.
-function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey) {
+function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra) {
   const skin = '#e8934c', zapatilla = '#20242b';
   const shorts = shadeHex(jersey, 0.42);
+  const detalle = !!(extra && extra.detalle), incl = (extra && extra.inclinacion) || 0;
   const gy = gyBase - (bounce || 0) * s;
-  const hipY = gy - 1.35 * s, shY = gy - 2.35 * s, headY = gy - 2.66 * s, lean = s * 0.05;
+  // v93: en subida el torso se inclina hacia adelante — de espaldas se ve más corto y la cabeza más baja
+  const hipY = gy - 1.35 * s, shY = gy - 2.35 * s + incl * s * 0.22, headY = gy - 2.66 * s + incl * s * 0.3, lean = s * 0.05;
 
+  // v93 (detalle): la sombra se achica cuando el cuerpo está en el aire, según el rebote del editor
+  const escSombra = detalle ? 1 - Math.min(0.45, Math.max(0, bounce || 0) * 4) : 1;
   ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.beginPath(); ctx.ellipse(cx, gyBase + s * 0.05, s * 0.42, s * 0.12, 0, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(cx, gyBase + s * 0.05, s * 0.42 * escSombra, s * 0.12 * escSombra, 0, 0, 7); ctx.fill();
 
   function leg(side, d) {
     const hipX = cx + side * s * 0.16;
@@ -4916,6 +5105,11 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey) {
     ctx.save(); ctx.translate(footX, footY + s * 0.05);
     ctx.fillStyle = zapatilla;
     ctx.beginPath(); ctx.ellipse(0, 0, s * 0.17 * escalaPie, s * 0.095 * escalaPie, 0, 0, 7); ctx.fill();
+    // v93 (detalle): con el pie arriba se ve la suela
+    if (detalle && gyBase - footY > s * 0.25) {
+      ctx.fillStyle = '#e7e2d6';
+      ctx.beginPath(); ctx.ellipse(0, s * 0.01, s * 0.12 * escalaPie, s * 0.045 * escalaPie, 0, 0, 7); ctx.fill();
+    }
     ctx.restore();
   }
   leg(1, dDer); leg(-1, dIzq);
@@ -4925,7 +5119,11 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey) {
   ctx.lineTo(cx + s * 0.21, hipY + s * 0.28); ctx.lineTo(cx - s * 0.21, hipY + s * 0.28); ctx.closePath(); ctx.fill();
 
   const hipHW = s * 0.26, shHW = hipHW * 1.275;
-  ctx.fillStyle = jersey;
+  if (detalle) { // v93: luz desde arriba a la izquierda sobre la remera
+    const g = ctx.createLinearGradient(cx - shHW, shY, cx + shHW, hipY);
+    g.addColorStop(0, shadeHex(jersey, 1.25)); g.addColorStop(1, shadeHex(jersey, 0.8));
+    ctx.fillStyle = g;
+  } else ctx.fillStyle = jersey;
   ctx.beginPath();
   ctx.moveTo(cx - hipHW, hipY - s * 0.05); ctx.lineTo(cx + hipHW, hipY - s * 0.05);
   ctx.lineTo(cx + shHW + lean, shY); ctx.lineTo(cx - shHW + lean, shY);
