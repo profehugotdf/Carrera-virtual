@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v95</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v96</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2717,6 +2717,30 @@
          con más nubes, a veces quedaban números blancos sobre blanco.
        Probado renderizando la escena real (sendero con 6% y pista, con
        fantasma) en navegador sin pantalla, sin errores de página.
+   v96: dos correcciones que marcó Hugo en la pista de 400.
+       - Línea de meta al FINAL de la recta principal, como en una pista
+         de atletismo. Antes el límite de vuelta caía al comienzo de una
+         recta (donde terminaba la curva). Nueva bearingPista(): corre el
+         óvalo una recta, así la vuelta arranca en la meta, entra a la
+         curva y los últimos 93,8 m son la recta que termina en la meta.
+         velodromeBearingAt (compartido con Bici Indoor) no se tocó. El
+         conteo de vueltas (cada 400 m) coincide ahora con la línea.
+         Vale para la escena en vivo y el replay.
+       - Paralaje del fondo: las montañas corrían con fase = rumbo × 55
+         (y × 100 la capa cercana), así que en una vuelta al óvalo
+         pasaban decenas de veces y cada capa a su propia velocidad. Lo
+         correcto con objetos tan lejanos es que al girar se muevan
+         exactamente lo que gira la vista, todos juntos: el perfil ahora
+         depende del azimut real (frecuencias enteras, cierra sin salto
+         en 360°). Montañas, reflejos del canal, sol y nubes usan la
+         misma proyección que el camino (centro + f·tan(ángulo)); antes
+         sol y nubes usaban otra fórmula y se desfasaban del resto.
+       Probado: rumbo constante en los últimos 93,8 m de la vuelta y
+       curva recién después de la meta; perfil de montañas idéntico tras
+       una vuelta completa; un punto fijo del mundo se recupera exacto
+       desde su posición en pantalla. Render de la pista en 6 puntos de
+       la vuelta (recta hacia la meta, meta, curva, salida de la curva),
+       sin errores de página.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4291,10 +4315,16 @@ const SCENES = {
 };
 // v94: sol bajo con resplandor y nubes que derivan despacio. Ubicados por rumbo (azimut) respecto
 // de la cámara: en las curvas se desplazan, y en la pista dan la vuelta junto con el óvalo.
+// v96: todo lo que está "en el infinito" (montañas, canal, sol, nubes) se ubica con la misma
+// proyección que el camino — x = centro + f·tan(ángulo relativo), con f = w·0.95 como en roadBands.
+// Así, al girar, se mueve exactamente lo que gira la vista y todo junto, sin paralaje entre capas
+// (en un óvalo no hay: esos objetos están demasiado lejos; al girar solo hay rotación).
+function xCielo(w, rel) { return w / 2 + (w * 0.95) * Math.tan(rel); }
+function relAzimut(az, camB) { return Math.atan2(Math.sin(az - camB), Math.cos(az - camB)); }
 function dibujarSol(ctx, w, horizon, camB) {
-  const rel = Math.atan2(Math.sin(0.55 - camB), Math.cos(0.55 - camB));
-  if (Math.cos(rel) < 0.2) return;
-  const x = w / 2 + Math.sin(rel) * w * 0.9, y = horizon * 0.42;
+  const rel = relAzimut(0.55, camB);
+  if (Math.abs(rel) > 0.85) return;
+  const x = xCielo(w, rel), y = horizon * 0.42;
   const g = ctx.createRadialGradient(x, y, 0, x, y, horizon * 0.55);
   g.addColorStop(0, 'rgba(255,244,214,.95)'); g.addColorStop(0.12, 'rgba(255,236,190,.8)'); g.addColorStop(1, 'rgba(255,230,180,0)');
   ctx.fillStyle = g; ctx.fillRect(0, 0, w, horizon);
@@ -4304,9 +4334,9 @@ function dibujarNubes(ctx, w, horizon, camB) {
   // v95: 24 nubes (antes 6), una cada ~15° de horizonte: la cámara abarca unos 55°, así que
   // siempre quedan 3 o 4 a la vista
   for (let i = 0; i < 24; i++) {
-    const az = i * 0.262 + 0.12 * Math.sin(i * 2.7) + deriva, rel = Math.atan2(Math.sin(az - camB), Math.cos(az - camB));
-    if (Math.cos(rel) < 0.15) continue;
-    const x = w / 2 + Math.sin(rel) * w * 1.1, y = horizon * (0.12 + 0.09 * (i % 4));
+    const az = i * 0.262 + 0.12 * Math.sin(i * 2.7) + deriva, rel = relAzimut(az, camB);
+    if (Math.abs(rel) > 0.8) continue;
+    const x = xCielo(w, rel), y = horizon * (0.12 + 0.09 * (i % 4));
     const t = horizon * (0.05 + 0.025 * ((i * 7) % 3));
     ctx.fillStyle = 'rgba(255,255,255,' + (0.62 + 0.08 * (i % 3)) + ')';
     ctx.beginPath();
@@ -4317,13 +4347,18 @@ function dibujarNubes(ctx, w, horizon, camB) {
   }
 }
 function drawMountains(ctx, w, horizon, camB, sc) {
-  const layers = [{ amp: 0.10, freq: 0.9, pan: 55, col: sc.mtnCol[0] }, { amp: 0.17, freq: 1.5, pan: 100, col: sc.mtnCol[1] }];
+  // v96: la altura de cada cerro depende del azimut real (ángulo en el mundo), no de la posición en
+  // pantalla corrida por el rumbo. Frecuencias enteras (k1, k2) para que el perfil cierre sin salto
+  // al dar la vuelta completa (360°). Antes: fase = rumbo × 55 (y × 100 la capa cercana), así que en
+  // una vuelta al óvalo las montañas pasaban decenas de veces y cada capa a distinta velocidad.
+  const layers = [{ amp: 0.10, k1: 6, k2: 13, fase: 0.4, col: sc.mtnCol[0] }, { amp: 0.17, k1: 10, k2: 23, fase: 2.1, col: sc.mtnCol[1] }];
+  const f = w * 0.95;
   for (const L of layers) {
-    const base = horizon, amp = L.amp * sc.mtnAmp * horizon, phase = camB * L.pan;
+    const base = horizon, amp = L.amp * sc.mtnAmp * horizon;
     const cerro = new Path2D(); cerro.moveTo(0, base);
-    for (let px = 0; px <= w; px += 6) {
-      const t = (px / w) * 6.2832 * L.freq + phase;
-      const yy = base - amp * (0.55 + 0.45 * Math.sin(t) + 0.28 * Math.sin(t * 2.3 + 1));
+    for (let px = 0; px <= w + 6; px += 6) {
+      const az = camB + Math.atan((px - w / 2) / f);
+      const yy = base - amp * (0.55 + 0.45 * Math.sin(L.k1 * az + L.fase) + 0.28 * Math.sin(L.k2 * az + 1 + L.fase));
       cerro.lineTo(px, yy);
     }
     cerro.lineTo(w, base); cerro.closePath();
@@ -4344,9 +4379,10 @@ function drawMountains(ctx, w, horizon, camB, sc) {
     ctx.fillStyle = agua; ctx.fillRect(0, horizon - ch, w, ch);
     const tt = performance.now() / 1000;
     ctx.strokeStyle = 'rgba(255,255,255,.28)'; ctx.lineWidth = 1;
-    for (let i = 0; i < 7; i++) {
-      const x = (((i * 97 + tt * 14 + camB * 120) % (w + 60)) + w + 60) % (w + 60) - 30;
-      const y = horizon - ch * 0.3 - (i % 3) * ch * 0.22;
+    for (let i = 0; i < 40; i++) { // v96: reflejos fijos al rumbo, como las montañas
+      const rel = relAzimut(i * 0.157 + 0.02 * Math.sin(tt * 0.8 + i), camB);
+      if (Math.abs(rel) > 0.6) continue;
+      const x = xCielo(w, rel), y = horizon - ch * 0.3 - (i % 3) * ch * 0.22;
       ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + 16, y); ctx.stroke();
     }
   }
@@ -4487,6 +4523,14 @@ function velodromeBearingAt(d, trackLen) {
   return -Math.PI - (d - (2 * straight + curveLen)) / R;
 }
 function velodromeEleAt() { return 0; }
+// v96: rumbo de la pista de 400 con el límite de vuelta al FINAL de la recta principal, como en una
+// pista de atletismo real. velodromeBearingAt (compartido con Bici Indoor) arranca la vuelta al
+// comienzo de una recta; corriéndolo una recta, d=0 cae justo donde esa recta termina: la vuelta
+// arranca en la meta, entra a la curva, y los últimos metros de cada vuelta son la recta que
+// termina en la meta. El conteo de vueltas (cada 400 m) no cambia, ahora coincide con la línea.
+function bearingPista(d) {
+  return velodromeBearingAt(d + velodromeGeom(LARGO_PISTA_M).straight, LARGO_PISTA_M);
+}
 const VELO_GEOM = { N: 100, NEAR: 0.8, GROW: 0.012, wRoad: 4.2 };
 const LARGO_PISTA_M = 400;
 
@@ -4725,8 +4769,8 @@ function dibujarEscenaSendero(ctx, w, h) {
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
 }
 function dibujarLineaMeta(ctx, S) {
-  // el límite de vuelta (d=0 / d=LARGO_PISTA_M en el espacio local de S) cae justo donde termina
-  // la segunda curva del óvalo y arranca la recta — ver velodromeBearingAt: d=0 es el inicio de esa recta.
+  // el límite de vuelta (d=0 / d=LARGO_PISTA_M en el espacio local de S) cae al final de la recta
+  // principal — ver bearingPista (v96; antes caía al comienzo de la recta).
   const p = roadPointAt(S, LARGO_PISTA_M);
   if (!p) return; // fuera del rango visible por ahora (recién la vas a ver al acercarte)
   const cellW = Math.max(2, p.hw * 0.16), stripeH = Math.max(2, p.hw * 0.16);
@@ -4738,7 +4782,7 @@ function dibujarLineaMeta(ctx, S) {
 }
 function dibujarEscenaPista(ctx, w, h) {
   const d0 = ((distanciaAcumM % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
-  const bFn = d => velodromeBearingAt(d, LARGO_PISTA_M);
+  const bFn = bearingPista; // v96: meta al final de la recta
   const S = roadBands(ctx, w, h, d0, bFn, velodromeEleAt, null, SCENES.velodromo_open, VELO_GEOM);
   dibujarLineaMeta(ctx, S);
   const youS = Math.max(20, h * 0.135);
@@ -4963,7 +5007,7 @@ function dibujarRepPista(st) {
   const camRacer = repRacers[repCam] || repRacers[0];
   const cam = st.find(x => x.r === camRacer) || st[0];
   const camD0 = ((cam.d % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
-  const bFn = d => velodromeBearingAt(d, LARGO_PISTA_M);
+  const bFn = bearingPista; // v96: meta al final de la recta
   const S = roadBands(ctx, w, h, camD0, bFn, velodromeEleAt, null, SCENES.velodromo_open, VELO_GEOM);
   dibujarLineaMeta(ctx, S);
   const youS = Math.max(20, h * 0.135);
