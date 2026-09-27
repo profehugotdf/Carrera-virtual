@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v96</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v97</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2741,6 +2741,17 @@
        desde su posición en pantalla. Render de la pista en 6 puntos de
        la vuelta (recta hacia la meta, meta, curva, salida de la curva),
        sin errores de página.
+   v97: Hugo corrió con la HRM-Pro+ conectada: el registro mostró
+       "PRIMER DATO de cadencia/ritmo recibido" y pulso normal, pero la
+       casilla de cadencia quedó en "--" toda la sesión (sin zancada).
+       La casilla muestra "--" cuando la cadencia vale 0, y el registro
+       solo avisaba del primer dato, sin su valor: no había forma de
+       saber si la banda mandaba 0 o si pasaba otra cosa. Nuevo
+       diagnosticoRSC(): cada 15 s anota en el registro la cadencia y
+       velocidad que llegan de la banda (y el modo), avisa si la
+       cadencia llega en 0 más de 20 s seguidos, y avisa una vez si el
+       modo es Calibración (ahí la cadencia va a cadenciaBLE y la casilla
+       queda en "--" a propósito). No cambia cómo se usa la cadencia.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3401,6 +3412,31 @@ async function conectarRelojBLE() {
     logBLE('ERROR: ' + e.message, '#f85149');
   }
 }
+// v97: diagnóstico de cadencia en el Registro de sensores. Antes solo se avisaba del PRIMER dato,
+// sin su valor: si la banda mandaba cadencia 0 (no detecta carrera), la casilla quedaba en "--"
+// sin ninguna pista de por qué. Ahora: el valor de cada dato cada 15 s, y un aviso si la cadencia
+// llega en 0 más de 20 s seguidos, o si el modo es Calibración (ahí la cadencia se guarda aparte
+// y no se muestra en la casilla).
+let rscUltimoLogAt = 0, rscCeroDesde = 0, rscAvisoCero = false, rscAvisoCalib = false;
+function diagnosticoRSC(speed, cadence) {
+  const ahora = Date.now();
+  if (ahora - rscUltimoLogAt > 15000) {
+    rscUltimoLogAt = ahora;
+    logBLE('Banda: cadencia ' + cadence + ' pasos/min · velocidad ' + (speed * 3.6).toFixed(1) + ' km/h (modo ' + modo + ')');
+  }
+  if (cadence > 0) { rscCeroDesde = 0; rscAvisoCero = false; }
+  else {
+    if (!rscCeroDesde) rscCeroDesde = ahora;
+    if (!rscAvisoCero && ahora - rscCeroDesde > 20000) {
+      rscAvisoCero = true;
+      logBLE('La banda manda cadencia 0 hace más de 20 s: no está detectando que corrés. Ajustá la tira, humedecé los electrodos y fijate que no esté conectada a otro aparato.', '#d29922');
+    }
+  }
+  if (modo === 'calibracion' && !rscAvisoCalib) {
+    rscAvisoCalib = true;
+    logBLE('Modo Calibración: la cadencia de la banda se guarda para calibrar y no se muestra en la casilla de cadencia.', '#d29922');
+  }
+}
 function handleRSC(event) {
   ultimoDatoRelojAt = Date.now();
   if (!primerDatoRscLogueado) { primerDatoRscLogueado = true; logBLE('PRIMER DATO de cadencia/ritmo recibido', '#3fb950'); }
@@ -3415,6 +3451,7 @@ function handleRSC(event) {
   // TOTALES por minuto (ambos pies contados). Por eso se multiplica x2 acá, en el único lugar
   // donde entra el dato crudo — así "cadencia" significa lo mismo en toda la app.
   const cadence = v.getUint8(idx) * 2; idx += 1; // pasos/min totales (BLE manda zancadas/min)
+  diagnosticoRSC(speed, cadence);
   if (modo === 'calibracion') {
     // en calibración el HUD lo maneja el botón +/- (igual que modo manual) — el sensor
     // solo alimenta el par de referencia que se compara contra ese valor real en tick().
