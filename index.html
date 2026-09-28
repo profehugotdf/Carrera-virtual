@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v97</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v99</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2752,6 +2752,24 @@
        cadencia llega en 0 más de 20 s seguidos, y avisa una vez si el
        modo es Calibración (ahí la cadencia va a cadenciaBLE y la casilla
        queda en "--" a propósito). No cambia cómo se usa la cadencia.
+   v98: el aviso de cadencia 0 ahora sugiere primero sacarle la pila a
+       la banda unos 30 s. Con v97 el registro confirmó que la HRM-Pro+
+       mandaba cadencia 0 y velocidad 0 corriendo (el pulso andaba bien),
+       y reiniciarla así lo resolvió: el sensor de movimiento se había
+       trabado.
+   v99: pedido de Hugo (con una captura del informe de Garmin
+       Connect): "Tiempo en zonas de pulso" en el informe de cada
+       sesión — resumen al terminar y detalle del historial. Una fila
+       por zona (de la 5 a la 1, como Garmin) con su rango en ppm, el
+       nombre, una barra del color de la zona, el tiempo y el %. Sale de
+       los puntos de la sesión (cada punto suma el tiempo hasta el
+       siguiente; un hueco de más de 5 s es una pausa y suma 1 s —
+       probado: 60 s de pausa simulada no se cuentan). Las sesiones
+       ahora guardan umbralPulso (el vigente al correr): así el informe
+       de una sesión vieja no cambia si después se cambia el umbral. Las
+       sesiones anteriores a v99 no lo tienen y usan el umbral actual,
+       con una aclaración en el informe. Sin umbral cargado, un aviso
+       para cargarlo; sin datos de pulso, la sección no aparece.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3429,7 +3447,7 @@ function diagnosticoRSC(speed, cadence) {
     if (!rscCeroDesde) rscCeroDesde = ahora;
     if (!rscAvisoCero && ahora - rscCeroDesde > 20000) {
       rscAvisoCero = true;
-      logBLE('La banda manda cadencia 0 hace más de 20 s: no está detectando que corrés. Ajustá la tira, humedecé los electrodos y fijate que no esté conectada a otro aparato.', '#d29922');
+      logBLE('La banda manda cadencia 0 hace más de 20 s: no está detectando que corrés. Si ya estás corriendo, sacale la pila unos 30 s y volvé a ponerla (destraba el sensor de movimiento). Si sigue igual: ajustá la tira y fijate que no esté conectada a otro aparato.', '#d29922');
     }
   }
   if (modo === 'calibracion' && !rscAvisoCalib) {
@@ -6025,6 +6043,7 @@ function finalizarSesion(automatica) {
     id: 'run_' + Date.now(),
     fecha: new Date().toISOString(),
     inicioISO: new Date(inicioSesionMs).toISOString(), // timestamp real de arranque, v83 — ver nota junto a inicioSesionMs
+    umbralPulso: zonas.umbralPulso || null, // v99: umbral vigente al correr, para calcular el tiempo en zonas con el de ESE día
     modo,
     duracionSeg: Math.round(duracionSeg),
     distanciaM: Math.round(distanciaAcumM),
@@ -6574,6 +6593,53 @@ function tileResumenHTML(valor, etiqueta, claseExtra) {
 }
 // Grilla de tiles al estilo del resumen post-sesión de Bici Indoor, + texto cualitativo debajo.
 // La usan tanto la pantalla de "Sesión terminada" como el detalle de una sesión del historial.
+// v99: tiempo en cada zona de pulso, como el informe de Garmin Connect. Usa el umbral guardado en
+// la sesión (desde v99); las sesiones anteriores no lo tienen y usan el umbral actual (se aclara).
+// Cada punto suma el tiempo hasta el siguiente; si el hueco pasa de 5 s (pausa o corte), suma 1 s.
+function tiempoEnZonasPulso(s) {
+  const umbral = s.umbralPulso || zonas.umbralPulso;
+  if (!umbral) return { sinUmbral: true };
+  const pts = puntosDeSesion(s);
+  const seg = [0, 0, 0, 0, 0, 0];
+  let total = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    if (!p.pulso) continue;
+    // la app toma un dato por segundo: un hueco de más de 5 s es una pausa, y cuenta solo 1 s
+    const hueco = i + 1 < pts.length ? pts[i + 1].t - p.t : 1;
+    const dt = hueco > 0 && hueco <= 5 ? hueco : 1;
+    const z = zonaPorPulso(p.pulso, umbral);
+    if (z) { seg[z] += dt; total += dt; }
+  }
+  if (!total) return null;
+  return { seg, total, umbral, umbralActual: !s.umbralPulso };
+}
+function rangoZonaPulsoTexto(zdef, umbral) {
+  const desde = Math.ceil(zdef.min * umbral), hasta = Math.ceil(zdef.max * umbral) - 1;
+  if (zdef.z === 1) return '< ' + Math.ceil(zdef.max * umbral) + ' ppm';
+  if (zdef.max === Infinity) return '≥ ' + desde + ' ppm';
+  return desde + ' - ' + hasta + ' ppm';
+}
+function htmlTiempoEnZonas(s) {
+  const r = tiempoEnZonasPulso(s);
+  if (!r) return '';
+  if (r.sinUmbral) return '<div class="estado-conexion" style="margin-top:10px;">Para ver el tiempo en zonas de pulso, cargá tu umbral de pulso en la pestaña Zonas.</div>';
+  const filas = HR_ZONAS.slice().reverse().map(zdef => {
+    const t = r.seg[zdef.z], pct = Math.round(t / r.total * 100);
+    return '<div style="margin:12px 0;">' +
+      '<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">' +
+        '<div><b>Zona ' + zdef.z + '</b><div style="color:var(--muted); font-size:.9rem;">' + rangoZonaPulsoTexto(zdef, r.umbral) + ' · ' + zdef.label + '</div></div>' +
+        '<div style="font-family:var(--mono); white-space:nowrap;">' + segAHMS(Math.round(t)) + ' <span style="color:var(--muted); display:inline-block; min-width:3.2em; text-align:right;">' + pct + '%</span></div>' +
+      '</div>' +
+      '<div style="height:8px; border-radius:4px; background:var(--borde); margin-top:6px; overflow:hidden;">' +
+        '<div style="height:100%; width:' + pct + '%; background:' + COLOR_ZONA[zdef.z] + '; border-radius:4px;"></div>' +
+      '</div></div>';
+  }).join('');
+  return '<div style="margin-top:16px;">' +
+    '<div style="font-weight:700; font-size:1.05rem;">Tiempo en zonas de pulso</div>' +
+    '<div style="color:var(--muted); font-size:.85rem;">Umbral ' + r.umbral + ' ppm' + (r.umbralActual ? ' (el actual: esta sesión es anterior a que se guardara el umbral de cada día)' : '') + '</div>' +
+    filas + '</div>';
+}
 function renderResumenSesion(s, contenedorId) {
   const tiles = [];
   tiles.push(tileResumenHTML(segAHMS(s.duracionSeg), 'Tiempo'));
@@ -6605,7 +6671,8 @@ function renderResumenSesion(s, contenedorId) {
 
   document.getElementById(contenedorId).innerHTML =
     '<div class="hud-grid">' + tiles.join('') + '</div>' +
-    (extra ? '<div class="estado-conexion" style="margin-top:10px; line-height:1.9;">' + extra + '</div>' : '');
+    (extra ? '<div class="estado-conexion" style="margin-top:10px; line-height:1.9;">' + extra + '</div>' : '') +
+    htmlTiempoEnZonas(s); // v99
 }
 function mostrarResumenPost(s) {
   sesionRecienGuardadaId = s.id;
