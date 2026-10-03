@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v100</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v101</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -351,6 +351,7 @@
         <option value="ninguno">Ninguno (solo HUD numérico)</option>
         <option value="pista">Pista 400 m</option>
         <option value="sendero">Sendero / vereda</option>
+        <!-- v101: recorridos GPX guardados, se agregan acá como value="ruta:<id>" (ver poblarOpcionesRutas) -->
       </select>
 
       <div class="hud-item grande ritmo" id="tileMeta" style="display:none; margin-top:12px;">
@@ -620,12 +621,17 @@
   <section class="view" id="view-importar">
     <button class="cerrar" onclick="cambiarTab('vivo')">← Volver</button>
     <div class="card">
-      <h2>Importar TCX</h2>
+      <h2>Importar TCX o GPX</h2>
       <div class="estado-conexion" style="margin-bottom:8px;">Formato estándar de la industria, compatible con relojes GPS y plataformas de entrenamiento habituales. Los nombres de marca que puedan aparecer en esta pantalla son solo para indicar compatibilidad — esta app es un proyecto personal, sin afiliación con esas empresas.</div>
       <div class="file-drop">
-        <input type="file" id="inputTCX" accept=".tcx,application/xml,text/xml" onchange="manejarArchivoTCX(event)">
+        <input type="file" id="inputTCX" accept=".tcx,.gpx,application/xml,text/xml,application/gpx+xml" onchange="manejarArchivoTCX(event)">
       </div>
       <div id="previewTCX" style="margin-top:12px;"></div>
+    </div>
+    <div class="card">
+      <h2>Recorridos virtuales</h2>
+      <div class="estado-conexion" style="margin-bottom:8px;">Un GPX guardado como recorrido aparece en "Escenario visual": el camino sigue las curvas y las subidas reales, con la llegada al final del trazado.</div>
+      <div id="listaRutas"></div>
     </div>
   </section>
 
@@ -2786,6 +2792,28 @@
        que vienen después). Se calcula al abrir el informe, con caché en
        memoria por sesión. No toca los "mejores esfuerzos" (K_MEJORES),
        que siguen alimentando el umbral.
+   v101: GPX, pedido de Hugo (quería ver el recorrido de la 10K de La
+       Gaceta y el importador le decía "No se encontraron Trackpoints en
+       el TCX": solo leía TCX). Dos cosas:
+       - Importar actividades GPX (con hora): lee <trkpt> con altura,
+         hora y pulso/cadencia de las extensiones de Garmin (por
+         localName, sin depender de prefijos), distancia por haversine,
+         misma derivación de ritmo que el TCX, desnivel positivo con
+         histéresis de 2 m. La cadencia de un solo pie (~85, como la
+         guarda Garmin en GPX) se pasa a pasos/min. procesarTCX se
+         partió: lo común quedó en mostrarImportacion().
+       - Recorrido virtual: un GPX sin horarios (trazado de una carrera)
+         o cualquier GPX se puede guardar como recorrido. Se remuestrea
+         cada 5 m: rumbo (continuo, sin saltos de ±π, suavizado) y altura
+         (suavizada 50 m). Aparece en "Escenario visual" como
+         "Recorrido: nombre"; el camino sigue las curvas y subidas
+         reales, montañas y sol quedan fijos al norte real, la llegada
+         se dibuja al final del trazado (pasada, sigue derecho), y los
+         datos muestran la pendiente del trazado y cuánto falta. Si el
+         GPX no trae altura, usa la pendiente de la cinta como antes.
+         Lista de recorridos con "Borrar" en la vista Importar.
+       La animación del recorrido es visual: la distancia y la pendiente
+       reales siguen siendo las de la cinta.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4710,7 +4738,10 @@ function formatearGapMetros(gapM) {
 function calcularVueltaGap(gapM, largoVuelta) { return Math.trunc(gapM / largoVuelta); }
 
 function cambiarEscenario() {
-  escenarioActual = document.getElementById('selectEscenario').value;
+  const valor = document.getElementById('selectEscenario').value;
+  // v101: "ruta:<id>" = recorrido GPX guardado
+  if (valor.startsWith('ruta:')) { escenarioActual = 'ruta'; rutaActivaId = valor.slice(5); lsSet(K_RUTA_ACTIVA, rutaActivaId); }
+  else escenarioActual = valor;
   document.getElementById('wrapEscena').style.display = escenarioActual === 'ninguno' ? 'none' : 'block';
   if (escenarioActual === 'ninguno') pararBucleEscena();
   else iniciarBucleEscena();
@@ -4740,6 +4771,7 @@ function renderEscena() {
   if (!roadCtxEscena || roadCtxEscena.w < 10) return;
   const { ctx, w, h } = roadCtxEscena;
   if (escenarioActual === 'pista') dibujarEscenaPista(ctx, w, h);
+  else if (escenarioActual === 'ruta' && rutaActiva()) dibujarEscenaRuta(ctx, w, h); // v101
   else dibujarEscenaSendero(ctx, w, h);
   dibujarHaloZona(ctx, w, h);
   dibujarHudEscena(ctx, w, h);
@@ -4791,9 +4823,10 @@ function dibujarHudEscena(ctx, w, h) {
   ctx.save();
   // v95: franja oscura suave detrás de los datos — con las nubes nuevas, a veces quedaban
   // números blancos sobre fondo blanco
-  const velo = ctx.createLinearGradient(0, 0, 0, 84);
+  const altoVelo = escenarioActual === 'ruta' ? 98 : 84; // v101: una línea más con el recorrido
+  const velo = ctx.createLinearGradient(0, 0, 0, altoVelo);
   velo.addColorStop(0, 'rgba(4,7,10,.45)'); velo.addColorStop(1, 'rgba(4,7,10,0)');
-  ctx.fillStyle = velo; ctx.fillRect(0, 0, w, 84);
+  ctx.fillStyle = velo; ctx.fillRect(0, 0, w, altoVelo);
   ctx.shadowColor = 'rgba(0,0,0,.65)'; ctx.shadowBlur = 6;
   ctx.textAlign = 'left';
   const ritmo = v > 0.3 ? segAMMSS(1000 / v) : '--:--';
@@ -4819,6 +4852,12 @@ function dibujarHudEscena(ctx, w, h) {
   }
   ctx.textAlign = 'right'; ctx.fillStyle = '#ffffff'; ctx.font = '600 14px ' + mono;
   ctx.fillText((actual.pulso ? actual.pulso : '--') + ' ppm', xp, 64);
+  // v101: en un recorrido GPX, la pendiente del trazado en este punto y cuánto falta para la llegada
+  if (escenarioActual === 'ruta' && rutaActiva()) {
+    const ruta = rutaActiva(), falta = ruta.longitudM - distanciaAcumM, pr = pendienteRutaPct(ruta, distanciaAcumM);
+    ctx.font = '600 12px ' + mono; ctx.fillStyle = '#E8B84B'; ctx.textAlign = 'right';
+    ctx.fillText((pr != null ? 'ruta ' + (pr >= 0 ? '+' : '') + pr.toFixed(1) + ' % · ' : '') + (falta > 0 ? 'faltan ' + (falta / 1000).toFixed(2) + ' km' : 'llegada ✓'), w - 12, 82);
+  }
   ctx.restore();
 }
 function dibujarEscenaSendero(ctx, w, h) {
@@ -4839,10 +4878,56 @@ function dibujarEscenaSendero(ctx, w, h) {
   drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad, true, inclinacionCorredor());
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
 }
-function dibujarLineaMeta(ctx, S) {
+/* ============================================================
+   v101: RECORRIDOS GPX — el sendero sigue el trazado real
+   La ruta se guarda remuestreada cada PASO_RUTA_M metros: rumbo (radianes, brújula: 0 = norte,
+   crece hacia la derecha, sin saltos de ±π) y altura suavizados. Mismo convenio que roadBands:
+   rumbo creciente = el camino dobla a la derecha en pantalla; montañas/sol quedan fijos al norte real.
+   ============================================================ */
+const K_RUTAS = LS_PREFIX + 'rutas';
+const K_RUTA_ACTIVA = LS_PREFIX + 'ruta_activa';
+const PASO_RUTA_M = 5;
+let rutaActivaId = lsGet(K_RUTA_ACTIVA, null);
+let _rutaCache = null;
+function rutaActiva() {
+  if (!rutaActivaId) return null;
+  if (_rutaCache && _rutaCache.id === rutaActivaId) return _rutaCache;
+  _rutaCache = lsGet(K_RUTAS, []).find(r => r.id === rutaActivaId) || null;
+  return _rutaCache;
+}
+function valorRuta(arr, paso, d) {
+  const x = Math.max(0, Math.min(arr.length - 1, d / paso));
+  const i = Math.floor(x), f = x - i;
+  return i + 1 < arr.length ? arr[i] + (arr[i + 1] - arr[i]) * f : arr[i];
+}
+function pendienteRutaPct(ruta, d) {
+  if (!ruta.e) return null;
+  return (valorRuta(ruta.e, ruta.paso, d + 25) - valorRuta(ruta.e, ruta.paso, d - 25)) / 50 * 100;
+}
+function dibujarEscenaRuta(ctx, w, h) {
+  const ruta = rutaActiva();
+  const bFn = d => valorRuta(ruta.b, ruta.paso, d); // pasada la llegada sigue derecho
+  const eFn = ruta.e ? (d => valorRuta(ruta.e, ruta.paso, d)) : (d => d * (pendienteActual / 100));
+  const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.fueguino, null);
+  dibujarMojones(ctx, S);
+  dibujarLineaMeta(ctx, S, ruta.longitudM);
+  const youS = Math.max(20, h * 0.135);
+  let gapM = null, deltaSeg = null;
+  if (puntosFantasma) {
+    const t = tiempoTranscurridoSeg();
+    const distFant = interpolarDistanciaEnT(puntosFantasma, t);
+    gapM = distanciaAcumM - distFant;
+    deltaSeg = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
+    dibujarFantasmaEscena(ctx, S, distFant, youS, repInterp(puntosFantasma, t, 'velocidad'));
+  }
+  drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad, true, inclinacionCorredor());
+  dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
+}
+function dibujarLineaMeta(ctx, S, dMeta) {
   // el límite de vuelta (d=0 / d=LARGO_PISTA_M en el espacio local de S) cae al final de la recta
   // principal — ver bearingPista (v96; antes caía al comienzo de la recta).
-  const p = roadPointAt(S, LARGO_PISTA_M);
+  // v101: dMeta opcional — en un recorrido GPX, la llegada al final del trazado.
+  const p = roadPointAt(S, dMeta != null ? dMeta : LARGO_PISTA_M);
   if (!p) return; // fuera del rango visible por ahora (recién la vas a ver al acercarte)
   const cellW = Math.max(2, p.hw * 0.16), stripeH = Math.max(2, p.hw * 0.16);
   const nCells = Math.max(4, Math.round((p.hw * 2) / cellW));
@@ -7232,7 +7317,10 @@ function manejarArchivoTCX(evt) {
   const reader = new FileReader();
   reader.onload = () => {
     try {
-      procesarTCX(reader.result, file.name);
+      // v101: también GPX — se reconoce por la extensión o por la etiqueta <gpx
+      const esGPX = /\.gpx$/i.test(file.name) || /<gpx[\s>]/i.test(reader.result.slice(0, 2000));
+      if (esGPX) procesarGPX(reader.result, file.name);
+      else procesarTCX(reader.result, file.name);
     } catch (e) {
       document.getElementById('previewTCX').innerHTML = '<div class="estado-conexion err">Error leyendo el archivo: ' + e.message + '</div>';
     }
@@ -7277,7 +7365,12 @@ function procesarTCX(xmlTexto, nombreArchivo) {
       velocidad: null // se completa abajo por derivación
     });
   });
-  if (puntos.length < 5) throw new Error('Muy pocos puntos válidos en el TCX');
+  mostrarImportacion(puntos, t0, nombreArchivo, 'import_tcx', null, null);
+}
+// v101: lo que sigue era el final de procesarTCX; ahora lo comparten TCX y GPX.
+// rutaGPX: si viene, se ofrece además guardarlo como recorrido virtual.
+function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, rutaGPX) {
+  if (puntos.length < 5) throw new Error('Muy pocos puntos válidos en el archivo');
 
   // El TCX trae distancia acumulada pero no ritmo/velocidad puntual — los derivo con una
   // ventana de 8s (en vez de punto a punto) para no quedar a merced del ruido de GPS del reloj.
@@ -7316,7 +7409,9 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     '</div>' +
     '<button class="btn primario" id="btnUsarTCX">Usar para sembrar zonas (mejores esfuerzos)</button>' +
     '<button class="btn" id="btnGuardarTCX">Guardar también como sesión en el historial</button>' +
+    (rutaGPX ? '<button class="btn" id="btnGuardarRutaGPX">Guardar como recorrido virtual</button>' : '') +
     '</div>';
+  if (rutaGPX) document.getElementById('btnGuardarRutaGPX').onclick = () => guardarRuta(rutaGPX);
 
   document.getElementById('btnUsarTCX').onclick = () => {
     const seudoSesion = { id: 'tcx_' + Date.now(), fecha: new Date(t0).toISOString(), duracionSeg, puntos };
@@ -7326,10 +7421,10 @@ function procesarTCX(xmlTexto, nombreArchivo) {
   document.getElementById('btnGuardarTCX').onclick = () => {
     const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
     const sesion = {
-      id: 'tcx_' + Date.now(),
+      id: (modoImport === 'import_gpx' ? 'gpx_' : 'tcx_') + Date.now(),
       fecha: new Date(t0).toISOString(),
       inicioISO: new Date(t0).toISOString(), // v83 — en un TCX importado, t0 YA es el inicio real exacto
-      modo: 'import_tcx',
+      modo: modoImport,
       duracionSeg: Math.round(duracionSeg),
       distanciaM: Math.round(distanciaM),
       ritmoPromedioSegKm,
@@ -7338,7 +7433,7 @@ function procesarTCX(xmlTexto, nombreArchivo) {
       pulsoMax,
       potenciaPromedio,
       vamPromedio: 0,
-      elevGanadaM: null,
+      elevGanadaM: elevGanadaM,
       tss,
       desacoplePct: calcularDesacople(puntos.filter(p => p.velocidad > 0 && p.pulso > 0)),
       desacoplePotenciaPct: potenciaPromedio ? calcularDesacople(puntos.filter(p => p.potencia > 0 && p.pulso > 0), 'potencia') : null,
@@ -7354,6 +7449,138 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     toast('Sesión importada y guardada · TSS ' + tss);
     mostrarResumenPost(sesion);
   };
+}
+
+/* ---------------- v101: GPX ---------------- */
+function distanciaHaversine(a, b) {
+  const R = 6371000, rad = Math.PI / 180;
+  const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
+  const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(x)));
+}
+// Lee <trkpt> (actividades y tracks) o, si no hay, <rtept> (rutas). Altura, hora, pulso y cadencia
+// (extensiones de Garmin) son opcionales. Busca por localName para no depender de prefijos.
+function leerPuntosGPX(xmlTexto) {
+  const xml = new DOMParser().parseFromString(xmlTexto, 'application/xml');
+  if (xml.querySelector('parsererror')) throw new Error('XML inválido');
+  const todos = Array.from(xml.getElementsByTagName('*'));
+  let nodos = todos.filter(n => (n.localName || n.tagName) === 'trkpt');
+  if (!nodos.length) nodos = todos.filter(n => (n.localName || n.tagName) === 'rtept');
+  const hijo = (n, nombre) => { const el = buscarLocalName(n, nombre); return el ? el.textContent.trim() : null; };
+  const pts = [];
+  let dist = 0;
+  for (const n of nodos) {
+    const lat = parseFloat(n.getAttribute('lat')), lon = parseFloat(n.getAttribute('lon'));
+    if (!isFinite(lat) || !isFinite(lon)) continue;
+    const ele = parseFloat(hijo(n, 'ele')), time = hijo(n, 'time'), hr = parseInt(hijo(n, 'hr'), 10), cad = parseInt(hijo(n, 'cad'), 10);
+    const p = { lat, lon, ele: isFinite(ele) ? ele : null, time: time ? new Date(time).getTime() : null, hr: hr > 0 ? hr : null, cad: cad > 0 ? cad : null };
+    if (pts.length) dist += distanciaHaversine(pts[pts.length - 1], p);
+    p.dist = dist;
+    pts.push(p);
+  }
+  return pts;
+}
+// desnivel positivo con histéresis de 2 m, para no sumar el ruido de altura del GPS
+function desnivelPositivo(alturas) {
+  let ganado = 0, ref = null;
+  for (const e of alturas) {
+    if (e == null) continue;
+    if (ref == null) { ref = e; continue; }
+    if (e > ref + 2) { ganado += e - ref; ref = e; } else if (e < ref - 2) ref = e;
+  }
+  return Math.round(ganado);
+}
+// recorrido virtual: rumbo y altura cada PASO_RUTA_M metros, suavizados
+function construirRuta(pts, nombre) {
+  const total = pts[pts.length - 1].dist, n = Math.floor(total / PASO_RUTA_M) + 1;
+  const conAltura = pts.filter(p => p.ele != null).length >= pts.length * 0.8;
+  const pos = []; let k = 0;
+  for (let i = 0; i < n; i++) {
+    const d = i * PASO_RUTA_M;
+    while (k + 1 < pts.length - 1 && pts[k + 1].dist < d) k++;
+    const a = pts[k], b = pts[Math.min(k + 1, pts.length - 1)];
+    const f = b.dist > a.dist ? Math.max(0, Math.min(1, (d - a.dist) / (b.dist - a.dist))) : 0;
+    pos.push({ lat: a.lat + (b.lat - a.lat) * f, lon: a.lon + (b.lon - a.lon) * f,
+      ele: conAltura ? ((a.ele != null ? a.ele : b.ele) + (((b.ele != null ? b.ele : a.ele) - (a.ele != null ? a.ele : b.ele)) * f)) : null });
+  }
+  const rad = Math.PI / 180;
+  const rumbo = (a, b) => Math.atan2((b.lon - a.lon) * Math.cos(a.lat * rad), b.lat - a.lat);
+  const crudo = pos.map((_, i) => rumbo(pos[Math.max(0, i - 2)], pos[Math.min(n - 1, i + 2)]));
+  for (let i = 1; i < n; i++) { // sin saltos de ±π: el rumbo es continuo aunque dé vueltas
+    while (crudo[i] - crudo[i - 1] > Math.PI) crudo[i] -= 2 * Math.PI;
+    while (crudo[i] - crudo[i - 1] < -Math.PI) crudo[i] += 2 * Math.PI;
+  }
+  const suavizar = (arr, r) => arr.map((_, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - r); j <= Math.min(arr.length - 1, i + r); j++) { s += arr[j]; c++; } return s / c; });
+  const b = suavizar(crudo, 3).map(x => Math.round(x * 10000) / 10000);
+  const e = conAltura ? suavizar(pos.map(p => p.ele), 10).map(x => Math.round(x * 10) / 10) : null;
+  return { id: 'ruta_' + Date.now(), nombre, longitudM: Math.round(total), paso: PASO_RUTA_M, b, e,
+           desnivelM: conAltura ? desnivelPositivo(pts.map(p => p.ele)) : null };
+}
+function procesarGPX(xmlTexto, nombreArchivo) {
+  const pts = leerPuntosGPX(xmlTexto);
+  if (pts.length < 2) throw new Error('El GPX no tiene puntos de recorrido (trkpt ni rtept)');
+  const nombre = nombreArchivo.replace(/\.gpx$/i, '').replace(/_/g, ' ');
+  const ruta = construirRuta(pts, nombre);
+  const conTiempo = pts.filter(p => p.time).length >= pts.length * 0.9;
+  if (!conTiempo) {
+    // un recorrido planificado: camino sin horarios, no hay sesión que guardar
+    document.getElementById('previewTCX').innerHTML =
+      '<div class="card" style="margin:0;"><div style="font-size:13px; line-height:1.8;">' +
+      'Archivo: ' + nombreArchivo + '<br>Recorrido de ' + (ruta.longitudM / 1000).toFixed(2) + ' km' +
+      (ruta.desnivelM != null ? ' · desnivel +' + ruta.desnivelM + ' m' : ' · sin datos de altura') + '<br>' +
+      'No tiene horarios: es un trazado, no una sesión corrida. Se puede usar como recorrido virtual.</div>' +
+      '<button class="btn primario" id="btnGuardarRutaGPX">Guardar como recorrido virtual</button></div>';
+    document.getElementById('btnGuardarRutaGPX').onclick = () => guardarRuta(ruta);
+    return;
+  }
+  const conHora = pts.filter(p => p.time);
+  const t0 = conHora[0].time;
+  // Garmin guarda en GPX la cadencia de un solo pie (~85): si el promedio es bajo, la paso a pasos/min
+  const cads = conHora.filter(p => p.cad).map(p => p.cad);
+  const factorCad = cads.length && promedio(cads) < 110 ? 2 : 1;
+  const puntos = conHora.map(p => ({ t: (p.time - t0) / 1000, distAcum: p.dist, pulso: p.hr, potencia: null, cadencia: p.cad ? p.cad * factorCad : null, velocidad: null }));
+  const VENTANA = 8; let j = 0; // misma derivación que el TCX
+  for (let i = 0; i < puntos.length; i++) {
+    while (j < i && puntos[i].t - puntos[j].t > VENTANA) j++;
+    const dt = puntos[i].t - puntos[j].t, dd = puntos[i].distAcum - puntos[j].distAcum;
+    puntos[i].velocidad = dt > 0 ? dd / dt : 0;
+    puntos[i].ritmo = puntos[i].velocidad > 0.1 ? 1000 / puntos[i].velocidad : null;
+    puntos[i].pendiente = 0;
+  }
+  mostrarImportacion(puntos, t0, nombreArchivo, 'import_gpx', ruta.desnivelM, ruta);
+}
+function guardarRuta(ruta) {
+  const rutas = lsGet(K_RUTAS, []).filter(r => r.id !== ruta.id);
+  rutas.push(ruta);
+  lsSet(K_RUTAS, rutas);
+  rutaActivaId = ruta.id; lsSet(K_RUTA_ACTIVA, ruta.id); _rutaCache = null;
+  poblarOpcionesRutas();
+  toast('Recorrido guardado: elegilo en "Escenario visual"');
+}
+function borrarRuta(id) {
+  if (!confirm('¿Borrar este recorrido?')) return;
+  lsSet(K_RUTAS, lsGet(K_RUTAS, []).filter(r => r.id !== id));
+  if (rutaActivaId === id) { rutaActivaId = null; lsSet(K_RUTA_ACTIVA, null); if (escenarioActual === 'ruta') { escenarioActual = 'sendero'; } }
+  _rutaCache = null;
+  poblarOpcionesRutas();
+}
+function poblarOpcionesRutas() {
+  const sel = document.getElementById('selectEscenario');
+  Array.from(sel.querySelectorAll('option[value^="ruta:"]')).forEach(o => o.remove());
+  const rutas = lsGet(K_RUTAS, []);
+  rutas.forEach(r => {
+    const o = document.createElement('option');
+    o.value = 'ruta:' + r.id; o.textContent = 'Recorrido: ' + r.nombre + ' (' + (r.longitudM / 1000).toFixed(1) + ' km)';
+    sel.appendChild(o);
+  });
+  if (escenarioActual === 'ruta' && rutaActivaId) sel.value = 'ruta:' + rutaActivaId;
+  else if (escenarioActual === 'sendero' && sel.value.startsWith('ruta:')) sel.value = 'sendero';
+  const lista = document.getElementById('listaRutas');
+  if (lista) lista.innerHTML = rutas.length ? rutas.map(r =>
+    '<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 0; border-top:1px solid var(--borde);">' +
+    '<div>' + r.nombre + '<div style="color:var(--muted); font-size:.85rem;">' + (r.longitudM / 1000).toFixed(2) + ' km' + (r.desnivelM != null ? ' · +' + r.desnivelM + ' m' : '') + '</div></div>' +
+    '<button class="btn chico" onclick="borrarRuta(\'' + r.id + '\')">Borrar</button></div>').join('')
+    : '<div class="estado-conexion">Todavía no guardaste ningún recorrido.</div>';
 }
 
 /* ============================================================
@@ -7930,6 +8157,7 @@ function rdActualizarEstadoUI() {
    ============================================================ */
 document.getElementById('hdrFecha').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: 'short' });
 seleccionarModo('ble');
+poblarOpcionesRutas(); // v101: recorridos GPX guardados en el selector de escenario
 document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
 document.addEventListener('visibilitychange', () => {
