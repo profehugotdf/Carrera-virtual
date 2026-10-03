@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v101</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v102</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -391,6 +391,8 @@
         <div style="position:relative;">
           <canvas id="canvasEscena" height="320"></canvas>
         </div>
+        <!-- v102: vista panorámica del recorrido GPX (solo con escenario "Recorrido") -->
+        <canvas id="canvasPanorama" style="display:none; width:100%; height:300px; margin-top:8px; border-radius:12px; background:#0d1a12;"></canvas>
       </div>
     </div>
 
@@ -2814,6 +2816,24 @@
          Lista de recorridos con "Borrar" en la vista Importar.
        La animación del recorrido es visual: la distancia y la pendiente
        reales siguen siendo las de la cinta.
+   v102: pedido de Hugo — vista panorámica del recorrido durante la
+       sesión, aprovechando Rumbo (su app de navegación, otro chat).
+       Debajo de la escena, con el escenario "Recorrido": mapa con el
+       norte arriba, el trazado completo (hecho en turquesa, lo que
+       falta en blanco), punto que late en tu posición, largada,
+       llegada y número en cada km, y debajo el perfil de altura con tu
+       posición y la pendiente actual. Se redibuja 2 veces por segundo.
+       Fondo satelital: primero desde la base de Rumbo en el teléfono
+       (IndexedDB 'rumbo', almacén 'tiles', claves 'sat/z/x/y' — mismo
+       sitio de GitHub Pages, así que Correr la puede leer): sin conexión
+       si la zona se bajó en Rumbo. Si no está, la pide a Esri como
+       Rumbo. La base de Rumbo se abre solo si ya existe (se mira en
+       indexedDB.databases() y se aborta cualquier creación): abrirla
+       cuando no existe la crearía vacía y Rumbo después no podría
+       armar sus almacenes. Los recorridos ahora guardan lat/lon cada
+       25 m (ll); los guardados en v101 no los tienen y muestran la
+       forma reconstruida con los rumbos, sin satélite, con un aviso
+       para volver a importar el GPX.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4742,6 +4762,7 @@ function cambiarEscenario() {
   // v101: "ruta:<id>" = recorrido GPX guardado
   if (valor.startsWith('ruta:')) { escenarioActual = 'ruta'; rutaActivaId = valor.slice(5); lsSet(K_RUTA_ACTIVA, rutaActivaId); }
   else escenarioActual = valor;
+  dibujarPanorama(); // v102: muestra u oculta la vista panorámica según el escenario
   document.getElementById('wrapEscena').style.display = escenarioActual === 'ninguno' ? 'none' : 'block';
   if (escenarioActual === 'ninguno') pararBucleEscena();
   else iniciarBucleEscena();
@@ -4764,6 +4785,7 @@ function loopEscena(ts) {
   const cadHz = ((actual.cadencia || 168) / 60 / 2); // ciclos de zancada/seg (168spm de base si no hay dato real)
   if (sesionActiva && !sesionPausada) { runnerPhase += 2 * Math.PI * cadHz * dt; ghostRunnerPhase += 2 * Math.PI * cadHz * dt; }
   renderEscena();
+  if (ts - panoramaUltimoDibujo > 500) { panoramaUltimoDibujo = ts; dibujarPanorama(); } // v102
   roadRAFEscena = requestAnimationFrame(loopEscena);
 }
 function renderEscena() {
@@ -4903,6 +4925,166 @@ function valorRuta(arr, paso, d) {
 function pendienteRutaPct(ruta, d) {
   if (!ruta.e) return null;
   return (valorRuta(ruta.e, ruta.paso, d + 25) - valorRuta(ruta.e, ruta.paso, d - 25)) / 50 * 100;
+}
+/* ============================================================
+   v102: VISTA PANORÁMICA DEL RECORRIDO
+   Mapa con el norte arriba: el trazado completo (hecho en turquesa, lo que falta en blanco), tu
+   posición, largada, llegada y cada km, más el perfil de altura con tu posición. De fondo, imagen
+   satelital: primero la que Rumbo (la app de navegación, mismo sitio de GitHub Pages) ya tenga
+   guardada en el teléfono — así anda sin conexión si bajaste la zona en Rumbo —, y si no está, la
+   pide a internet (mismo servidor de Esri que usa Rumbo).
+   ============================================================ */
+let panoramaUltimoDibujo = 0;
+const ESRI_SAT_URL = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+let _fondoPanorama = null; // { rutaId, w, h, canvas, proy, listo }
+// Abre la base de Rumbo SOLO si ya existe y solo para leer. Si no existe, indexedDB.open la crearía
+// vacía y Rumbo no podría crear sus almacenes después: por eso se mira antes en databases() y,
+// si igual se dispara la creación, se aborta.
+let _dbRumbo;
+function abrirDbRumbo() {
+  if (_dbRumbo !== undefined) return _dbRumbo;
+  _dbRumbo = (async () => {
+    try {
+      if (!indexedDB.databases) return null;
+      const dbs = await indexedDB.databases();
+      if (!dbs.some(d => d.name === 'rumbo')) return null;
+      return await new Promise(res => {
+        const r = indexedDB.open('rumbo');
+        r.onupgradeneeded = e => { e.target.transaction.abort(); };
+        r.onsuccess = () => { const db = r.result; res(db.objectStoreNames.contains('tiles') ? db : (db.close(), null)); };
+        r.onerror = () => res(null);
+      });
+    } catch (e) { return null; }
+  })();
+  return _dbRumbo;
+}
+async function tileSatelital(z, x, y) {
+  const db = await abrirDbRumbo();
+  if (db) {
+    const blob = await new Promise(res => {
+      try { const rq = db.transaction('tiles', 'readonly').objectStore('tiles').get('sat/' + z + '/' + x + '/' + y); rq.onsuccess = () => res(rq.result || null); rq.onerror = () => res(null); }
+      catch (e) { res(null); }
+    });
+    if (blob) return await new Promise(res => { const u = URL.createObjectURL(blob), im = new Image(); im.onload = () => { URL.revokeObjectURL(u); res(im); }; im.onerror = () => { URL.revokeObjectURL(u); res(null); }; im.src = u; });
+  }
+  if (!navigator.onLine) return null;
+  return await new Promise(res => { const im = new Image(); im.onload = () => res(im); im.onerror = () => res(null); im.src = ESRI_SAT_URL.replace('{z}', z).replace('{y}', y).replace('{x}', x); });
+}
+// Mercator web en píxeles de mundo a zoom z (mismo sistema que las teselas)
+function mercPx(lat, lon, z) {
+  const n = 256 * Math.pow(2, z), s = Math.sin(lat * Math.PI / 180);
+  return { x: (lon + 180) / 360 * n, y: (0.5 - Math.log((1 + s) / (1 - s)) / (4 * Math.PI)) * n };
+}
+// Puntos del recorrido en metros planos. Con ll (desde v102) son lat/lon reales; los recorridos
+// guardados antes no los tienen: se reconstruye la forma sumando rumbo × paso (sin fondo satelital).
+function puntosPanorama(ruta) {
+  if (ruta.ll && ruta.ll.length > 1) return { geo: true, pts: ruta.ll.map(([la, lo]) => ({ lat: la, lon: lo })), paso: ruta.paso * 5 };
+  const pts = [{ x: 0, y: 0 }];
+  for (let i = 1; i < ruta.b.length; i++) { const p = pts[i - 1], b = ruta.b[i]; pts.push({ x: p.x + Math.sin(b) * ruta.paso, y: p.y - Math.cos(b) * ruta.paso }); }
+  return { geo: false, pts, paso: ruta.paso };
+}
+function prepararFondoPanorama(ruta, w, hMapa) {
+  const { geo, pts, paso } = puntosPanorama(ruta);
+  const marg = 18;
+  let proy, z = null;
+  if (geo) {
+    z = 18; // el zoom más cercano en el que entra todo el trazado
+    for (; z > 3; z--) {
+      const xs = pts.map(p => mercPx(p.lat, p.lon, z));
+      const anch = Math.max(...xs.map(q => q.x)) - Math.min(...xs.map(q => q.x)), alto = Math.max(...xs.map(q => q.y)) - Math.min(...xs.map(q => q.y));
+      if (anch <= w - 2 * marg && alto <= hMapa - 2 * marg) break;
+    }
+    const xs = pts.map(p => mercPx(p.lat, p.lon, z));
+    const cx = (Math.max(...xs.map(q => q.x)) + Math.min(...xs.map(q => q.x))) / 2, cy = (Math.max(...xs.map(q => q.y)) + Math.min(...xs.map(q => q.y))) / 2;
+    const ox = cx - w / 2, oy = cy - hMapa / 2;
+    proy = xs.map(q => ({ x: q.x - ox, y: q.y - oy }));
+    proy.ox = ox; proy.oy = oy;
+  } else {
+    const minX = Math.min(...pts.map(p => p.x)), maxX = Math.max(...pts.map(p => p.x)), minY = Math.min(...pts.map(p => p.y)), maxY = Math.max(...pts.map(p => p.y));
+    const esc = Math.min((w - 2 * marg) / Math.max(1, maxX - minX), (hMapa - 2 * marg) / Math.max(1, maxY - minY));
+    proy = pts.map(p => ({ x: w / 2 + (p.x - (minX + maxX) / 2) * esc, y: hMapa / 2 + (p.y - (minY + maxY) / 2) * esc }));
+  }
+  const fondo = document.createElement('canvas');
+  fondo.width = w; fondo.height = hMapa;
+  const fc = fondo.getContext('2d');
+  fc.fillStyle = '#16241c'; fc.fillRect(0, 0, w, hMapa);
+  _fondoPanorama = { rutaId: ruta.id, w, h: hMapa, canvas: fondo, proy, paso, geo, satelital: false };
+  if (geo) { // teselas en segundo plano: el mapa se ve enseguida y el satélite aparece cuando llega
+    const ref = _fondoPanorama;
+    const x0 = Math.floor(proy.ox / 256), x1 = Math.floor((proy.ox + w) / 256), y0 = Math.floor(proy.oy / 256), y1 = Math.floor((proy.oy + hMapa) / 256);
+    for (let tx = x0; tx <= x1; tx++) for (let ty = y0; ty <= y1; ty++) {
+      tileSatelital(z, tx, ty).then(im => {
+        if (!im || _fondoPanorama !== ref) return;
+        fc.drawImage(im, tx * 256 - proy.ox, ty * 256 - proy.oy);
+        fc.fillStyle = 'rgba(0,0,0,.25)'; fc.fillRect(tx * 256 - proy.ox, ty * 256 - proy.oy, 256, 256); // oscurece un poco: el trazado se lee mejor
+        ref.satelital = true;
+      });
+    }
+  }
+}
+function dibujarPanorama() {
+  const cv = document.getElementById('canvasPanorama');
+  const ruta = escenarioActual === 'ruta' ? rutaActiva() : null;
+  if (!ruta) { if (cv.style.display !== 'none') cv.style.display = 'none'; return; }
+  if (cv.style.display === 'none') cv.style.display = 'block';
+  const dpr = Math.min(window.devicePixelRatio || 1, 2), w = cv.clientWidth, h = cv.clientHeight;
+  if (w < 10) return;
+  if (cv.width !== Math.round(w * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const hPerfil = ruta.e ? 64 : 0, hMapa = h - hPerfil;
+  if (!_fondoPanorama || _fondoPanorama.rutaId !== ruta.id || _fondoPanorama.w !== w || _fondoPanorama.h !== hMapa) prepararFondoPanorama(ruta, w, hMapa);
+  const F = _fondoPanorama, P = F.proy;
+  ctx.drawImage(F.canvas, 0, 0, w, hMapa);
+  const d = Math.max(0, Math.min(ruta.longitudM, distanciaAcumM || 0));
+  const fi = Math.min(P.length - 1, d / F.paso), iHecho = Math.floor(fi);
+  const posAct = (() => { const a = P[iHecho], b = P[Math.min(P.length - 1, iHecho + 1)], f = fi - iHecho; return { x: a.x + (b.x - a.x) * f, y: a.y + (b.y - a.y) * f }; })();
+  const linea = (desde, hasta, color, ancho, extra) => {
+    ctx.strokeStyle = color; ctx.lineWidth = ancho; ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(P[desde].x, P[desde].y);
+    for (let i = desde + 1; i <= hasta; i++) ctx.lineTo(P[i].x, P[i].y);
+    if (extra) ctx.lineTo(extra.x, extra.y);
+    ctx.stroke();
+  };
+  linea(0, P.length - 1, 'rgba(0,0,0,.55)', 7);           // borde oscuro: se lee sobre cualquier fondo
+  linea(0, P.length - 1, 'rgba(255,255,255,.85)', 3.5);   // lo que falta
+  if (d > 0) linea(0, iHecho, '#4FD8C4', 4.5, posAct);     // lo hecho
+  // marcas de cada km
+  ctx.font = '600 10px -apple-system, Roboto, sans-serif'; ctx.textAlign = 'center';
+  for (let km = 1; km * 1000 < ruta.longitudM; km++) {
+    const q = P[Math.min(P.length - 1, Math.round(km * 1000 / F.paso))];
+    ctx.fillStyle = '#0A0D10'; ctx.beginPath(); ctx.arc(q.x, q.y, 6.5, 0, 7); ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.fillText(km, q.x, q.y + 3.5);
+  }
+  // largada y llegada
+  const marca = (q, color, txt) => { ctx.fillStyle = color; ctx.beginPath(); ctx.arc(q.x, q.y, 7, 0, 7); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.stroke(); ctx.fillStyle = '#fff'; ctx.font = '700 9px -apple-system, Roboto, sans-serif'; ctx.fillText(txt, q.x, q.y + 3); };
+  marca(P[P.length - 1], '#111318', '🏁');
+  marca(P[0], '#3fb950', 'S');
+  // vos: punto que late
+  const lat = 1 + 0.35 * Math.abs(Math.sin(performance.now() / 300));
+  ctx.fillStyle = 'rgba(79,216,196,.35)'; ctx.beginPath(); ctx.arc(posAct.x, posAct.y, 11 * lat, 0, 7); ctx.fill();
+  ctx.fillStyle = '#4FD8C4'; ctx.strokeStyle = '#0A0D10'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(posAct.x, posAct.y, 6, 0, 7); ctx.fill(); ctx.stroke();
+  // rótulo y norte
+  ctx.textAlign = 'left'; ctx.font = '700 12px -apple-system, Roboto, sans-serif'; ctx.fillStyle = '#fff';
+  ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 4;
+  ctx.fillText((d / 1000).toFixed(2) + ' / ' + (ruta.longitudM / 1000).toFixed(2) + ' km', 10, 18);
+  ctx.textAlign = 'right'; ctx.fillText('N ↑', w - 10, 18);
+  if (!F.geo) { ctx.textAlign = 'left'; ctx.font = '500 10px -apple-system, Roboto, sans-serif'; ctx.fillStyle = '#c9d2d9'; ctx.fillText('Sin fondo satelital: volvé a importar el GPX para verlo', 10, hMapa - 8); }
+  ctx.shadowBlur = 0;
+  // perfil de altura
+  if (ruta.e) {
+    const y0 = hMapa, e = ruta.e, n = e.length, emin = Math.min(...e), emax = Math.max(...e), rango = Math.max(10, emax - emin);
+    ctx.fillStyle = '#0d1418'; ctx.fillRect(0, y0, w, hPerfil);
+    const X = i => 8 + (w - 16) * i / (n - 1), Y = v => y0 + hPerfil - 8 - (hPerfil - 20) * (v - emin) / rango;
+    const area = (hasta, color) => { ctx.fillStyle = color; ctx.beginPath(); ctx.moveTo(X(0), y0 + hPerfil - 6); for (let i = 0; i <= hasta; i++) ctx.lineTo(X(i), Y(e[i])); ctx.lineTo(X(hasta), y0 + hPerfil - 6); ctx.closePath(); ctx.fill(); };
+    area(n - 1, 'rgba(232,184,75,.28)');
+    const iE = Math.min(n - 1, Math.floor(d / ruta.paso));
+    if (iE > 0) area(iE, 'rgba(79,216,196,.55)');
+    ctx.strokeStyle = '#4FD8C4'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(iE), y0 + 6); ctx.lineTo(X(iE), y0 + hPerfil - 6); ctx.stroke();
+    ctx.font = '600 10px ui-monospace, Menlo, monospace'; ctx.fillStyle = '#9aa5ad'; ctx.textAlign = 'left';
+    ctx.fillText(Math.round(emax) + ' m', 10, y0 + 14); ctx.fillText(Math.round(emin) + ' m', 10, y0 + hPerfil - 8);
+    const pr = pendienteRutaPct(ruta, d);
+    ctx.textAlign = 'right'; ctx.fillStyle = '#E8B84B'; ctx.fillText((pr >= 0 ? '+' : '') + pr.toFixed(1) + ' %', w - 10, y0 + 14);
+  }
 }
 function dibujarEscenaRuta(ctx, w, h) {
   const ruta = rutaActiva();
@@ -7513,7 +7695,9 @@ function construirRuta(pts, nombre) {
   const suavizar = (arr, r) => arr.map((_, i) => { let s = 0, c = 0; for (let j = Math.max(0, i - r); j <= Math.min(arr.length - 1, i + r); j++) { s += arr[j]; c++; } return s / c; });
   const b = suavizar(crudo, 3).map(x => Math.round(x * 10000) / 10000);
   const e = conAltura ? suavizar(pos.map(p => p.ele), 10).map(x => Math.round(x * 10) / 10) : null;
-  return { id: 'ruta_' + Date.now(), nombre, longitudM: Math.round(total), paso: PASO_RUTA_M, b, e,
+  // v102: lat/lon cada 25 m para la vista panorámica (≈20 KB para 21 km)
+  const ll = pos.filter((_, i) => i % 5 === 0).map(p => [Math.round(p.lat * 1e6) / 1e6, Math.round(p.lon * 1e6) / 1e6]);
+  return { id: 'ruta_' + Date.now(), nombre, longitudM: Math.round(total), paso: PASO_RUTA_M, b, e, ll,
            desnivelM: conAltura ? desnivelPositivo(pts.map(p => p.ele)) : null };
 }
 function procesarGPX(xmlTexto, nombreArchivo) {
