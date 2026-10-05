@@ -197,7 +197,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v102</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v103</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2834,6 +2834,55 @@
        25 m (ll); los guardados en v101 no los tienen y muestran la
        forma reconstruida con los rumbos, sin satélite, con un aviso
        para volver a importar el GPX.
+   v103: sesiones y recorridos a IndexedDB (igual que Bici Indoor
+       v158+v164). localStorage tiene ~5 MB COMPARTIDOS por todas las
+       apps de profehugotdf.github.io; correr_sesiones ocupaba ~507 mil
+       caracteres y crecía, y al llenarse cualquier app podía fallar al
+       guardar sin avisar. IndexedDB tiene cuota aparte.
+       - bigGet/bigSet/bigRemove reemplazan TODOS los accesos a
+         correr_sesiones y correr_rutas (38). Copia en memoria del texto
+         JSON: cada lectura devuelve una copia nueva, como lsGet, así el
+         resto del código no cambió. Escrituras a la base en segundo
+         plano, en orden por clave. Base: 'correr_almacen', almacén
+         'datos' (la de Rumbo es otra: 'rumbo').
+       - Hasta que la base abre, sin IndexedDB o si falla: localStorage
+         exactamente como antes. initBigStore() al final del script.
+       - Migración: copia → lee de vuelta y compara → recién si coincide
+         libera localStorage. Si no coincide, no borra nada y lo avisa en
+         el Registro. Si localStorage cambia mientras se migra (algo que
+         se guardó en esos milisegundos), vuelve a combinar antes de
+         reemplazarlo — sin esto, esa sesión se perdía (probado).
+       - Combinar sesión por sesión (por id): las completas de
+         localStorage se agregan/actualizan; las _resumen NUNCA pisan a
+         las completas de la base.
+       - RESUMEN PARA MI PLAN: en localStorage, con la misma clave
+         correr_sesiones, cada sesión con todos sus campos menos las
+         muestras (puntos — lo único pesado: plan, testVma y notas son
+         chicos), marcada _resumen: true. Se reescribe al guardar,
+         borrar e importar, y al abrir la base. Borrar todo borra también
+         el resumen. correr_rutas no tiene resumen (ninguna otra app la
+         lee): queda solo en la base.
+       - navigator.storage.persist(); al terminar, redibuja fantasmas,
+         recorridos, historial, zonas y el diagnóstico.
+       - Diagnóstico de almacenamiento: muestra aparte la base interna
+         ("no ocupa el espacio compartido") y el tamaño del resumen.
+       - El respaldo "Exportar todo" ahora incluye los recorridos y al
+         importarlo los combina por id.
+       BUG encontrado al revisar funciones duplicadas: v101 agregó una
+       distanciaHaversine(a, b) para el GPX con el mismo nombre que la
+       del GPS de Aire libre (lat1, lon1, lat2, lon2). Gana la última
+       declarada, así que en v101 y v102 la distancia al aire libre daba
+       NaN. La del GPX ahora se llama distanciaEntrePuntos.
+       Pruebas (IndexedDB simulado asincrónico + localStorage con cuota
+       que tira error): migra con el espacio lleno y otra app vuelve a
+       poder guardar; resumen marcado, sin muestras, 1.446.971 → 24.371
+       caracteres, mismos totales para un lector tipo Mi plan; segundo
+       arranque conserva el detalle; sesión guardada antes de abrir la
+       base; resumen recreado si falta; copia que no coincide → no borra;
+       base que falla o sin IndexedDB → localStorage intacto; escritura
+       forzada en plena migración (y la misma prueba falla sin la
+       re-lectura). 27/27 OK. Además en Chromium real: migración,
+       historial, segundo arranque y diagnóstico sin errores.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -2902,6 +2951,150 @@ function lsGet(key, def) {
 }
 function lsSet(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
 
+/* ============================================================
+   v103: ALMACÉN GRANDE (IndexedDB) para sesiones y recorridos — igual que Bici Indoor v158+v164.
+   localStorage tiene ~5 MB y lo comparten TODAS las apps de profehugotdf.github.io; correr_sesiones
+   ya ocupaba ~500 mil caracteres. IndexedDB tiene cuota aparte y mucho más grande.
+   - bigGet/bigSet/bigRemove reemplazan a lsGet/lsSet para correr_sesiones y correr_rutas. Guardan
+     el texto JSON en memoria: cada lectura devuelve una copia nueva, igual que lsGet, así el resto
+     del código no cambia. Cada escritura va a la base en segundo plano (en orden, por clave).
+   - Hasta que la base abre (milisegundos al arrancar), o si no hay IndexedDB o falla, todo sigue
+     en localStorage exactamente como antes.
+   - En localStorage, con la MISMA clave correr_sesiones, queda siempre un RESUMEN para Mi plan
+     (que la lee directo de ahí): cada sesión con todos sus campos menos las muestras (puntos),
+     marcada _resumen: true. Los recorridos no tienen resumen: ninguna otra app los lee.
+   ============================================================ */
+const BIG_DB_NOMBRE = 'correr_almacen', BIG_DB_STORE = 'datos';
+const CAMPOS_PESADOS_SESION = ['puntos']; // muestras por segundo: casi todo el peso de una sesión
+let bigDb = null;
+const bigCache = {};    // clave -> texto JSON (o null si se borró)
+const bigEnBase = {};   // clave -> true cuando esa clave ya vive en la base
+const bigColaEscritura = {};
+function bigGet(k, def) {
+  if (!bigEnBase[k]) return lsGet(k, def);
+  const t = bigCache[k];
+  return t != null ? JSON.parse(t) : def;
+}
+function bigSet(k, v) {
+  if (!bigEnBase[k]) { lsSet(k, v); return; } // modo localStorage: antes de abrir, sin base, o migración fallida
+  const t = JSON.stringify(v);
+  bigCache[k] = t;
+  bigEncolar(k, db => idbPut(db, k, t));
+  if (k === K_SESIONES) escribirResumenSesiones(v);
+}
+function bigRemove(k) {
+  if (bigEnBase[k]) { bigCache[k] = null; bigEncolar(k, db => idbDel(db, k)); }
+  try { localStorage.removeItem(k); } catch (e) {} // en sesiones, borra también el resumen de Mi plan
+}
+function bigEncolar(k, op) {
+  const previa = bigColaEscritura[k] || Promise.resolve();
+  bigColaEscritura[k] = previa.then(() => op(bigDb)).catch(e => logBLE('Almacén: no se pudo escribir ' + k + ' en la base (' + (e && e.message) + ')', '#f85149'));
+}
+function idbReq(rq) { return new Promise((res, rej) => { rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); }); }
+function idbGet(db, k) { return idbReq(db.transaction(BIG_DB_STORE, 'readonly').objectStore(BIG_DB_STORE).get(k)); }
+function idbPut(db, k, v) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(BIG_DB_STORE, 'readwrite');
+    tx.objectStore(BIG_DB_STORE).put(v, k);
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error || new Error('transacción abortada'));
+  });
+}
+function idbDel(db, k) {
+  return new Promise((res, rej) => {
+    const tx = db.transaction(BIG_DB_STORE, 'readwrite');
+    tx.objectStore(BIG_DB_STORE).delete(k);
+    tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+  });
+}
+function abrirBaseCorrer() {
+  return new Promise((res, rej) => {
+    const r = indexedDB.open(BIG_DB_NOMBRE, 1);
+    r.onupgradeneeded = () => { if (!r.result.objectStoreNames.contains(BIG_DB_STORE)) r.result.createObjectStore(BIG_DB_STORE); };
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error || new Error('no se pudo abrir la base'));
+    r.onblocked = () => rej(new Error('base bloqueada'));
+  });
+}
+// Resumen para Mi plan: todos los campos menos las muestras, marcado _resumen.
+function resumenSesion(s) {
+  const r = {};
+  for (const c in s) {
+    if (CAMPOS_PESADOS_SESION.includes(c)) continue;
+    if (Array.isArray(s[c]) && s[c].length > 100) continue; // por si en el futuro aparece otro arreglo pesado
+    r[c] = s[c];
+  }
+  r._resumen = true;
+  return r;
+}
+function escribirResumenSesiones(lista) {
+  // primero se saca lo que había (las completas, o el resumen viejo) y recién después se escribe el
+  // resumen: si el espacio compartido estaba lleno, así igual entra.
+  try { localStorage.removeItem(K_SESIONES); } catch (e) {}
+  try { localStorage.setItem(K_SESIONES, JSON.stringify(lista.map(resumenSesion))); }
+  catch (e) { logBLE('Almacén: no entró el resumen para Mi plan en el espacio compartido (' + e.message + ')', '#d29922'); }
+}
+// Combina sesión por sesión. Las de la base son las completas. De localStorage: una completa
+// (guardada antes de que abriera la base, o de antes de migrar) se agrega o reemplaza a la de la
+// base; una con _resumen NUNCA pisa a una completa — solo se conserva si la base no la tiene.
+function combinarSesiones(enBase, enLocal) {
+  const clave = x => x.id || x.fecha;
+  const mapa = new Map(enBase.map(x => [clave(x), x]));
+  for (const x of enLocal) {
+    const k = clave(x);
+    if (x._resumen) { if (!mapa.has(k)) mapa.set(k, x); continue; }
+    mapa.set(k, x);
+  }
+  return Array.from(mapa.values());
+}
+async function migrarClave(db, k) {
+  const parse = t => { try { return t ? JSON.parse(t) : []; } catch (e) { return []; } };
+  const leerLocal = () => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  let enBaseTxt = await idbGet(db, k), lsTxt = leerLocal(), final, txt;
+  // Si mientras se escribía la base la app guardó algo en localStorage (todavía en modo
+  // localStorage), se vuelve a combinar con eso antes de reemplazarlo por el resumen.
+  for (let intento = 0; ; intento++) {
+    final = combinarSesiones(parse(enBaseTxt), parse(lsTxt));
+    txt = JSON.stringify(final);
+    if (txt !== enBaseTxt) {
+      await idbPut(db, k, txt);
+      const vuelta = await idbGet(db, k);
+      if (vuelta !== txt) throw new Error('la copia leída de la base no coincide');
+      enBaseTxt = txt;
+    }
+    const ahora = leerLocal();
+    if (ahora === lsTxt) break;
+    if (intento >= 4) throw new Error('localStorage cambió durante la migración');
+    lsTxt = ahora;
+  }
+  // verificado: recién ahora pasa a la base y se libera localStorage
+  bigCache[k] = txt;
+  bigEnBase[k] = true;
+  if (k === K_SESIONES) escribirResumenSesiones(final);
+  else { try { localStorage.removeItem(k); } catch (e) {} }
+  return final.length;
+}
+async function initBigStore() {
+  if (!window.indexedDB) { logBLE('Almacén: este navegador no tiene IndexedDB, todo sigue en localStorage'); return; }
+  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(ok => logBLE('Almacenamiento persistente: ' + (ok ? 'concedido' : 'no concedido por el navegador'))); } catch (e) {}
+  let db;
+  try { db = await abrirBaseCorrer(); }
+  catch (e) { logBLE('Almacén: no se pudo abrir la base (' + e.message + '), todo sigue en localStorage', '#d29922'); return; }
+  bigDb = db;
+  for (const k of [K_SESIONES, K_RUTAS]) {
+    try { const n = await migrarClave(db, k); logBLE('Almacén: ' + k.replace(LS_PREFIX, '') + ' en la base interna (' + n + ')'); }
+    catch (e) { bigEnBase[k] = false; logBLE('Almacén: ' + k.replace(LS_PREFIX, '') + ' sigue en localStorage, no se borró nada (' + e.message + ')', '#d29922'); }
+  }
+  refrescarTrasAlmacen();
+}
+// lo que se dibujó al arrancar con la lista de localStorage (vacía o solo resumen) se vuelve a dibujar
+function refrescarTrasAlmacen() {
+  try { renderSelectorFantasma(); } catch (e) {}
+  try { _rutaCache = null; _fondoPanorama = null; poblarOpcionesRutas(); } catch (e) {}
+  try { if (document.getElementById('view-historial').classList.contains('activa')) renderHistorial(); } catch (e) {}
+  try { if (document.getElementById('view-zonas').classList.contains('activa')) renderZonas(); } catch (e) {}
+  try { if (document.getElementById('diagnosticoAlmacenamiento').innerHTML) mostrarDiagnosticoAlmacenamiento(); } catch (e) {}
+}
+
 function segAMMSS(seg) {
   if (seg == null || !isFinite(seg) || seg < 0) return '--:--';
   seg = Math.round(seg);
@@ -2966,7 +3159,7 @@ const RPE_MINIMO_MAXIMAL = 7; // desde qué RPE se considera que un esfuerzo fue
 // y el modelo lo toma como si fuera máximo — eso arrastraba hacia abajo tanto el umbral como la
 // previsión de carrera (las dos salen del mismo set de puntos).
 function esfuerzosParaModelo(mejores) {
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   const califica = m => {
     const s = sesiones.find(x => x.id === m.sesionId);
     if (!s) return true;            // sesión ya borrada: no se puede saber su RPE, se deja pasar
@@ -3243,7 +3436,7 @@ function cerrarDetalle() { document.getElementById('overlayDetalle').classList.r
 function renderSelectorFantasma() {
   const sel = document.getElementById('selectFantasma');
   const valorPrevio = sel.value;
-  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 40);
+  const sesiones = [...bigGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha)).slice(0, 40);
   let html = '<option value="">Sin fantasma</option>';
   sesiones.forEach(s => {
     const fecha = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: '2-digit', year: '2-digit' });
@@ -4914,7 +5107,7 @@ let _rutaCache = null;
 function rutaActiva() {
   if (!rutaActivaId) return null;
   if (_rutaCache && _rutaCache.id === rutaActivaId) return _rutaCache;
-  _rutaCache = lsGet(K_RUTAS, []).find(r => r.id === rutaActivaId) || null;
+  _rutaCache = bigGet(K_RUTAS, []).find(r => r.id === rutaActivaId) || null;
   return _rutaCache;
 }
 function valorRuta(arr, paso, d) {
@@ -5205,7 +5398,7 @@ function cerrarReplay() {
   document.getElementById('overlayReplay').classList.remove('activa');
 }
 function poblarReplayPick() {
-  repList = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  repList = [...bigGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   repPicked.clear();
   const wrap = document.getElementById('repPick');
   if (!repList.length) { wrap.innerHTML = '<div class="vacio">No hay sesiones guardadas todavía</div>'; return; }
@@ -5873,7 +6066,7 @@ function iniciarSesion() {
   fantasmaSuperado = false;
   deltaFantasmaUltimo = null;
   if (fantasmaId) {
-    const sesiones = lsGet(K_SESIONES, []);
+    const sesiones = bigGet(K_SESIONES, []);
     const sFantasma = sesiones.find(s => s.id === fantasmaId);
     if (sFantasma) {
       puntosFantasma = puntosDeSesion(sFantasma).map(p => ({ t: p.t, distAcum: p.distAcum, velocidad: p.velocidad }));
@@ -6353,9 +6546,9 @@ function finalizarSesion(automatica) {
     notas: document.getElementById('notasSesion').value || ''
   };
 
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   sesiones.push(sesion);
-  lsSet(K_SESIONES, sesiones);
+  bigSet(K_SESIONES, sesiones);
 
   // mejores esfuerzos con la serie a resolución completa (puntosSesion, no la "sesion.puntos" ya comprimida).
   // Se llama DESPUÉS de guardar la sesión para que recalcularZonasDesdeMejores() pueda encontrarla al buscar el pulso.
@@ -6480,7 +6673,7 @@ function recalcularZonasDesdeMejores() {
   const ritmoUmbralSegKm = 1000 / velocidadEnEseEsfuerzo;
 
   // pulso umbral: promedio de pulso durante ese mismo esfuerzo, si la sesión de origen sigue guardada
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   const sesionOrigen = sesiones.find(s => s.id === masLargo.sesionId);
   let pulsoUmbral = zonas.umbralPulso; // conservo el que había si no puedo recalcularlo
   if (sesionOrigen && sesionOrigen.pulsoPromedio) pulsoUmbral = sesionOrigen.pulsoPromedio;
@@ -6557,7 +6750,7 @@ function eliminarDeFormaCompartida(sesionId) {
 function calcularSerieForma() {
   // Uso únicamente las sesiones de esta app (correr) para el gráfico local de "Historial".
   // El panel combinado (cuando se arme) va a leer K_FORMA_COMPARTIDA y sumar todos los deportes.
-  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const sesiones = [...bigGet(K_SESIONES, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
   if (!sesiones.length) return { serie: [], ctl: 0, atl: 0, tsb: 0 };
   const porDia = {};
   sesiones.forEach(s => {
@@ -6726,7 +6919,7 @@ function renderZonas() {
    RENDER: HISTORIAL
    ============================================================ */
 function renderHistorial() {
-  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  const sesiones = [...bigGet(K_SESIONES, [])].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
   const cont = document.getElementById('listaSesiones');
   if (!sesiones.length) {
     cont.innerHTML = '<div class="vacio">Todavía no guardaste ninguna sesión</div>';
@@ -6791,7 +6984,7 @@ function renderHistorial() {
 // promedios por sesión (ritmo/pulso/cadencia), en orden cronológico, para ver la tendencia
 // entre entrenamientos — al estilo de la tarjeta "Evolución entre sesiones" de Bici Indoor.
 function calcularEvolucionSesiones() {
-  const sesiones = [...lsGet(K_SESIONES, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  const sesiones = [...bigGet(K_SESIONES, [])].sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
   return {
     ritmo: sesiones.filter(s => s.ritmoPromedioSegKm).map(s => s.ritmoPromedioSegKm),
     pulso: sesiones.filter(s => s.pulsoPromedio).map(s => s.pulsoPromedio),
@@ -6986,7 +7179,7 @@ function picosDeSesion(s) {
 // puesto de la sesión entre las de los 90 días anteriores (incluida ella); 1 = la mejor
 function puestoPico(s, valor, obtener, menorEsMejor) {
   const fin = new Date(s.fecha).getTime(), ini = fin - VENTANA_PICOS_DIAS * 86400000;
-  const otras = lsGet(K_SESIONES, []).filter(o => o.id !== s.id && o.puntos && (t => t >= ini && t <= fin)(new Date(o.fecha).getTime()));
+  const otras = bigGet(K_SESIONES, []).filter(o => o.id !== s.id && o.puntos && (t => t >= ini && t <= fin)(new Date(o.fecha).getTime()));
   let mejores = 0;
   for (const o of otras) { const v = obtener(picosDeSesion(o)); if (v != null && (menorEsMejor ? v < valor : v > valor)) mejores++; }
   return mejores + 1;
@@ -7066,7 +7259,7 @@ function mostrarResumenPost(s) {
 function cerrarResumenPost() { document.getElementById('overlayResumenPost').classList.remove('activa'); }
 
 function abrirDetalle(id) {
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   const s = sesiones.find(x => x.id === id);
   if (!s) return;
   sesionDetalleActual = s;
@@ -7105,11 +7298,11 @@ function renderTestVmaDetalle(s) {
 }
 function guardarNotasDetalle() {
   if (!sesionDetalleActual) return;
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   const idx = sesiones.findIndex(x => x.id === sesionDetalleActual.id);
   if (idx >= 0) {
     sesiones[idx].notas = document.getElementById('detalleNotas').value;
-    lsSet(K_SESIONES, sesiones);
+    bigSet(K_SESIONES, sesiones);
   }
 }
 // genera un TCX válido a partir de una sesión guardada — mismas etiquetas que ya sabe leer
@@ -7162,7 +7355,7 @@ function generarTCX(sesion) {
     '<Lap StartTime="' + t0.toISOString() + '">' + lap + '</Lap></Activity></Activities></TrainingCenterDatabase>';
 }
 function exportarSesionTCX(id) {
-  const sesion = id ? lsGet(K_SESIONES, []).find(x => x.id === id) : sesionDetalleActual;
+  const sesion = id ? bigGet(K_SESIONES, []).find(x => x.id === id) : sesionDetalleActual;
   if (!sesion) return;
   const xml = generarTCX(sesion);
   const blob = new Blob([xml], { type: 'application/vnd.garmin.tcx+xml' });
@@ -7176,17 +7369,17 @@ function exportarSesionTCX(id) {
 }
 function eliminarSesion(id) {
   if (!confirm('¿Eliminar esta sesión? No se puede deshacer.')) return;
-  const sesiones = lsGet(K_SESIONES, []).filter(x => x.id !== id);
-  lsSet(K_SESIONES, sesiones);
+  const sesiones = bigGet(K_SESIONES, []).filter(x => x.id !== id);
+  bigSet(K_SESIONES, sesiones);
   eliminarDeFormaCompartida(id);
   renderHistorial();
   toast('Sesión eliminada');
 }
 function borrarTodasLasSesiones() {
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   if (!sesiones.length) { toast('No hay sesiones guardadas'); return; }
   if (!confirm('¿Borrar las ' + sesiones.length + ' sesiones guardadas? No se puede deshacer. Si querés conservarlas, primero tocá "Exportar todo".')) return;
-  lsSet(K_SESIONES, []);
+  bigRemove(K_SESIONES); // v103: borra la base Y el resumen de Mi plan en el espacio compartido
   const registro = lsGet(K_FORMA_COMPARTIDA, []);
   lsSet(K_FORMA_COMPARTIDA, registro.filter(r => r.deporte !== 'correr'));
   renderHistorial();
@@ -7200,10 +7393,11 @@ function exportarBackupJSON() {
   const paquete = {
     tipo: 'backup_correr_v1',
     exportado: new Date().toISOString(),
-    sesiones: lsGet(K_SESIONES, []),
+    sesiones: bigGet(K_SESIONES, []),
     zonas: lsGet(K_ZONAS, {}),
     mejoresEsfuerzos: lsGet(K_MEJORES, {}),
     editorKeyframes: lsGet('correr_editor_keyframes_v3', null),
+    rutas: bigGet(K_RUTAS, []), // v103: recorridos GPX
     formaCompartida: lsGet(K_FORMA_COMPARTIDA, []).filter(r => r.deporte === 'correr'),
   };
   const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
@@ -7230,10 +7424,15 @@ function manejarArchivoBackup(evt) {
 function procesarBackupJSON(texto) {
   const paquete = JSON.parse(texto);
   if (paquete.tipo !== 'backup_correr_v1' || !Array.isArray(paquete.sesiones)) throw new Error('No es un backup de Correr válido');
-  const existentes = lsGet(K_SESIONES, []);
+  const existentes = bigGet(K_SESIONES, []);
   const idsExistentes = new Set(existentes.map(s => s.id));
   const nuevas = paquete.sesiones.filter(s => !idsExistentes.has(s.id));
-  lsSet(K_SESIONES, [...existentes, ...nuevas]);
+  bigSet(K_SESIONES, [...existentes, ...nuevas]);
+  if (Array.isArray(paquete.rutas) && paquete.rutas.length) { // v103: recorridos, sin duplicar por id
+    const rutasLocales = bigGet(K_RUTAS, []), idsRutas = new Set(rutasLocales.map(r => r.id));
+    bigSet(K_RUTAS, [...rutasLocales, ...paquete.rutas.filter(r => !idsRutas.has(r.id))]);
+    _rutaCache = null; poblarOpcionesRutas();
+  }
   if (paquete.zonas && !lsGet(K_ZONAS, null)) lsSet(K_ZONAS, paquete.zonas); // solo si no tenías zonas cargadas ya
   let editorRestaurado = false;
   if (paquete.editorKeyframes) {
@@ -7270,10 +7469,19 @@ function mostrarDiagnosticoAlmacenamiento() {
   const totalKB = (totalBytes / 1024).toFixed(1);
   const limiteAprox = 5 * 1024 * 1024; // navegadores suelen dar ~5MB por origen a localStorage
   const pct = Math.min(100, (totalBytes / limiteAprox) * 100);
-  const nSesiones = lsGet(K_SESIONES, []).length;
+  const nSesiones = bigGet(K_SESIONES, []).length;
+  // v103: lo que vive en la base interna se muestra aparte — no ocupa el espacio compartido
+  const kbTexto = t => ((t || '').length * 2 / 1024).toFixed(1);
+  const enBase = [K_SESIONES, K_RUTAS].filter(k => bigEnBase[k]);
+  const resumenKB = bigEnBase[K_SESIONES] ? kbTexto(localStorage.getItem(K_SESIONES)) : null;
   let html = '<div class="estado-conexion' + (pct > 70 ? ' err' : '') + '">' +
-    nSesiones + ' sesiones guardadas · ' + totalKB + ' KB usados (~' + pct.toFixed(1) + '% de un límite típico de 5 MB por navegador)' +
-    (pct > 70 ? ' — considerá exportar y borrar sesiones viejas.' : '') + '</div>';
+    nSesiones + ' sesiones guardadas · ' + totalKB + ' KB usados del espacio compartido (~' + pct.toFixed(1) + '% de un límite típico de 5 MB por navegador)' +
+    (pct > 70 ? ' — considerá exportar y borrar sesiones viejas.' : '') + '</div>' +
+    '<div class="estado-conexion" style="margin-top:6px;">' +
+    (enBase.length
+      ? 'Base interna (no ocupa el espacio compartido): ' + enBase.map(k => k.replace(LS_PREFIX, '') + ' ' + kbTexto(bigCache[k]) + ' KB').join(' · ') +
+        (resumenKB != null ? '<br>Resumen de sesiones para Mi plan (en el espacio compartido): ' + resumenKB + ' KB' : '')
+      : 'Base interna: no disponible todavía — todo está en el espacio compartido.') + '</div>';
   html += '<table class="tabla-zonas" style="margin-top:8px;"><tr><th>Dato</th><th>KB</th></tr>' +
     detalle.slice(0, 6).map(d => '<tr><td style="text-align:left;">' + d.clave.replace(LS_PREFIX, '') + '</td><td>' + (d.bytes / 1024).toFixed(1) + '</td></tr>').join('') +
     '</table>';
@@ -7284,7 +7492,7 @@ function mostrarDiagnosticoAlmacenamiento() {
    RETOS (compartir/importar sesión de un conocido)
    ============================================================ */
 function exportarSesionComoReto(id) {
-  const sesion = lsGet(K_SESIONES, []).find(x => x.id === id);
+  const sesion = bigGet(K_SESIONES, []).find(x => x.id === id);
   if (!sesion) return;
   const nombre = prompt('¿Con qué nombre querés que aparezca este reto para quien lo reciba?', '') || 'un conocido';
   const paquete = {
@@ -7328,9 +7536,9 @@ function procesarRetoJSON(texto, nombreOverride) {
     esReto: true,
     nombreReto: nombreOverride || obj.nombreReto || 'un conocido',
   };
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   sesiones.push(sesion);
-  lsSet(K_SESIONES, sesiones);
+  bigSet(K_SESIONES, sesiones);
   renderHistorial();
   renderSelectorFantasma();
   toast('Reto de ' + sesion.nombreReto + ' importado — ya podés elegirlo como fantasma');
@@ -7435,18 +7643,18 @@ function marcarAnimoSeleccionado(filaId, valor) {
   document.querySelectorAll('#' + filaId + ' .animo-btn').forEach(b => b.classList.toggle('sel', Number(b.dataset.val) === valor));
 }
 function actualizarAnimoSesion(id, valor) {
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   const idx = sesiones.findIndex(s => s.id === id);
   if (idx < 0) return;
   sesiones[idx].animo = valor;
-  lsSet(K_SESIONES, sesiones);
+  bigSet(K_SESIONES, sesiones);
 }
 function actualizarRpeSesion(id, valor) {
-  const sesiones = lsGet(K_SESIONES, []);
+  const sesiones = bigGet(K_SESIONES, []);
   const idx = sesiones.findIndex(s => s.id === id);
   if (idx < 0) return;
   sesiones[idx].rpe = valor;
-  lsSet(K_SESIONES, sesiones);
+  bigSet(K_SESIONES, sesiones);
   // el filtro por RPE decide qué esfuerzos entran al modelo, así que cambiar un RPE puede cambiar
   // el umbral y la previsión — se recalcula acá para no depender de recargar la app.
   recalcularZonasDesdeMejores();
@@ -7623,9 +7831,9 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
       puntos: compactarPuntos(reducirResolucion(puntos, INTERVALO_GUARDADO_SEG)),
       notas: 'Importado de ' + nombreArchivo
     };
-    const sesiones = lsGet(K_SESIONES, []);
+    const sesiones = bigGet(K_SESIONES, []);
     sesiones.push(sesion);
-    lsSet(K_SESIONES, sesiones);
+    bigSet(K_SESIONES, sesiones);
     actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos });
     actualizarFormaCompartida(sesion);
     toast('Sesión importada y guardada · TSS ' + tss);
@@ -7634,7 +7842,9 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
 }
 
 /* ---------------- v101: GPX ---------------- */
-function distanciaHaversine(a, b) {
+// v103: antes se llamaba distanciaHaversine, igual que la del GPS de Aire libre (4 números):
+// la última declarada pisaba a la otra y desde v101 la distancia al aire libre daba NaN.
+function distanciaEntrePuntos(a, b) {
   const R = 6371000, rad = Math.PI / 180;
   const dLat = (b.lat - a.lat) * rad, dLon = (b.lon - a.lon) * rad;
   const x = Math.sin(dLat / 2) ** 2 + Math.cos(a.lat * rad) * Math.cos(b.lat * rad) * Math.sin(dLon / 2) ** 2;
@@ -7656,7 +7866,7 @@ function leerPuntosGPX(xmlTexto) {
     if (!isFinite(lat) || !isFinite(lon)) continue;
     const ele = parseFloat(hijo(n, 'ele')), time = hijo(n, 'time'), hr = parseInt(hijo(n, 'hr'), 10), cad = parseInt(hijo(n, 'cad'), 10);
     const p = { lat, lon, ele: isFinite(ele) ? ele : null, time: time ? new Date(time).getTime() : null, hr: hr > 0 ? hr : null, cad: cad > 0 ? cad : null };
-    if (pts.length) dist += distanciaHaversine(pts[pts.length - 1], p);
+    if (pts.length) dist += distanciaEntrePuntos(pts[pts.length - 1], p);
     p.dist = dist;
     pts.push(p);
   }
@@ -7734,16 +7944,16 @@ function procesarGPX(xmlTexto, nombreArchivo) {
   mostrarImportacion(puntos, t0, nombreArchivo, 'import_gpx', ruta.desnivelM, ruta);
 }
 function guardarRuta(ruta) {
-  const rutas = lsGet(K_RUTAS, []).filter(r => r.id !== ruta.id);
+  const rutas = bigGet(K_RUTAS, []).filter(r => r.id !== ruta.id);
   rutas.push(ruta);
-  lsSet(K_RUTAS, rutas);
+  bigSet(K_RUTAS, rutas);
   rutaActivaId = ruta.id; lsSet(K_RUTA_ACTIVA, ruta.id); _rutaCache = null;
   poblarOpcionesRutas();
   toast('Recorrido guardado: elegilo en "Escenario visual"');
 }
 function borrarRuta(id) {
   if (!confirm('¿Borrar este recorrido?')) return;
-  lsSet(K_RUTAS, lsGet(K_RUTAS, []).filter(r => r.id !== id));
+  bigSet(K_RUTAS, bigGet(K_RUTAS, []).filter(r => r.id !== id));
   if (rutaActivaId === id) { rutaActivaId = null; lsSet(K_RUTA_ACTIVA, null); if (escenarioActual === 'ruta') { escenarioActual = 'sendero'; } }
   _rutaCache = null;
   poblarOpcionesRutas();
@@ -7751,7 +7961,7 @@ function borrarRuta(id) {
 function poblarOpcionesRutas() {
   const sel = document.getElementById('selectEscenario');
   Array.from(sel.querySelectorAll('option[value^="ruta:"]')).forEach(o => o.remove());
-  const rutas = lsGet(K_RUTAS, []);
+  const rutas = bigGet(K_RUTAS, []);
   rutas.forEach(r => {
     const o = document.createElement('option');
     o.value = 'ruta:' + r.id; o.textContent = 'Recorrido: ' + r.nombre + ' (' + (r.longitudM / 1000).toFixed(1) + ' km)';
@@ -8344,6 +8554,7 @@ seleccionarModo('ble');
 poblarOpcionesRutas(); // v101: recorridos GPX guardados en el selector de escenario
 document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
+initBigStore(); // v103: abre la base, migra/combina sesiones y recorridos, y redibuja lo que dependía de ellos
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
   else if (escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa')) iniciarBucleEscena();
