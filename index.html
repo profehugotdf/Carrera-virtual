@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v105</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v106</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -509,7 +509,7 @@
       <h2>Más</h2>
       <button class="btn" onclick="cambiarTab('historial')">📈 Historial de sesiones</button>
       <button class="btn" onclick="cambiarTab('zonas')" style="margin-top:8px;">🎯 Zonas y VMA</button>
-      <button class="btn" onclick="cambiarTab('importar')" style="margin-top:8px;">⬇️ Importar TCX</button>
+      <button class="btn" onclick="cambiarTab('importar')" style="margin-top:8px;">⬇️ Importar actividad (TCX o GPX)</button>
       <button class="btn" onclick="abrirReplay()" style="margin-top:8px;">🏁 Carrera virtual (replay)</button>
       <button class="btn" onclick="abrirEditor()" style="margin-top:8px;">🛠️ Editor de animación</button>
     </div>
@@ -552,7 +552,7 @@
       <h2>Copia de seguridad y retos</h2>
       <div class="fila" style="gap:6px;">
         <button class="btn chico" onclick="exportarBackupJSON()">⬇️ Exportar todo</button>
-        <button class="btn chico" onclick="document.getElementById('inputImportarBackup').click()">⬆️ Importar</button>
+        <button class="btn chico" onclick="document.getElementById('inputImportarBackup').click()">⬆️ Restaurar backup</button>
       </div>
       <input type="file" id="inputImportarBackup" accept=".json" style="display:none;" onchange="manejarArchivoBackup(event)">
       <button class="btn chico" onclick="document.getElementById('inputImportarReto').click()" style="margin-top:8px;">🏁 Importar reto (de un conocido)</button>
@@ -2919,6 +2919,13 @@
        ids también empiecen con tcx_) ni otros deportes. Además: si la
        misma actividad ya está en el historial de Correr (inicio a menos
        de 1 min), avisa antes de duplicarla.
+   v106: Hugo cargó el TCX de Garmin en "⬆️ Importar" de Copia de
+       seguridad (que restaura un backup .json) y recibió "Unexpected
+       token '<'… is not valid JSON". Botones renombrados para que no se
+       confundan: "⬆️ Restaurar backup" y "⬇️ Importar actividad (TCX o
+       GPX)". Y si igual se le da un TCX o GPX al de backup, lo
+       reconoce (TrainingCenterDatabase / gpx) y lo abre en la pantalla
+       de importar actividades con su vista previa.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -7638,8 +7645,22 @@ function manejarArchivoBackup(evt) {
   if (!file) return;
   const reader = new FileReader();
   reader.onload = () => {
-    try { procesarBackupJSON(reader.result); }
-    catch (e) { toast('Error leyendo el backup: ' + e.message); }
+    // v106: si es un TCX o GPX (una actividad, no un backup), se manda al importador de actividades
+    // — Hugo cargó acá el TCX de Garmin y recibió "Unexpected token '<'… is not valid JSON".
+    const texto = reader.result, inicio = texto.slice(0, 2000);
+    if (/^\s*</.test(texto) && /<(TrainingCenterDatabase|gpx)[\s>]/i.test(inicio)) {
+      evt.target.value = '';
+      cambiarTab('importar');
+      try {
+        if (/<gpx[\s>]/i.test(inicio)) procesarGPX(texto, file.name); else procesarTCX(texto, file.name);
+        toast('Es una actividad, no un backup: la abrí en Importar actividad');
+      } catch (e) {
+        document.getElementById('previewTCX').innerHTML = '<div class="estado-conexion err">Error leyendo el archivo: ' + e.message + '</div>';
+      }
+      return;
+    }
+    try { procesarBackupJSON(texto); }
+    catch (e) { toast('Error leyendo el backup: ' + e.message + ' — ¿es un archivo .json exportado desde Correr?'); }
     evt.target.value = '';
   };
   reader.readAsText(file);
