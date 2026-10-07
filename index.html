@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v106</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v107</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2926,6 +2926,27 @@
        GPX)". Y si igual se le da un TCX o GPX al de backup, lo
        reconoce (TrainingCenterDatabase / gpx) y lo abre en la pantalla
        de importar actividades con su vista previa.
+   v107: TSS ajustado por pendiente + respaldo por pulso.
+       - calcularTSSSesion(): ritmo normalizado ajustado por pendiente,
+         como el rTSS de TrainingPeaks — cada segundo en movimiento a
+         velocidad equivalente en llano con el costo energético de
+         Minetti (2002), promedio móvil de 30 s y media de la cuarta
+         potencia; solo tiempo en movimiento (las pausas no cuentan).
+         Se usa al finalizar en vivo y al importar. Respaldo: ritmo
+         promedio si no hay muestras; sin ritmo umbral, TSS por pulso
+         (100 × h × (pulso medio/umbral)², como Kayak y Mi plan).
+         Las sesiones guardan tssMetodo, ngpSegKm e intensidadIF, y el
+         informe dice cómo se calculó. El TSS de las sesiones viejas no
+         se recalcula (no se reescribe la historia de la Forma).
+       - Pendiente de cada muestra: cinta = la de la cinta (ya estaba);
+         importaciones = desde la altura (±25 m) — el TCX ahora lee
+         AltitudeMeters (antes ni se leía) y el GPX la usa (antes se
+         descartaba con pendiente 0); también el desnivel del TCX. Aire
+         libre en vivo = recta ajustada a la altura GPS de los últimos
+         80 m (mín. 40), suavizada, ±20%, en pendienteActual.
+       - Fix de v105: sin TSS calculable, al importar NO se reemplaza
+         la entrada de Garmin de Mi plan (se perdía un TSS real por 0):
+         se guarda la sesión y se avisa.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3177,6 +3198,75 @@ function calcularTSS(duracionSeg, ritmoPromedioSegKm, umbralRitmoSegKm) {
   const ifactor = umbralRitmoSegKm / ritmoPromedioSegKm;
   const horas = duracionSeg / 3600;
   return Math.round(100 * horas * ifactor * ifactor);
+}
+/* ============================================================
+   v107: TSS CON RITMO NORMALIZADO AJUSTADO POR PENDIENTE (como el rTSS de TrainingPeaks)
+   1. Cada segundo en movimiento pasa a "velocidad equivalente en llano" con el costo energético de
+      correr en pendiente de Minetti et al. (2002): Cr(i) = 155,4i⁵ − 30,4i⁴ − 43,3i³ + 46,3i² + 19,5i
+      + 3,6 J/kg/m (i = pendiente en fracción, válida ±45%). Factor = Cr(i)/Cr(0): subir cuesta más;
+      bajar suave cuesta menos; bajar muy empinado vuelve a costar más.
+   2. Normalización: promedio móvil de 30 s y media de la cuarta potencia (como la potencia
+      normalizada): las series y los cambios de ritmo pesan lo que pesan.
+   3. Solo tiempo en movimiento: las pausas (huecos de más de 5 s o velocidad < 0,5 m/s) no cuentan.
+   TSS = horas en movimiento × (velocidad normalizada ÷ velocidad umbral)² × 100.
+   Respaldo: sin muestras útiles → ritmo promedio (como antes); sin ritmo umbral → por pulso,
+   100 × horas × (pulso medio ÷ pulso umbral)², igual que Kayak y Mi plan; sin nada → 0.
+   ============================================================ */
+// costoMinetti() ya existe (v81, calorías): misma ecuación, se reusa
+function factorPendiente(pendientePct) {
+  const i = Math.max(-0.45, Math.min(0.45, (pendientePct || 0) / 100));
+  return costoMinetti(i) / 3.6;
+}
+// velocidad normalizada ajustada por pendiente (m/s) y segundos en movimiento
+function velocidadNormalizadaPendiente(puntos) {
+  const serie = [];
+  for (let k = 0; k + 1 < puntos.length; k++) {
+    const p = puntos[k], dt = puntos[k + 1].t - p.t;
+    if (!(dt > 0) || dt > 5 || !(p.velocidad >= 0.5)) continue; // pausa o detenido
+    const v = p.velocidad * factorPendiente(p.pendiente);
+    for (let q = 0; q < Math.round(dt); q++) serie.push(v);
+  }
+  if (serie.length < 60) return null;
+  const VENT = 30;
+  let suma = 0, suma4 = 0, n = 0;
+  for (let k = 0; k < serie.length; k++) {
+    suma += serie[k];
+    if (k >= VENT) suma -= serie[k - VENT];
+    if (k >= VENT - 1) { const m = suma / VENT; suma4 += m ** 4; n++; }
+  }
+  return { vn: Math.pow(suma4 / n, 0.25), segMovimiento: serie.length };
+}
+function calcularTSSSesion(puntos, duracionSeg, ritmoPromedioSegKm, pulsoPromedio) {
+  const umbral = zonas.umbralRitmoSegKm;
+  if (umbral) {
+    const r = velocidadNormalizadaPendiente(puntos || []);
+    if (r && r.vn > 0) {
+      const ifac = r.vn / (1000 / umbral); // IF = velocidad normalizada / velocidad umbral
+      return { tss: Math.round(100 * (r.segMovimiento / 3600) * ifac * ifac), metodo: 'ritmo_pendiente', ngpSegKm: Math.round(1000 / r.vn), if: Math.round(ifac * 100) / 100 };
+    }
+    const tss = calcularTSS(duracionSeg, ritmoPromedioSegKm, umbral);
+    if (tss > 0) return { tss, metodo: 'ritmo_promedio', ngpSegKm: null, if: Math.round(umbral / ritmoPromedioSegKm * 100) / 100 };
+  }
+  if (zonas.umbralPulso && pulsoPromedio > 0 && duracionSeg > 0) {
+    const ifac = pulsoPromedio / zonas.umbralPulso;
+    return { tss: Math.round(100 * (duracionSeg / 3600) * ifac * ifac), metodo: 'pulso', ngpSegKm: null, if: Math.round(ifac * 100) / 100 };
+  }
+  return { tss: 0, metodo: null, ngpSegKm: null, if: null };
+}
+// pendiente de cada punto a partir de la altura (importaciones): pendiente media en ±25 m
+function pendientesDesdeAltura(puntos) {
+  const conAlt = puntos.filter(p => p.alt != null && isFinite(p.alt)).length;
+  if (conAlt < puntos.length * 0.8) return false;
+  let a = 0, b = 0;
+  for (let k = 0; k < puntos.length; k++) {
+    const d = puntos[k].distAcum;
+    while (a < k && puntos[a].distAcum < d - 25) a++;
+    if (b < k) b = k;
+    while (b + 1 < puntos.length && puntos[b + 1].distAcum <= d + 25) b++;
+    const pa = puntos[a], pb = puntos[b], dd = pb.distAcum - pa.distAcum;
+    puntos[k].pendiente = (dd >= 20 && pa.alt != null && pb.alt != null) ? Math.max(-30, Math.min(30, (pb.alt - pa.alt) / dd * 100)) : 0;
+  }
+  return true;
 }
 function pasoEWMA(ctlPrev, atlPrev, tssHoy) {
   const ctl = ctlPrev + (tssHoy - ctlPrev) / 42;
@@ -3977,6 +4067,7 @@ function distanciaHaversine(lat1, lon1, lat2, lon2) {
 }
 function iniciarGPS() {
   if (!navigator.geolocation) { toast('Este navegador no soporta geolocalización'); return; }
+  gpsAltHist = []; pendienteGPSSuave = 0; // v107
   const estadoEl = document.getElementById('estadoGPS');
   estadoEl.textContent = 'Buscando señal GPS...';
   estadoEl.className = 'estado-conexion';
@@ -4017,6 +4108,7 @@ function procesarPosicionGPS(pos) {
           const deltaAlt = altitude - gpsUltimo.alt;
           if (deltaAlt > 1) elevGanadaAcumM += deltaAlt; // ignoro ruido menor a 1m
         }
+        if (altitude != null) actualizarPendienteGPS(distanciaAcumM, altitude); // v107
       } else if (!sesionActiva) {
         actual.velocidad = 0;
       }
@@ -4025,6 +4117,24 @@ function procesarPosicionGPS(pos) {
   gpsUltimo = { lat: latitude, lon: longitude, t, alt: altitude };
 }
 
+// v107: pendiente al aire libre con la altura del GPS. La del teléfono es ruidosa (±5-10 m): se usa
+// la pendiente de una recta ajustada a los últimos 80 m recorridos (mínimo 40 m), suavizada y
+// limitada a ±20%. Va a pendienteActual, que tick() guarda en cada muestra: así el TSS de una salida
+// al aire libre también se ajusta por las subidas.
+let gpsAltHist = [], pendienteGPSSuave = 0;
+function actualizarPendienteGPS(dist, alt) {
+  if (modo !== 'aire_libre') return;
+  gpsAltHist.push({ d: dist, a: alt });
+  while (gpsAltHist.length && gpsAltHist[0].d < dist - 80) gpsAltHist.shift();
+  if (gpsAltHist.length < 4 || dist - gpsAltHist[0].d < 40) return;
+  const n = gpsAltHist.length, md = gpsAltHist.reduce((x, q) => x + q.d, 0) / n, ma = gpsAltHist.reduce((x, q) => x + q.a, 0) / n;
+  let num = 0, den = 0;
+  gpsAltHist.forEach(q => { num += (q.d - md) * (q.a - ma); den += (q.d - md) ** 2; });
+  if (den <= 0) return;
+  const pend = Math.max(-20, Math.min(20, num / den * 100));
+  pendienteGPSSuave = pendienteGPSSuave * 0.7 + pend * 0.3;
+  pendienteActual = Math.round(pendienteGPSSuave * 10) / 10;
+}
 /* ---------------- Modo manual ---------------- */
 let velocidadManualKmh = 0;
 // Muestra/oculta los botones +/- que flanquean el ritmo en el HUD. Van siempre en el mismo estado
@@ -6709,7 +6819,8 @@ function finalizarSesion(automatica) {
   // (independiente del peso). null si nunca hubo cadencia en toda la sesión, no un 0 engañoso.
   const pasosVivo = pasosAcumulados > 0 ? Math.round(pasosAcumulados) : null;
 
-  const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
+  const calcTss = calcularTSSSesion(puntosSesion, duracionSeg, ritmoPromedioSegKm, pulsoPromedio); // v107
+  const tss = calcTss.tss;
   const desacople = calcularDesacople(puntosSesion.filter(p => p.velocidad > 0 && p.pulso > 0));
   const efAerobica = (ritmoPromedioSegKm && pulsoPromedio) ? ((1000 / ritmoPromedioSegKm) * 60 / pulsoPromedio) : null; // m/min por bpm
 
@@ -6718,6 +6829,7 @@ function finalizarSesion(automatica) {
     fecha: new Date().toISOString(),
     inicioISO: new Date(inicioSesionMs).toISOString(), // timestamp real de arranque, v83 — ver nota junto a inicioSesionMs
     umbralPulso: zonas.umbralPulso || null, // v99: umbral vigente al correr, para calcular el tiempo en zonas con el de ESE día
+    tssMetodo: calcTss.metodo, ngpSegKm: calcTss.ngpSegKm, intensidadIF: calcTss.if, // v107
     modo,
     duracionSeg: Math.round(duracionSeg),
     distanciaM: Math.round(distanciaAcumM),
@@ -7470,6 +7582,10 @@ function renderResumenSesion(s, contenedorId) {
   if (s.desacoplePct != null) extra += 'Desacople ritmo:pulso: <b>' + s.desacoplePct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePct) + '<br>';
   if (s.desacoplePotenciaPct != null) extra += 'Desacople potencia:pulso: <b>' + s.desacoplePotenciaPct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePotenciaPct) + '<br>';
   if (s.efAerobica) extra += 'Eficiencia aeróbica: ' + s.efAerobica.toFixed(2) + ' (m/min)/bpm<br>';
+  // v107: cómo se calculó el TSS
+  if (s.tssMetodo === 'ritmo_pendiente') extra += 'TSS por ritmo normalizado ajustado por pendiente: <b>' + segAMMSS(s.ngpSegKm) + '/km</b> · IF ' + s.intensidadIF.toFixed(2) + '<br>';
+  else if (s.tssMetodo === 'ritmo_promedio') extra += 'TSS por ritmo promedio (sin muestras suficientes para normalizar)<br>';
+  else if (s.tssMetodo === 'pulso') extra += 'TSS por pulso (no hay ritmo umbral cargado) · IF ' + s.intensidadIF.toFixed(2) + '<br>';
   if (s.fantasmaId) extra += 'vs Fantasma (final): ' + (s.fantasmaDeltaFinalSeg != null ? formatearDelta(s.fantasmaDeltaFinalSeg) : '--') + '<br>';
 
   document.getElementById(contenedorId).innerHTML =
@@ -7992,8 +8108,10 @@ function procesarTCX(xmlTexto, nombreArchivo) {
     const hrVal = hrEl ? parseInt(hrEl.getElementsByTagName('Value')[0].textContent, 10) : null;
     const wattsEl = buscarLocalName(tp, 'Watts');
     const cadEl = buscarLocalName(tp, 'RunCadence');
+    const altEl = tp.getElementsByTagName('AltitudeMeters')[0]; // v107: antes no se leía
     puntos.push({
       t: (tiempo - t0) / 1000,
+      alt: altEl ? parseFloat(altEl.textContent) : null,
       distAcum: parseFloat(distEl.textContent),
       pulso: hrVal,
       potencia: wattsEl ? parseFloat(wattsEl.textContent) : null,
@@ -8001,7 +8119,9 @@ function procesarTCX(xmlTexto, nombreArchivo) {
       velocidad: null // se completa abajo por derivación
     });
   });
-  mostrarImportacion(puntos, t0, nombreArchivo, 'import_tcx', null, null);
+  const conAlt = puntos.filter(p => p.alt != null && isFinite(p.alt));
+  const desnivel = conAlt.length >= puntos.length * 0.8 ? desnivelPositivo(conAlt.map(p => p.alt)) : null; // v107
+  mostrarImportacion(puntos, t0, nombreArchivo, 'import_tcx', desnivel, null);
 }
 // v101: lo que sigue era el final de procesarTCX; ahora lo comparten TCX y GPX.
 // rutaGPX: si viene, se ofrece además guardarlo como recorrido virtual.
@@ -8020,6 +8140,7 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     puntos[i].ritmo = puntos[i].velocidad > 0.1 ? 1000 / puntos[i].velocidad : null;
     puntos[i].pendiente = 0;
   }
+  const conPendiente = pendientesDesdeAltura(puntos); // v107: si el archivo trae altura
 
   const duracionSeg = puntos[puntos.length - 1].t;
   const distanciaM = puntos[puntos.length - 1].distAcum;
@@ -8044,6 +8165,7 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     (potenciaPromedio ? ('<br>Potencia promedio: ' + potenciaPromedio + ' W') : '') +
     '</div>' +
     '<button class="btn primario" id="btnUsarTCX">Usar para sembrar zonas (mejores esfuerzos)</button>' +
+    (conPendiente ? '<div class="estado-conexion" style="margin:6px 0;">Trae altura: el TSS se ajusta por las subidas y bajadas.</div>' : '') +
     '<button class="btn" id="btnGuardarTCX">Guardar también como sesión en el historial</button>' +
     (rutaGPX ? '<button class="btn" id="btnGuardarRutaGPX">Guardar como recorrido virtual</button>' : '') +
     '</div>';
@@ -8055,7 +8177,8 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     toast('Mejores esfuerzos actualizados desde el TCX');
   };
   document.getElementById('btnGuardarTCX').onclick = () => {
-    const tss = zonas.umbralRitmoSegKm ? calcularTSS(duracionSeg, ritmoPromedioSegKm, zonas.umbralRitmoSegKm) : 0;
+    const calcTss = calcularTSSSesion(puntos, duracionSeg, ritmoPromedioSegKm, pulsoPromedio); // v107
+    const tss = calcTss.tss;
     const sesion = {
       id: (modoImport === 'import_gpx' ? 'gpx_' : 'tcx_') + Date.now(),
       fecha: new Date(t0).toISOString(),
@@ -8070,7 +8193,8 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
       potenciaPromedio,
       vamPromedio: 0,
       elevGanadaM: elevGanadaM,
-      tss,
+      tss, tssMetodo: calcTss.metodo, ngpSegKm: calcTss.ngpSegKm, intensidadIF: calcTss.if, // v107
+      umbralPulso: zonas.umbralPulso || null,
       desacoplePct: calcularDesacople(puntos.filter(p => p.velocidad > 0 && p.pulso > 0)),
       desacoplePotenciaPct: potenciaPromedio ? calcularDesacople(puntos.filter(p => p.potencia > 0 && p.pulso > 0), 'potencia') : null,
       efAerobica: (ritmoPromedioSegKm && pulsoPromedio) ? ((1000 / ritmoPromedioSegKm) * 60 / pulsoPromedio) : null,
@@ -8083,7 +8207,15 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     if (yaEsta && !confirm('Esta actividad ya está en el historial (' + new Date(t0).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) + ', ' + (yaEsta.distanciaM / 1000).toFixed(2) + ' km). ¿Guardarla otra vez de todos modos?')) return;
     // v105: ¿Mi plan ya la importó desde Garmin? Entonces su TSS ya está en la Forma: se reemplaza
     // esa entrada por la de esta sesión completa, para que no cuente dos veces.
-    const duplicadas = buscarActividadExternaEnForma(t0);
+    let duplicadas = buscarActividadExternaEnForma(t0);
+    // v107: sin TSS calculable (ni ritmo umbral ni pulso umbral) NO se reemplaza la entrada de Garmin:
+    // se perdería un TSS real por un 0. La sesión se guarda igual, pero la Forma sigue con el de Garmin.
+    let mantenerGarmin = false;
+    if (duplicadas.length && !(tss > 0)) {
+      mantenerGarmin = true;
+      alert('Sin ritmo umbral ni pulso umbral cargados, Correr no puede calcular el TSS de esta actividad.\n\nLa guardo en el historial, pero en la Forma queda la entrada de Garmin que cargó Mi plan (TSS ' + duplicadas.map(r => Math.round(r.tss || 0)).join(', ') + '). Cargá tu umbral en Zonas para que Correr lo calcule.');
+      duplicadas = [];
+    }
     if (duplicadas.length) {
       const detalle = duplicadas.map(r => '• ' + r.fecha + (r._inicio ? ' ' + new Date(r._inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '') + ' · TSS ' + (r.tss != null ? Math.round(r.tss) : '?')).join('\n');
       if (!confirm('Esta actividad ya está en la Forma, importada desde Garmin por Mi plan:\n' + detalle + '\n\nSi la guardás acá, se ' + (duplicadas.length > 1 ? 'reemplazan esas entradas' : 'reemplaza esa entrada') + ' para que no cuente dos veces. ¿Continuar?')) return;
@@ -8093,8 +8225,8 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     sesiones.push(sesion);
     bigSet(K_SESIONES, sesiones);
     actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos });
-    actualizarFormaCompartida(sesion);
-    toast('Sesión importada y guardada · TSS ' + tss + (duplicadas.length ? ' (reemplazó la de Garmin en la Forma)' : ''));
+    if (!mantenerGarmin) actualizarFormaCompartida(sesion);
+    toast('Sesión importada y guardada · TSS ' + tss + (duplicadas.length ? ' (reemplazó la de Garmin en la Forma)' : '') + (mantenerGarmin ? ' (en la Forma queda la de Garmin)' : ''));
     mostrarResumenPost(sesion);
   };
 }
@@ -8190,7 +8322,7 @@ function procesarGPX(xmlTexto, nombreArchivo) {
   // Garmin guarda en GPX la cadencia de un solo pie (~85): si el promedio es bajo, la paso a pasos/min
   const cads = conHora.filter(p => p.cad).map(p => p.cad);
   const factorCad = cads.length && promedio(cads) < 110 ? 2 : 1;
-  const puntos = conHora.map(p => ({ t: (p.time - t0) / 1000, distAcum: p.dist, pulso: p.hr, potencia: null, cadencia: p.cad ? p.cad * factorCad : null, velocidad: null }));
+  const puntos = conHora.map(p => ({ t: (p.time - t0) / 1000, distAcum: p.dist, alt: p.ele, pulso: p.hr, potencia: null, cadencia: p.cad ? p.cad * factorCad : null, velocidad: null }));
   const VENTANA = 8; let j = 0; // misma derivación que el TCX
   for (let i = 0; i < puntos.length; i++) {
     while (j < i && puntos[i].t - puntos[j].t > VENTANA) j++;
