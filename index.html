@@ -123,6 +123,8 @@
   .hud-item.fantasma .val.atras{color:var(--pulso);}
 
   #canvasEscena{width:100%; height:320px; display:block; border-radius:12px; background:#0d1a12;}
+  /* v104: con una sesión en curso, deslizar hacia abajo NO recarga la página (Chrome/Brave Android) */
+  html.en-sesion, html.en-sesion body{overscroll-behavior-y:none;}
 
   .rep-pick-row{display:flex; align-items:center; gap:10px; padding:8px 2px; border-bottom:1px solid var(--borde); font-size:13px;}
 
@@ -197,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v103</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v105</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -2883,6 +2885,40 @@
        forzada en plena migración (y la misma prueba falla sin la
        re-lectura). 27/27 OK. Además en Chromium real: migración,
        historial, segundo arranque y diagnóstico sin errores.
+   v104: Hugo perdió su primera sesión al aire libre: deslizando por la
+       app, el navegador lo tomó como "deslizar para recargar" y la
+       sesión, que vivía solo en memoria, se borró. Dos frentes:
+       - Que no pase: con la sesión en curso, html.en-sesion →
+         overscroll-behavior-y:none (sin deslizar-para-recargar en
+         Chrome/Brave Android) y beforeunload (el navegador pide
+         confirmación antes de salir o recargar).
+       - Que se pueda recuperar si igual pasa (recarga, batería, el
+         sistema cierra el navegador): punto de recuperación con el
+         estado completo (acumulados, muestras, plan, tests, fantasma,
+         escenario, meta, último punto GPS, notas) cada 10 s, al pausar,
+         al pasar a segundo plano y al salir — en la base interna
+         (correr_sesion_en_curso) o, sin base, en localStorage. Se borra
+         al terminar (resetearHUD, por donde pasan todas las salidas).
+         Al abrir, tarjeta "Sesión interrumpida": Continuar / Guardar
+         como terminada / Descartar. Continuar con corte de hasta 10 min:
+         ese tiempo cuenta como corrido (aire libre: el primer punto GPS
+         nuevo suma el tramo en línea recta desde el último guardado;
+         cinta/sensor: velocidad × corte). Corte más largo o sesión que
+         ya estaba en pausa: vuelve en pausa.
+   v105: Mi plan importó una sesión de Garmin y Hugo quería verla en el
+       historial de Correr. Lo que importa Mi plan va solo al registro
+       compartido de Forma (TSS), sin muestras. Camino elegido: exportar
+       la actividad de Garmin Connect como TCX/GPX e importarla en
+       Correr (sesión completa: gráficos, zonas, picos, replay). Para
+       que no cuente dos veces en la Forma: al guardar la importación se
+       buscan entradas de Garmin de Mi plan (id 'garmin_<inicio>' de
+       .fit — segundos Unix, segundos de época FIT o ms, se prueban las
+       tres — o 'tcx_<inicio ISO>') que empiecen a menos de 5 min; si hay,
+       se pide confirmación mostrando fecha/hora/TSS y se reemplazan por
+       la entrada de Correr. Nunca toca sesiones de Correr (aunque sus
+       ids también empiecen con tcx_) ni otros deportes. Además: si la
+       misma actividad ya está en el historial de Correr (inicio a menos
+       de 1 min), avisa antes de duplicarla.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6118,7 +6154,160 @@ function iniciarSesion() {
     mostrarBotonesVelocidadHud(true);
   }
   intervaloMuestreo = setInterval(tick, 1000);
+  marcarSesionEnCurso(true); // v104
   toast('Sesión iniciada');
+}
+/* ============================================================
+   v104: SESIÓN A SALVO DE UNA RECARGA
+   Hugo perdió su primera sesión al aire libre: deslizando por la app, el navegador lo tomó como
+   "deslizar para recargar" y la sesión, que vivía solo en memoria, se borró.
+   - Durante la sesión: sin deslizar-para-recargar (clase en-sesion → overscroll-behavior) y el
+     navegador pide confirmación antes de salir o recargar (beforeunload).
+   - Punto de recuperación: el estado completo de la sesión se guarda cada 10 s, al pausar y al
+     pasar a segundo plano — en la base interna (IndexedDB, v103) o, si no hay, en localStorage.
+   - Al abrir: si quedó uno, se ofrece Continuar / Guardar como terminada / Descartar.
+     Continuar: corte de hasta 10 min → ese tiempo cuenta como corrido (al aire libre el GPS
+     completa la distancia en línea recta desde el último punto; en cinta/sensor, con la velocidad
+     que había); más largo → vuelve en pausa.
+   ============================================================ */
+const K_EN_CURSO = LS_PREFIX + 'sesion_en_curso';
+const CORTE_MAX_CONTINUO_MS = 10 * 60 * 1000;
+let ticksDesdeCheckpoint = 0;
+function marcarSesionEnCurso(si) {
+  document.documentElement.classList.toggle('en-sesion', !!si);
+  ticksDesdeCheckpoint = 0;
+  if (si) guardarCheckpoint();
+}
+window.addEventListener('beforeunload', e => {
+  if (!sesionActiva) return;
+  guardarCheckpoint();
+  e.preventDefault(); e.returnValue = ''; // el navegador muestra su propio "¿Salir del sitio?"
+});
+window.addEventListener('pagehide', () => { if (sesionActiva) guardarCheckpoint(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden && sesionActiva) guardarCheckpoint(); });
+function estadoSesionActual() {
+  return {
+    version: 1, guardadoEn: Date.now(), modo, metaTipo, metaValor, metaAlcanzada,
+    acumuladoSeg: tiempoTranscurridoSeg(), pausada: sesionPausada, inicioSesionMs,
+    distanciaAcumM, vamAcumWh, tiempoSubidaSeg, elevGanadaAcumM, puntosSesion, energiaEstJ, pasosAcumulados,
+    pendienteActual, velocidadManualKmh, velocidadMS: actual.velocidad || 0, gpsUltimo,
+    fantasmaId, fantasmaSuperado, deltaFantasmaUltimo, escenarioActual, rutaActivaId,
+    planActivo, progresoPlan, planUltimoObjetivo,
+    testVmaActivo, testVmaCfg, testVmaEscalonPrevio, testVmaAvisado, testUmbralActivo,
+    muestrasCalibracionSesion, notas: document.getElementById('notasSesion').value,
+  };
+}
+function guardarCheckpoint() {
+  if (!sesionActiva) return;
+  let txt;
+  try { txt = JSON.stringify(estadoSesionActual()); } catch (e) { return; }
+  if (bigDb) { idbPut(bigDb, K_EN_CURSO, txt).catch(() => { try { localStorage.setItem(K_EN_CURSO, txt); } catch (e) {} }); return; }
+  try { localStorage.setItem(K_EN_CURSO, txt); }
+  catch (e) { logBLE('No se pudo guardar el punto de recuperación de la sesión (' + e.message + ')', '#d29922'); }
+}
+function borrarCheckpoint() {
+  if (bigDb) idbDel(bigDb, K_EN_CURSO).catch(() => {});
+  try { localStorage.removeItem(K_EN_CURSO); } catch (e) {}
+}
+async function leerCheckpoint() {
+  let txt = null;
+  if (bigDb) { try { txt = await idbGet(bigDb, K_EN_CURSO); } catch (e) {} }
+  let txtLocal = null;
+  try { txtLocal = localStorage.getItem(K_EN_CURSO); } catch (e) {}
+  const a = txt ? JSON.parse(txt) : null, b = txtLocal ? JSON.parse(txtLocal) : null;
+  if (a && b) return a.guardadoEn >= b.guardadoEn ? a : b; // el más nuevo
+  return a || b;
+}
+async function ofrecerRecuperacion() {
+  let snap = null;
+  try { snap = await leerCheckpoint(); } catch (e) {}
+  if (!snap || sesionActiva) return;
+  const hace = Math.round((Date.now() - snap.guardadoEn) / 60000);
+  const card = document.createElement('div');
+  card.className = 'card'; card.id = 'cardRecuperar';
+  card.style.border = '1px solid #E8B84B';
+  card.innerHTML = '<h2>Sesión interrumpida</h2>' +
+    '<div class="estado-conexion" style="margin-bottom:10px; line-height:1.6;">' +
+    'Quedó una sesión sin terminar: ' + (snap.distanciaAcumM / 1000).toFixed(2) + ' km · ' + segAHMS(Math.round(snap.acumuladoSeg)) +
+    ' · ' + ({ manual: 'cinta', aire_libre: 'aire libre', ble: 'sensor', calibracion: 'calibración' }[snap.modo] || snap.modo) +
+    ' · hace ' + (hace < 1 ? 'menos de un minuto' : hace + ' min') + '.' +
+    (Date.now() - snap.guardadoEn > CORTE_MAX_CONTINUO_MS && !snap.pausada ? '<br>Pasaron más de 10 minutos: si la continuás, vuelve en pausa.' : '') + '</div>' +
+    '<div style="display:flex; gap:8px; flex-wrap:wrap;">' +
+    '<button class="btn primario" id="btnRecContinuar">Continuar</button>' +
+    '<button class="btn" id="btnRecGuardar">Guardar como terminada</button>' +
+    '<button class="btn chico" id="btnRecDescartar">Descartar</button></div>';
+  const vista = document.getElementById('view-vivo');
+  vista.insertBefore(card, vista.firstChild);
+  const cerrar = () => card.remove();
+  document.getElementById('btnRecContinuar').onclick = () => { cerrar(); restaurarSesion(snap, true); };
+  document.getElementById('btnRecGuardar').onclick = () => { cerrar(); restaurarSesion(snap, false); finalizarSesion(true); };
+  document.getElementById('btnRecDescartar').onclick = () => {
+    if (!confirm('¿Descartar la sesión interrumpida? Se pierde.')) return;
+    cerrar(); borrarCheckpoint(); toast('Sesión interrumpida descartada');
+  };
+  cambiarTab('vivo');
+}
+// continuar=true: la sesión sigue corriendo; false: se restaura en pausa solo para guardarla
+function restaurarSesion(snap, continuar) {
+  seleccionarModo(snap.modo);
+  if (snap.metaTipo) { seleccionarMeta(snap.metaTipo); metaValor = snap.metaValor; }
+  metaAlcanzada = !!snap.metaAlcanzada;
+  // escenario
+  const sel = document.getElementById('selectEscenario');
+  if (snap.escenarioActual === 'ruta' && snap.rutaActivaId) { rutaActivaId = snap.rutaActivaId; _rutaCache = null; sel.value = 'ruta:' + snap.rutaActivaId; }
+  else if (snap.escenarioActual) sel.value = snap.escenarioActual;
+  if (sel.value) cambiarEscenario();
+  // fantasma
+  fantasmaId = snap.fantasmaId || null; puntosFantasma = null;
+  fantasmaSuperado = !!snap.fantasmaSuperado; deltaFantasmaUltimo = snap.deltaFantasmaUltimo;
+  if (fantasmaId) {
+    const sF = bigGet(K_SESIONES, []).find(x => x.id === fantasmaId);
+    if (sF) { puntosFantasma = puntosDeSesion(sF).map(p => ({ t: p.t, distAcum: p.distAcum, velocidad: p.velocidad })); document.getElementById('tileFantasma').style.display = 'block'; }
+    document.getElementById('selectFantasma').value = fantasmaId;
+  }
+  document.getElementById('selectFantasma').disabled = true;
+  // datos acumulados
+  distanciaAcumM = snap.distanciaAcumM || 0; vamAcumWh = snap.vamAcumWh || 0; tiempoSubidaSeg = snap.tiempoSubidaSeg || 0;
+  elevGanadaAcumM = snap.elevGanadaAcumM || 0; puntosSesion = snap.puntosSesion || []; energiaEstJ = snap.energiaEstJ || 0;
+  pasosAcumulados = snap.pasosAcumulados || 0; muestrasCalibracionSesion = snap.muestrasCalibracionSesion || [];
+  pendienteActual = snap.pendienteActual || 0; velocidadManualKmh = snap.velocidadManualKmh || 0;
+  inicioSesionMs = snap.inicioSesionMs;
+  planActivo = snap.planActivo; progresoPlan = snap.progresoPlan; planUltimoObjetivo = snap.planUltimoObjetivo;
+  testVmaActivo = !!snap.testVmaActivo; testVmaCfg = snap.testVmaCfg; testVmaEscalonPrevio = snap.testVmaEscalonPrevio; testVmaAvisado = !!snap.testVmaAvisado;
+  testUmbralActivo = !!snap.testUmbralActivo;
+  document.getElementById('notasSesion').value = snap.notas || '';
+  document.getElementById('tilePlan').style.display = planActivo ? 'block' : 'none';
+  document.getElementById('tileTestVma').style.display = testVmaActivo ? 'block' : 'none';
+  document.getElementById('tileTestUmbral').style.display = testUmbralActivo ? 'block' : 'none';
+  // el corte: corto y en marcha → cuenta como corrido; largo, o ya estaba en pausa → pausa
+  const corteMs = Math.max(0, Date.now() - snap.guardadoEn);
+  const sigueCorriendo = continuar && !snap.pausada && corteMs <= CORTE_MAX_CONTINUO_MS;
+  cronometro.acumulado = snap.acumuladoSeg * 1000 + (sigueCorriendo ? corteMs : 0);
+  cronometro.inicio = Date.now();
+  sesionPausada = !sigueCorriendo;
+  actual.velocidad = snap.modo === 'aire_libre' ? 0 : (snap.velocidadMS || 0);
+  if (sigueCorriendo && snap.modo !== 'aire_libre') distanciaAcumM += (snap.velocidadMS || 0) * corteMs / 1000;
+  sesionActiva = true;
+  if (snap.modo === 'aire_libre' && continuar) {
+    iniciarGPS();
+    if (sigueCorriendo && snap.gpsUltimo) gpsUltimo = snap.gpsUltimo; // el primer punto nuevo suma el tramo del corte
+  }
+  // pantalla, igual que al iniciar
+  document.getElementById('btnIniciar').disabled = true;
+  document.getElementById('btnPausar').disabled = false;
+  document.getElementById('btnPausar').textContent = sesionPausada ? 'Reanudar' : 'Pausar';
+  document.getElementById('btnFinalizar').disabled = false;
+  document.getElementById('cardNotas').style.display = 'block';
+  document.getElementById('cardModo').style.display = 'none';
+  document.getElementById('cardMeta').style.display = 'none';
+  if (snap.modo === 'manual' || snap.modo === 'calibracion') mostrarBotonesVelocidadHud(true);
+  if (!continuar) return; // solo para guardar: finalizarSesion se encarga del resto
+  pedirWakeLock();
+  intervaloMuestreo = setInterval(tick, 1000);
+  marcarSesionEnCurso(true);
+  logBLE('Sesión recuperada: ' + (distanciaAcumM / 1000).toFixed(2) + ' km, corte de ' + Math.round(corteMs / 1000) + ' s' + (sigueCorriendo ? ' (contado como corrido)' : ' (vuelve en pausa)'), '#4FD8C4');
+  if (planActivo && snap.modo === 'manual') logBLE('Si usabas la cinta por Bluetooth, volvé a conectarla: el plan no la mueve sin la velocidad de referencia', '#d29922');
+  toast(sesionPausada ? 'Sesión recuperada en pausa: tocá Reanudar' : 'Sesión recuperada, seguí corriendo');
 }
 function pausarSesion() {
   sesionPausada = !sesionPausada;
@@ -6128,6 +6317,7 @@ function pausarSesion() {
   } else {
     cronometro.inicio = Date.now();
   }
+  guardarCheckpoint(); // v104
 }
 function tiempoTranscurridoSeg() {
   const extra = sesionPausada ? 0 : (Date.now() - cronometro.inicio);
@@ -6135,6 +6325,7 @@ function tiempoTranscurridoSeg() {
 }
 function tick() {
   if (!sesionActiva || sesionPausada) return;
+  if (++ticksDesdeCheckpoint >= 10) { ticksDesdeCheckpoint = 0; guardarCheckpoint(); } // v104
   const t = tiempoTranscurridoSeg();
   // antes de leer la velocidad: si hay test de VMA en curso, puede que este tick cambie de escalón
   // y suba actual.velocidad — así la muestra que se guarda abajo ya refleja la velocidad nueva.
@@ -6561,6 +6752,8 @@ function finalizarSesion(automatica) {
 }
 function resetearHUD() {
   soltarWakeLock();
+  marcarSesionEnCurso(false); // v104
+  borrarCheckpoint();
   document.getElementById('btnIniciar').disabled = false;
   document.getElementById('btnPausar').disabled = true;
   document.getElementById('btnPausar').textContent = 'Pausar';
@@ -6735,6 +6928,38 @@ function actualizarFormaCompartida(sesion) {
     (sesion.cadenciaPromedio ? Math.round(sesion.cadenciaPromedio * (sesion.duracionSeg / 60)) : null);
   registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss, id: sesion.id, pasos, pasosAprox: pasos !== null });
   lsSet(K_FORMA_COMPARTIDA, registro);
+}
+/* v105: actividades de Garmin que Mi plan importó al registro compartido de Forma.
+   Mi plan las guarda con id 'garmin_<hora de inicio>' (archivos .fit) o 'tcx_<Id del TCX, que es la
+   hora de inicio en ISO>'. El número de 'garmin_' puede estar en segundos Unix, en segundos de la
+   época FIT (31/12/1989) o en milisegundos: se prueban las tres lecturas. Coincide si alguna cae a
+   menos de 5 minutos del inicio de la sesión que se importa. Nunca toca entradas de sesiones de
+   Correr (aunque también empiecen con 'tcx_') ni de otros deportes. */
+const EPOCA_FIT_SEG = 631065600; // 1989-12-31T00:00:00Z en segundos Unix
+const DEPORTES_CARRERA = ['correr', 'carrera', 'running', 'run', 'trote'];
+function iniciosPosiblesDeId(id) {
+  const m = String(id || '').match(/^(?:garmin|tcx|fit)_(.+)$/);
+  if (!m) return [];
+  const v = m[1];
+  if (/^\d+(\.\d+)?$/.test(v)) { const n = parseFloat(v); return [n * 1000, (n + EPOCA_FIT_SEG) * 1000, n]; }
+  const t = Date.parse(v);
+  return isNaN(t) ? [] : [t];
+}
+function buscarActividadExternaEnForma(inicioMs) {
+  const propias = new Set(bigGet(K_SESIONES, []).map(x => x.id));
+  const MARGEN = 5 * 60 * 1000;
+  return lsGet(K_FORMA_COMPARTIDA, []).filter(r => {
+    if (propias.has(r.id)) return false;                                        // sesión de Correr
+    if (r.deporte && !DEPORTES_CARRERA.includes(String(r.deporte).toLowerCase())) return false;
+    const inicio = iniciosPosiblesDeId(r.id).find(t => Math.abs(t - inicioMs) < MARGEN);
+    if (inicio == null) return false;
+    r._inicio = inicio;
+    return true;
+  });
+}
+function quitarDeFormaCompartida(ids) {
+  const sacar = new Set(ids);
+  lsSet(K_FORMA_COMPARTIDA, lsGet(K_FORMA_COMPARTIDA, []).filter(r => !sacar.has(r.id)));
 }
 // saca del registro compartido la entrada de ESTA sesión puntual (por id) — así al borrar una
 // sesión de Correr no le queda el TSS pegado para siempre en la forma combinada. Solo toca
@@ -7832,11 +8057,23 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
       notas: 'Importado de ' + nombreArchivo
     };
     const sesiones = bigGet(K_SESIONES, []);
+    // v105: ¿ya está en el historial? (la misma actividad importada dos veces en Correr)
+    const yaEsta = sesiones.find(x => x.inicioISO && Math.abs(new Date(x.inicioISO).getTime() - t0) < 60 * 1000);
+    if (yaEsta && !confirm('Esta actividad ya está en el historial (' + new Date(t0).toLocaleString('es-AR', { dateStyle: 'short', timeStyle: 'short' }) + ', ' + (yaEsta.distanciaM / 1000).toFixed(2) + ' km). ¿Guardarla otra vez de todos modos?')) return;
+    // v105: ¿Mi plan ya la importó desde Garmin? Entonces su TSS ya está en la Forma: se reemplaza
+    // esa entrada por la de esta sesión completa, para que no cuente dos veces.
+    const duplicadas = buscarActividadExternaEnForma(t0);
+    if (duplicadas.length) {
+      const detalle = duplicadas.map(r => '• ' + r.fecha + (r._inicio ? ' ' + new Date(r._inicio).toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' }) : '') + ' · TSS ' + (r.tss != null ? Math.round(r.tss) : '?')).join('\n');
+      if (!confirm('Esta actividad ya está en la Forma, importada desde Garmin por Mi plan:\n' + detalle + '\n\nSi la guardás acá, se ' + (duplicadas.length > 1 ? 'reemplazan esas entradas' : 'reemplaza esa entrada') + ' para que no cuente dos veces. ¿Continuar?')) return;
+      quitarDeFormaCompartida(duplicadas.map(r => r.id));
+      logBLE('Forma: ' + duplicadas.length + (duplicadas.length > 1 ? ' entradas' : ' entrada') + ' de Garmin (Mi plan) reemplazada' + (duplicadas.length > 1 ? 's' : '') + ' por la sesión importada en Correr', '#4FD8C4');
+    }
     sesiones.push(sesion);
     bigSet(K_SESIONES, sesiones);
     actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos });
     actualizarFormaCompartida(sesion);
-    toast('Sesión importada y guardada · TSS ' + tss);
+    toast('Sesión importada y guardada · TSS ' + tss + (duplicadas.length ? ' (reemplazó la de Garmin en la Forma)' : ''));
     mostrarResumenPost(sesion);
   };
 }
@@ -8554,7 +8791,7 @@ seleccionarModo('ble');
 poblarOpcionesRutas(); // v101: recorridos GPX guardados en el selector de escenario
 document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
-initBigStore(); // v103: abre la base, migra/combina sesiones y recorridos, y redibuja lo que dependía de ellos
+initBigStore().then(ofrecerRecuperacion); // v103: base interna; v104: después, ofrece retomar una sesión interrumpida
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
   else if (escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa')) iniciarBucleEscena();
