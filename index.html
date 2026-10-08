@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v107</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v108</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -340,6 +340,42 @@
       <pre id="logBLE"></pre>
     </div>
 
+    <!-- v108: plan de carrera — ritmo por km, alarmas de ritmo y pulso, exportable al reloj -->
+    <div class="card" id="cardPlanCarrera">
+      <h2>Plan de carrera</h2>
+      <div class="estado-conexion" style="margin-bottom:8px;">Ritmo por kilómetro para competir contra él (corre como fantasma), con alarmas si te pasás de pulso o te desviás del ritmo. Se exporta a la Forerunner o a otro teléfono.</div>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Distancia (km)</label><input type="number" id="pcDist" value="10" step="0.1" min="0.5" oninput="planCarreraDesdeForm(true)"></div>
+        <div style="flex:1;"><label>Ritmo objetivo</label><input type="text" id="pcRitmo" placeholder="6:00" inputmode="numeric" oninput="planCarreraDesdeForm(true)"></div>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:2;"><label>Estrategia</label><select id="pcEstrategia" onchange="planCarreraDesdeForm(true)">
+          <option value="parejo">Parejo</option>
+          <option value="negativo">Negativo (2ª mitad más rápida)</option>
+          <option value="prudente">Salida prudente (1er km más lento)</option>
+        </select></div>
+        <div style="flex:1;"><label>Diferencia (s/km)</label><input type="number" id="pcDif" value="10" min="0" step="1" oninput="planCarreraDesdeForm(true)"></div>
+      </div>
+      <label>Parciales (podés tocar cada uno)</label>
+      <div id="pcTabla" style="display:grid; grid-template-columns:repeat(auto-fill,minmax(88px,1fr)); gap:6px;"></div>
+      <div class="estado-conexion" id="pcTotal" style="margin:8px 0;"></div>
+      <div style="display:flex; gap:8px;">
+        <div style="flex:1;"><label>Tolerancia de ritmo (± s/km)</label><input type="number" id="pcTol" value="15" min="3" step="1" oninput="planCarreraDesdeForm(false)"></div>
+        <div style="flex:1;"><label>Alarma de pulso (% FCmáx)</label><input type="number" id="pcPct" value="92" min="50" max="100" step="1" oninput="planCarreraDesdeForm(false)"></div>
+        <div style="flex:1;"><label>Edad</label><input type="number" id="pcEdad" min="10" max="100" step="1" oninput="planCarreraDesdeForm(false)"></div>
+      </div>
+      <div class="estado-conexion" id="pcFcInfo" style="margin:6px 0;"></div>
+      <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="chkPlanCarrera" style="width:auto;" onchange="planCarreraDesdeForm(false)"> Usar en la próxima sesión (reemplaza al fantasma)</label>
+      <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="chkPlanVoz" style="width:auto;" checked onchange="planCarreraDesdeForm(false)"> Avisos por voz (además de vibración y pitido)</label>
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+        <button class="btn" onclick="exportarPlanFIT()">⌚ Exportar al Garmin (.fit)</button>
+        <button class="btn" onclick="exportarPlanJSON()">📤 Exportar plan</button>
+        <button class="btn" onclick="document.getElementById('inputPlanCarrera').click()">📥 Importar plan</button>
+        <button class="btn chico" onclick="probarAlarmaPlan()">🔔 Probar aviso</button>
+      </div>
+      <input type="file" id="inputPlanCarrera" accept=".json,application/json" style="display:none;" onchange="importarPlanJSON(event)">
+    </div>
+
     <div class="card">
       <h2>Fantasma (opcional)</h2>
       <label>Corré contra una sesión anterior</label>
@@ -463,6 +499,11 @@
         <div class="hud-item">
           <div class="val" id="hudTiempo">00:00</div>
           <div class="lbl">Tiempo</div>
+        </div>
+        <!-- v108: plan de carrera en vivo -->
+        <div class="hud-item grande" id="tilePlanCarrera" style="display:none;">
+          <div class="val" id="hudPlanCarrera" style="font-size:1.3rem;">--</div>
+          <div class="lbl" id="lblPlanCarrera">Plan de carrera</div>
         </div>
         <div class="hud-item grande fantasma" id="tileFantasma" style="display:none;">
           <div class="val" id="hudFantasma">--</div>
@@ -2947,6 +2988,23 @@
        - Fix de v105: sin TSS calculable, al importar NO se reemplaza
          la entrada de Garmin de Mi plan (se perdía un TSS real por 0):
          se guarda la sesión y se avisa.
+   v108: PLAN DE CARRERA (pedido para la 10K): tarjeta nueva en la
+       pantalla en vivo. Distancia + ritmo objetivo + estrategia
+       (parejo / negativo / salida prudente, con "diferencia" en s/km y
+       mismo tiempo final), parciales por km editables, tolerancia de
+       ritmo y alarma de pulso al % de la FCmáx de Tanaka (208 − 0,7 ×
+       edad; edad del perfil compartido o a mano). Con "Usar en la
+       próxima sesión" el plan reemplaza al fantasma (puntos cada 50 m)
+       y aparece un tile con el km, el objetivo, el ritmo de los
+       últimos 30 s y la diferencia. Alarmas: pulso > límite 5 s
+       (repite cada 30 s), ritmo fuera de tolerancia 15 s (cada 45 s);
+       vibración + pitido (WebAudio, se desbloquea al Iniciar) + voz
+       opcional; voz con la diferencia en cada km. La sesión guarda el
+       resumen (tiempo del plan, alarmas) y el informe lo muestra. Entra
+       en el punto de recuperación (v104). Exporta: .fit de entrenamiento
+       Garmin (file_id + workout + un workout_step por tramo, duración
+       por distancia, objetivo de velocidad parcial ± tolerancia;
+       validado con fitparse) y .json para importarlo en otro teléfono.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3566,6 +3624,338 @@ function cambiarTab(nombre) {
 }
 function cerrarDetalle() { document.getElementById('overlayDetalle').classList.remove('activa'); }
 
+/* ============================================================
+   v108: PLAN DE CARRERA
+   - Ritmo por km (parejo, negativo o salida prudente; cada parcial editable). En la sesión corre
+     como fantasma (puntosFantasma desde el plan): el badge y la escena muestran adelante/atrás.
+   - Alarmas: pulso por encima de pct% de la FCmáx de Tanaka (208 − 0,7 × edad) durante 5 s;
+     ritmo de los últimos 30 s fuera de ± tolerancia del parcial del km actual durante 15 s.
+     Vibración + pitido + voz (opcional). Pausa entre avisos del mismo tipo: 30 s (pulso) y 45 s
+     (ritmo). Al pasar cada km, voz con la diferencia contra el plan.
+   - Exporta: entrenamiento .fit para Garmin (un paso por km por distancia, con rango de
+     velocidad = parcial ± tolerancia; el reloj avisa solo) y .json para otro teléfono.
+   ============================================================ */
+const K_PLAN_CARRERA = LS_PREFIX + 'plan_carrera';
+let planCarrera = lsGet(K_PLAN_CARRERA, null);
+let planCarreraActivo = null; // copia del plan usada en la sesión en curso
+let pcEstado = null;          // estado de las alarmas durante la sesión
+function textoASeg(txt) {
+  const m = String(txt || '').trim().match(/^(\d{1,2})[:.,' ](\d{1,2})$/);
+  if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+  const n = parseFloat(String(txt).replace(',', '.'));
+  return isFinite(n) && n > 0 ? Math.round(n * 60) : null; // "6" → 6:00
+}
+function tanakaFcMax(edad) { return 208 - 0.7 * edad; }
+function edadParaPlan() {
+  const v = parseInt(document.getElementById('pcEdad').value, 10);
+  if (v > 0) return v;
+  const comp = lsGet(K_PERFIL_COMPARTIDO, {}) || {}, propio = lsGet(K_PERFIL, {}) || {};
+  const fn = comp.fechaNacimiento || propio.fechaNacimiento;
+  if (fn) {
+    const n = new Date(fn + 'T12:00:00'), h = new Date();
+    let e = h.getFullYear() - n.getFullYear();
+    if (h.getMonth() < n.getMonth() || (h.getMonth() === n.getMonth() && h.getDate() < n.getDate())) e--;
+    if (e > 0) return e;
+  }
+  return comp.edad || propio.edad || null;
+}
+// largo (m) de cada tramo: km enteros y el último el resto
+function tramosPlan(distKm) {
+  const total = Math.round(distKm * 1000), out = [];
+  for (let d = 0; d < total; d += 1000) out.push(Math.min(1000, total - d));
+  return out;
+}
+// v108: el redondeo a segundos enteros se reparte (de atrás para adelante) para que el tiempo final
+// sea el de ritmo × distancia — sin esto, 10 km a 6:00 con salida prudente daba 59:57
+function parcialesEstrategia(distKm, ritmo, estrategia, dif) {
+  const tr = tramosPlan(distKm), p = parcialesBase(distKm, ritmo, estrategia, dif);
+  let resto = ritmo * distKm - tr.reduce((a, l, i) => a + p[i] * l / 1000, 0);
+  for (let i = tr.length - 1; Math.abs(resto) >= 0.5 && i >= 0; i = (i - 1 + tr.length) % tr.length) {
+    if (tr[i] < 1000) { if (i === 0) break; continue; }
+    const paso = resto > 0 ? 1 : -1; p[i] += paso; resto -= paso;
+    if (Math.abs(resto) > tr.length * 3) break;
+  }
+  return p;
+}
+function parcialesBase(distKm, ritmo, estrategia, dif) {
+  const tr = tramosPlan(distKm), n = tr.length;
+  if (estrategia === 'negativo') {
+    let acum = 0; const mitad = distKm * 500;
+    return tr.map(l => { const centro = acum + l / 2; acum += l; return Math.round(ritmo + (centro < mitad ? dif / 2 : -dif / 2)); });
+  }
+  if (estrategia === 'prudente' && n > 1) {
+    const resto = tr.slice(1).reduce((a, b) => a + b, 0) / 1000;
+    const r1 = ritmo + dif, rN = (ritmo * distKm - r1 * tr[0] / 1000) / resto; // mismo tiempo final
+    return tr.map((_, i) => Math.round(i === 0 ? r1 : rN));
+  }
+  return tr.map(() => Math.round(ritmo));
+}
+function tiempoTotalPlan(plan) { return tramosPlan(plan.distKm).reduce((a, l, i) => a + plan.parciales[i] * l / 1000, 0); }
+function limitePulsoPlan(plan) { return plan.edad ? Math.round(tanakaFcMax(plan.edad) * plan.pctFc / 100) : null; }
+// lee el formulario; rearmar=true recalcula los parciales desde ritmo y estrategia
+function planCarreraDesdeForm(rearmar) {
+  const distKm = parseFloat(document.getElementById('pcDist').value) || 0;
+  const ritmo = textoASeg(document.getElementById('pcRitmo').value);
+  const estrategia = document.getElementById('pcEstrategia').value, dif = parseInt(document.getElementById('pcDif').value, 10) || 0;
+  const previo = planCarrera || {};
+  let parciales = previo.parciales || [];
+  const n = tramosPlan(distKm).length;
+  if (rearmar || parciales.length !== n) parciales = (ritmo && distKm > 0) ? parcialesEstrategia(distKm, ritmo, estrategia, dif) : [];
+  planCarrera = {
+    distKm, ritmoSegKm: ritmo, estrategia, dif, parciales,
+    tolSeg: parseInt(document.getElementById('pcTol').value, 10) || 15,
+    pctFc: parseInt(document.getElementById('pcPct').value, 10) || 92,
+    edad: edadParaPlan(),
+    usar: document.getElementById('chkPlanCarrera').checked,
+    voz: document.getElementById('chkPlanVoz').checked,
+  };
+  lsSet(K_PLAN_CARRERA, planCarrera);
+  renderPlanCarrera(rearmar);
+}
+function renderPlanCarrera(rehacerTabla) {
+  const p = planCarrera, tabla = document.getElementById('pcTabla');
+  if (!p || !p.parciales || !p.parciales.length) { tabla.innerHTML = ''; document.getElementById('pcTotal').textContent = 'Cargá distancia y ritmo objetivo.'; }
+  else {
+    const tr = tramosPlan(p.distKm);
+    if (rehacerTabla !== false || tabla.children.length !== tr.length) {
+      tabla.innerHTML = tr.map((l, i) =>
+        '<div><div style="color:var(--muted); font-size:.75rem;">' + (l < 1000 ? 'Últ. ' + l + ' m' : 'Km ' + (i + 1)) + '</div>' +
+        '<input type="text" inputmode="numeric" value="' + segAMMSS(p.parciales[i]) + '" onchange="editarParcialPlan(' + i + ', this)" style="padding:6px;"></div>').join('');
+    }
+    const T = tiempoTotalPlan(p);
+    document.getElementById('pcTotal').innerHTML = 'Tiempo final del plan: <b>' + segAHMS(Math.round(T)) + '</b> · ritmo medio ' + segAMMSS(T / p.distKm) + '/km';
+  }
+  const lim = p ? limitePulsoPlan(p) : null;
+  document.getElementById('pcFcInfo').innerHTML = lim
+    ? 'FCmáx (Tanaka, ' + p.edad + ' años) ' + Math.round(tanakaFcMax(p.edad)) + ' ppm → alarma a partir de <b>' + lim + ' ppm</b>'
+    : 'Cargá tu edad para la alarma de pulso.';
+}
+function editarParcialPlan(i, el) {
+  const v = textoASeg(el.value);
+  if (!v || !planCarrera) { el.value = planCarrera ? segAMMSS(planCarrera.parciales[i]) : ''; return; }
+  planCarrera.parciales[i] = v; el.value = segAMMSS(v);
+  lsSet(K_PLAN_CARRERA, planCarrera);
+  renderPlanCarrera(false);
+}
+function cargarFormPlanCarrera() {
+  const p = planCarrera;
+  if (p) {
+    document.getElementById('pcDist').value = p.distKm;
+    document.getElementById('pcRitmo').value = p.ritmoSegKm ? segAMMSS(p.ritmoSegKm) : '';
+    document.getElementById('pcEstrategia').value = p.estrategia || 'parejo';
+    document.getElementById('pcDif').value = p.dif != null ? p.dif : 10;
+    document.getElementById('pcTol').value = p.tolSeg || 15;
+    document.getElementById('pcPct').value = p.pctFc || 92;
+    document.getElementById('chkPlanCarrera').checked = !!p.usar;
+    document.getElementById('chkPlanVoz').checked = p.voz !== false;
+  }
+  const e = (p && p.edad) || edadParaPlan();
+  if (e) document.getElementById('pcEdad').value = e;
+  if (p) { p.edad = e || p.edad; }
+  renderPlanCarrera(true);
+}
+// el plan como fantasma: un punto cada 50 m con el tiempo planeado
+function puntosFantasmaDePlan(plan) {
+  const tr = tramosPlan(plan.distKm), pts = [{ t: 0, distAcum: 0, velocidad: 1000 / plan.parciales[0] }];
+  let d0 = 0, t0 = 0;
+  tr.forEach((l, i) => {
+    const v = 1000 / plan.parciales[i];
+    for (let x = 50; x <= l; x += 50) pts.push({ t: t0 + x / v, distAcum: d0 + x, velocidad: v });
+    if (l % 50) pts.push({ t: t0 + l / v, distAcum: d0 + l, velocidad: v });
+    d0 += l; t0 += l / v;
+  });
+  return pts;
+}
+function tiempoPlanEnDistancia(plan, d) {
+  const tr = tramosPlan(plan.distKm); let acum = 0, t = 0;
+  for (let i = 0; i < tr.length; i++) {
+    if (d <= acum + tr[i]) return t + (d - acum) * plan.parciales[i] / 1000;
+    acum += tr[i]; t += tr[i] * plan.parciales[i] / 1000;
+  }
+  return null;
+}
+// ---- avisos ----
+let _audioCtx = null;
+function desbloquearAudio() {
+  try { if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (_audioCtx.state === 'suspended') _audioCtx.resume(); } catch (e) {}
+}
+function pitido(veces, agudo) {
+  if (!_audioCtx) return;
+  try {
+    for (let k = 0; k < veces; k++) {
+      const o = _audioCtx.createOscillator(), g = _audioCtx.createGain(), t0 = _audioCtx.currentTime + k * 0.28;
+      o.frequency.value = agudo ? 1320 : 880; o.connect(g); g.connect(_audioCtx.destination);
+      g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.4, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.2);
+      o.start(t0); o.stop(t0 + 0.22);
+    }
+  } catch (e) {}
+}
+function hablar(txt) {
+  try {
+    if (!window.speechSynthesis) return;
+    const u = new SpeechSynthesisUtterance(txt); u.lang = 'es-AR'; u.rate = 1.05;
+    speechSynthesis.cancel(); speechSynthesis.speak(u);
+  } catch (e) {}
+}
+function avisoPlan(tipo, texto, voz) {
+  const urgente = tipo === 'pulso';
+  if (navigator.vibrate) { try { navigator.vibrate(urgente ? [400, 150, 400, 150, 400] : [250, 120, 250]); } catch (e) {} }
+  pitido(urgente ? 3 : 2, urgente);
+  if (planCarreraActivo && planCarreraActivo.voz && voz) hablar(voz);
+  toast(texto);
+  logBLE('Plan: ' + texto, urgente ? '#f85149' : '#d29922');
+}
+function probarAlarmaPlan() { desbloquearAudio(); const v = planCarreraActivo; planCarreraActivo = planCarrera; avisoPlan('ritmo', 'Así suena un aviso del plan', 'Ritmo cinco cincuenta, objetivo seis. Aflojá un poco.'); planCarreraActivo = v; }
+function decirTiempo(seg) {
+  seg = Math.round(Math.abs(seg));
+  const m = Math.floor(seg / 60), s = seg % 60;
+  return (m ? m + (m === 1 ? ' minuto' : ' minutos') + (s ? ' y ' : '') : '') + (s || !m ? s + ' segundos' : '');
+}
+function decirRitmo(seg) { seg = Math.round(seg); return Math.floor(seg / 60) + ' ' + String(seg % 60).padStart(2, '0'); }
+function iniciarPlanCarreraSesion() {
+  planCarreraActivo = null; pcEstado = null;
+  const tile = document.getElementById('tilePlanCarrera');
+  if (!(planCarrera && planCarrera.usar && planCarrera.parciales && planCarrera.parciales.length)) { tile.style.display = 'none'; return; }
+  planCarreraActivo = JSON.parse(JSON.stringify(planCarrera));
+  pcEstado = { hist: [], pulsoAltoDesde: null, ritmoFueraDesde: null, ultAvisoPulso: -1e9, ultAvisoRitmo: -1e9, kmAvisado: 0, alarmasPulso: 0, alarmasRitmo: 0 };
+  tile.style.display = 'block';
+  desbloquearAudio();
+}
+function revisarPlanCarrera(t, pulso) {
+  const P = planCarreraActivo, E = pcEstado;
+  if (!P || !E) return;
+  const d = distanciaAcumM, tr = tramosPlan(P.distKm);
+  let idx = 0, acum = 0;
+  while (idx < tr.length - 1 && d >= acum + tr[idx]) { acum += tr[idx]; idx++; }
+  const objetivo = P.parciales[idx];
+  // ritmo de los últimos 30 s (por distancia: robusto al ruido del GPS)
+  E.hist.push({ t, d });
+  while (E.hist.length > 2 && t - E.hist[1].t >= 30) E.hist.shift();
+  const h0 = E.hist[0], dd = d - h0.d, dt = t - h0.t;
+  const ritmoAct = (dt >= 25 && dd > 40) ? dt / dd * 1000 : null;
+  const tPlan = tiempoPlanEnDistancia(P, Math.min(d, P.distKm * 1000));
+  const delta = tPlan != null ? t - tPlan : null; // + = atrás del plan
+  // pantalla
+  const terminado = d >= P.distKm * 1000;
+  document.getElementById('hudPlanCarrera').textContent = terminado ? '🏁 ' + formatearDelta(t - tiempoTotalPlan(P))
+    : (tr[idx] < 1000 ? 'Últ. ' + tr[idx] + ' m' : 'Km ' + (idx + 1)) + ' · ' + segAMMSS(objetivo) + (ritmoAct ? ' · vas ' + segAMMSS(ritmoAct) : '');
+  document.getElementById('lblPlanCarrera').textContent = terminado ? 'Plan terminado (vs tiempo planeado)' : 'Plan · objetivo del km' + (delta != null ? ' · ' + formatearDelta(delta) : '');
+  const tile = document.getElementById('tilePlanCarrera');
+  if (terminado) { tile.style.borderColor = ''; return; }
+  // pulso
+  const lim = limitePulsoPlan(P);
+  let alarma = null;
+  if (lim && pulso > lim) {
+    if (E.pulsoAltoDesde == null) E.pulsoAltoDesde = t;
+    if (t - E.pulsoAltoDesde >= 5 && t - E.ultAvisoPulso >= 30) {
+      E.ultAvisoPulso = t; E.alarmasPulso++;
+      avisoPlan('pulso', 'Pulso ' + pulso + ' ppm: pasaste el ' + P.pctFc + '% (' + lim + ')', 'Pulso ' + pulso + '. Bajá el ritmo.');
+    }
+    alarma = 'pulso';
+  } else E.pulsoAltoDesde = null;
+  // ritmo
+  if (ritmoAct) {
+    const dev = ritmoAct - objetivo;
+    if (Math.abs(dev) > P.tolSeg) {
+      if (E.ritmoFueraDesde == null) E.ritmoFueraDesde = t;
+      if (t - E.ritmoFueraDesde >= 15 && t - E.ultAvisoRitmo >= 45) {
+        E.ultAvisoRitmo = t; E.alarmasRitmo++;
+        const rapido = dev < 0;
+        avisoPlan('ritmo', 'Ritmo ' + segAMMSS(ritmoAct) + ', objetivo ' + segAMMSS(objetivo) + (rapido ? ': vas muy rápido' : ': vas lento'),
+          'Ritmo ' + decirRitmo(ritmoAct) + ', objetivo ' + decirRitmo(objetivo) + '. ' + (rapido ? 'Aflojá un poco.' : 'Apurá un poco.'));
+      }
+      if (!alarma) alarma = 'ritmo';
+    } else E.ritmoFueraDesde = null;
+  }
+  tile.style.borderColor = alarma === 'pulso' ? '#f85149' : alarma === 'ritmo' ? '#d29922' : '';
+  // cada km: la diferencia contra el plan
+  const kmHechos = Math.floor(d / 1000);
+  if (kmHechos > E.kmAvisado && kmHechos <= tr.length && delta != null) {
+    E.kmAvisado = kmHechos;
+    if (P.voz && !(t - E.ultAvisoPulso < 3 || t - E.ultAvisoRitmo < 3))
+      hablar('Kilómetro ' + kmHechos + '. ' + (Math.abs(delta) < 3 ? 'Justo en el plan.' : decirTiempo(delta) + (delta < 0 ? ' adelante del plan.' : ' atrás del plan.')));
+  }
+}
+function resumenPlanCarrera() {
+  const P = planCarreraActivo; if (!P) return null;
+  return { distKm: P.distKm, parciales: P.parciales, tiempoPlanSeg: Math.round(tiempoTotalPlan(P)), tolSeg: P.tolSeg, pctFc: P.pctFc, limitePulso: limitePulsoPlan(P),
+           alarmasPulso: pcEstado ? pcEstado.alarmasPulso : 0, alarmasRitmo: pcEstado ? pcEstado.alarmasRitmo : 0 };
+}
+// ---- exportar / importar ----
+function nombreArchivoPlan(ext) {
+  const P = planCarrera; return 'plan_' + String(P.distKm).replace('.', ',') + 'k_' + segAMMSS(tiempoTotalPlan(P) / P.distKm).replace(':', 'm') + '.' + ext;
+}
+function descargarBlob(blob, nombre) {
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = nombre;
+  document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
+}
+function exportarPlanJSON() {
+  if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) { toast('Primero armá el plan'); return; }
+  descargarBlob(new Blob([JSON.stringify({ tipo: 'correr_plan_carrera', version: 1, plan: planCarrera }, null, 1)], { type: 'application/json' }), nombreArchivoPlan('json'));
+}
+function importarPlanJSON(evt) {
+  const f = evt.target.files[0]; if (!f) return;
+  const r = new FileReader();
+  r.onload = () => {
+    try {
+      const o = JSON.parse(r.result);
+      if (!o || o.tipo !== 'correr_plan_carrera' || !o.plan || !Array.isArray(o.plan.parciales)) throw new Error('no es un plan de carrera de Correr');
+      planCarrera = o.plan; lsSet(K_PLAN_CARRERA, planCarrera); cargarFormPlanCarrera(); toast('Plan importado');
+    } catch (e) { toast('No se pudo importar: ' + e.message); }
+    evt.target.value = '';
+  };
+  r.readAsText(f);
+}
+// Entrenamiento FIT (perfil Garmin): file_id + workout + un workout_step por tramo, duración por
+// distancia y objetivo de velocidad entre (parcial + tol) y (parcial − tol).
+const FIT_CRC_T = [0x0000, 0xCC01, 0xD801, 0x1400, 0xF001, 0x3C00, 0x2800, 0xE401, 0xA001, 0x6C00, 0x7800, 0xB401, 0x5000, 0x9C01, 0x8801, 0x4400];
+function fitCrc(bytes, crc) {
+  crc = crc || 0;
+  for (const b of bytes) {
+    let t = FIT_CRC_T[crc & 0xF]; crc = (crc >> 4) & 0x0FFF; crc = crc ^ t ^ FIT_CRC_T[b & 0xF];
+    t = FIT_CRC_T[crc & 0xF]; crc = (crc >> 4) & 0x0FFF; crc = crc ^ t ^ FIT_CRC_T[(b >> 4) & 0xF];
+  }
+  return crc;
+}
+function generarWorkoutFIT(plan, nombre) {
+  const datos = [];
+  const u8 = v => datos.push(v & 0xFF), u16 = v => { u8(v); u8(v >> 8); }, u32 = v => { u16(v & 0xFFFF); u16(Math.floor(v / 65536)); };
+  const str = (txt, n) => { const b = Array.from(String(txt).replace(/[^\x20-\x7E]/g, '')).slice(0, n - 1).map(c => c.charCodeAt(0)); for (let i = 0; i < n; i++) u8(b[i] || 0); };
+  const def = (local, global, campos) => { u8(0x40 | local); u8(0); u8(0); u16(global); u8(campos.length); campos.forEach(([num, tam, tipo]) => { u8(num); u8(tam); u8(tipo); }); };
+  // file_id (0): type=5 workout, manufacturer=255 development, product, serial, time_created
+  def(0, 0, [[0, 1, 0x00], [1, 2, 0x84], [2, 2, 0x84], [3, 4, 0x8C], [4, 4, 0x86]]);
+  u8(0); u8(5); u16(255); u16(1); u32(Date.now() % 100000000 + 1); u32(Math.round(Date.now() / 1000) - EPOCA_FIT_SEG);
+  // workout (26): sport=1 running, num_valid_steps, wkt_name
+  const tr = tramosPlan(plan.distKm);
+  def(1, 26, [[4, 1, 0x00], [6, 2, 0x84], [8, 16, 0x07]]);
+  u8(1); u8(1); u16(tr.length); str(nombre, 16);
+  // workout_step (27)
+  def(2, 27, [[254, 2, 0x84], [0, 16, 0x07], [1, 1, 0x00], [2, 4, 0x86], [3, 1, 0x00], [4, 4, 0x86], [5, 4, 0x86], [6, 4, 0x86], [7, 1, 0x00]]);
+  tr.forEach((l, i) => {
+    const r = plan.parciales[i];
+    const vBaja = 1000 / (r + plan.tolSeg), vAlta = 1000 / Math.max(60, r - plan.tolSeg);
+    u8(2); u16(i);
+    str((l < 1000 ? 'Ult ' + l + 'm ' : 'Km ' + (i + 1) + ' ') + segAMMSS(r), 16);
+    u8(1);                       // duration_type = distance
+    u32(l * 100);                // en centímetros
+    u8(0);                       // target_type = speed
+    u32(0);                      // target_value = 0 → rango propio
+    u32(Math.round(vBaja * 1000)); u32(Math.round(vAlta * 1000)); // m/s × 1000
+    u8(0);                       // intensity = active
+  });
+  const cab = [14, 0x10, 0x2D, 0x08, 0, 0, 0, 0, 0x2E, 0x46, 0x49, 0x54]; // 14 bytes, protocolo 1.0, perfil 20.93, ".FIT"
+  const n = datos.length; cab[4] = n & 0xFF; cab[5] = (n >> 8) & 0xFF; cab[6] = (n >> 16) & 0xFF; cab[7] = (n >> 24) & 0xFF;
+  const cCab = fitCrc(cab); cab.push(cCab & 0xFF, cCab >> 8);
+  const todo = cab.concat(datos), cFin = fitCrc(todo);
+  todo.push(cFin & 0xFF, cFin >> 8);
+  return new Uint8Array(todo);
+}
+function exportarPlanFIT() {
+  if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) { toast('Primero armá el plan'); return; }
+  const P = planCarrera, nombre = String(P.distKm).replace('.', ',') + 'k ' + segAHMS(Math.round(tiempoTotalPlan(P)));
+  descargarBlob(new Blob([generarWorkoutFIT(P, nombre)], { type: 'application/octet-stream' }), nombreArchivoPlan('fit'));
+  toast('Entrenamiento para Garmin descargado');
+}
 function renderSelectorFantasma() {
   const sel = document.getElementById('selectFantasma');
   const valorPrevio = sel.value;
@@ -6218,7 +6608,12 @@ function iniciarSesion() {
   puntosFantasma = null;
   fantasmaSuperado = false;
   deltaFantasmaUltimo = null;
-  if (fantasmaId) {
+  iniciarPlanCarreraSesion(); // v108
+  if (planCarreraActivo) {
+    fantasmaId = 'plan_carrera';
+    puntosFantasma = puntosFantasmaDePlan(planCarreraActivo);
+    document.getElementById('tileFantasma').style.display = 'block';
+  } else if (fantasmaId) {
     const sesiones = bigGet(K_SESIONES, []);
     const sFantasma = sesiones.find(s => s.id === fantasmaId);
     if (sFantasma) {
@@ -6312,6 +6707,7 @@ function estadoSesionActual() {
     planActivo, progresoPlan, planUltimoObjetivo,
     testVmaActivo, testVmaCfg, testVmaEscalonPrevio, testVmaAvisado, testUmbralActivo,
     muestrasCalibracionSesion, notas: document.getElementById('notasSesion').value,
+    planCarreraActivo, pcEstado, // v108
   };
 }
 function guardarCheckpoint() {
@@ -6377,11 +6773,15 @@ function restaurarSesion(snap, continuar) {
   // fantasma
   fantasmaId = snap.fantasmaId || null; puntosFantasma = null;
   fantasmaSuperado = !!snap.fantasmaSuperado; deltaFantasmaUltimo = snap.deltaFantasmaUltimo;
-  if (fantasmaId) {
+  planCarreraActivo = snap.planCarreraActivo || null; pcEstado = snap.pcEstado || null; // v108
+  document.getElementById('tilePlanCarrera').style.display = planCarreraActivo ? 'block' : 'none';
+  if (planCarreraActivo) { puntosFantasma = puntosFantasmaDePlan(planCarreraActivo); document.getElementById('tileFantasma').style.display = 'block'; desbloquearAudio(); }
+  else if (fantasmaId) {
     const sF = bigGet(K_SESIONES, []).find(x => x.id === fantasmaId);
     if (sF) { puntosFantasma = puntosDeSesion(sF).map(p => ({ t: p.t, distAcum: p.distAcum, velocidad: p.velocidad })); document.getElementById('tileFantasma').style.display = 'block'; }
     document.getElementById('selectFantasma').value = fantasmaId;
   }
+  if (pcEstado) { pcEstado.hist = []; pcEstado.pulsoAltoDesde = null; pcEstado.ritmoFueraDesde = null; } // los tiempos de antes del corte no sirven
   document.getElementById('selectFantasma').disabled = true;
   // datos acumulados
   distanciaAcumM = snap.distanciaAcumM || 0; vamAcumWh = snap.vamAcumWh || 0; tiempoSubidaSeg = snap.tiempoSubidaSeg || 0;
@@ -6550,6 +6950,8 @@ function tick() {
       elFant.classList.toggle('atras', delta > 0);
     }
   }
+
+  revisarPlanCarrera(t, pulso); // v108
 
   // zona actual (prioriza pulso si hay umbral, sino ritmo)
   let zonaActual = null;
@@ -6830,6 +7232,7 @@ function finalizarSesion(automatica) {
     inicioISO: new Date(inicioSesionMs).toISOString(), // timestamp real de arranque, v83 — ver nota junto a inicioSesionMs
     umbralPulso: zonas.umbralPulso || null, // v99: umbral vigente al correr, para calcular el tiempo en zonas con el de ESE día
     tssMetodo: calcTss.metodo, ngpSegKm: calcTss.ngpSegKm, intensidadIF: calcTss.if, // v107
+    planCarrera: resumenPlanCarrera(), // v108
     modo,
     duracionSeg: Math.round(duracionSeg),
     distanciaM: Math.round(distanciaAcumM),
@@ -6873,6 +7276,8 @@ function resetearHUD() {
   soltarWakeLock();
   marcarSesionEnCurso(false); // v104
   borrarCheckpoint();
+  planCarreraActivo = null; pcEstado = null; // v108
+  document.getElementById('tilePlanCarrera').style.display = 'none';
   document.getElementById('btnIniciar').disabled = false;
   document.getElementById('btnPausar').disabled = true;
   document.getElementById('btnPausar').textContent = 'Pausar';
@@ -7582,6 +7987,12 @@ function renderResumenSesion(s, contenedorId) {
   if (s.desacoplePct != null) extra += 'Desacople ritmo:pulso: <b>' + s.desacoplePct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePct) + '<br>';
   if (s.desacoplePotenciaPct != null) extra += 'Desacople potencia:pulso: <b>' + s.desacoplePotenciaPct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePotenciaPct) + '<br>';
   if (s.efAerobica) extra += 'Eficiencia aeróbica: ' + s.efAerobica.toFixed(2) + ' (m/min)/bpm<br>';
+  // v108: resultado contra el plan de carrera
+  if (s.planCarrera) {
+    const pc = s.planCarrera, dif = s.duracionSeg - pc.tiempoPlanSeg;
+    extra += 'Plan de carrera ' + pc.distKm + ' km en ' + segAHMS(pc.tiempoPlanSeg) + (s.distanciaM >= pc.distKm * 1000 - 20 ? ' → <b>' + formatearDelta(dif) + '</b>' : '') +
+      ' · alarmas: ' + pc.alarmasPulso + ' de pulso, ' + pc.alarmasRitmo + ' de ritmo<br>';
+  }
   // v107: cómo se calculó el TSS
   if (s.tssMetodo === 'ritmo_pendiente') extra += 'TSS por ritmo normalizado ajustado por pendiente: <b>' + segAMMSS(s.ngpSegKm) + '/km</b> · IF ' + s.intensidadIF.toFixed(2) + '<br>';
   else if (s.tssMetodo === 'ritmo_promedio') extra += 'TSS por ritmo promedio (sin muestras suficientes para normalizar)<br>';
@@ -8944,6 +9355,7 @@ seleccionarModo('ble');
 poblarOpcionesRutas(); // v101: recorridos GPX guardados en el selector de escenario
 document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
+cargarFormPlanCarrera(); // v108
 initBigStore().then(ofrecerRecuperacion); // v103: base interna; v104: después, ofrece retomar una sesión interrumpida
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
