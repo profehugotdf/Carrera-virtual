@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v108</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v109</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -346,7 +346,8 @@
       <div class="estado-conexion" style="margin-bottom:8px;">Ritmo por kilómetro para competir contra él (corre como fantasma), con alarmas si te pasás de pulso o te desviás del ritmo. Se exporta a la Forerunner o a otro teléfono.</div>
       <div style="display:flex; gap:8px;">
         <div style="flex:1;"><label>Distancia (km)</label><input type="number" id="pcDist" value="10" step="0.1" min="0.5" oninput="planCarreraDesdeForm(true)"></div>
-        <div style="flex:1;"><label>Ritmo objetivo</label><input type="text" id="pcRitmo" placeholder="6:00" inputmode="numeric" oninput="planCarreraDesdeForm(true)"></div>
+        <div style="flex:1;"><label>Tiempo final</label><input type="text" id="pcTiempo" placeholder="1:00:00" inputmode="numeric" oninput="planCarreraDesdeForm(true, 'tiempo')"></div>
+        <div style="flex:1;"><label>o ritmo /km</label><input type="text" id="pcRitmo" placeholder="6:00" inputmode="numeric" oninput="planCarreraDesdeForm(true, 'ritmo')"></div>
       </div>
       <div style="display:flex; gap:8px;">
         <div style="flex:2;"><label>Estrategia</label><select id="pcEstrategia" onchange="planCarreraDesdeForm(true)">
@@ -3004,7 +3005,13 @@
        en el punto de recuperación (v104). Exporta: .fit de entrenamiento
        Garmin (file_id + workout + un workout_step por tramo, duración
        por distancia, objetivo de velocidad parcial ± tolerancia;
-       validado con fitparse) y .json para importarlo en otro teléfono.
+       validado con un lector FIT independiente) y .json para otro teléfono.
+   v109: el plan también se arma desde un TIEMPO FINAL: campo nuevo
+       "Tiempo final" (h:mm:ss, mm:ss o con puntos) al lado del ritmo.
+       Escribir uno completa el otro; el que se escribió último manda
+       (plan.objetivo) cuando cambian la distancia o la estrategia. Desde
+       el tiempo, el ritmo se guarda sin redondear y el reparto del
+       redondeo de los parciales deja el total en ese tiempo.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3645,6 +3652,15 @@ function textoASeg(txt) {
   const n = parseFloat(String(txt).replace(',', '.'));
   return isFinite(n) && n > 0 ? Math.round(n * 60) : null; // "6" → 6:00
 }
+// v109: tiempo final "h:mm:ss", "mm:ss" o con puntos ("1.32.30"); un número suelto = minutos
+function textoATiempo(txt) {
+  const partes = String(txt || '').trim().split(/[:.,' ]/).filter(x => x !== '');
+  if (!partes.length || partes.some(x => !/^\d+$/.test(x))) return null;
+  const n = partes.map(x => parseInt(x, 10));
+  if (n.length === 3) return n[0] * 3600 + n[1] * 60 + n[2];
+  if (n.length === 2) return n[0] * 60 + n[1];
+  return n.length === 1 && n[0] > 0 ? n[0] * 60 : null;
+}
 function tanakaFcMax(edad) { return 208 - 0.7 * edad; }
 function edadParaPlan() {
   const v = parseInt(document.getElementById('pcEdad').value, 10);
@@ -3693,16 +3709,26 @@ function parcialesBase(distKm, ritmo, estrategia, dif) {
 function tiempoTotalPlan(plan) { return tramosPlan(plan.distKm).reduce((a, l, i) => a + plan.parciales[i] * l / 1000, 0); }
 function limitePulsoPlan(plan) { return plan.edad ? Math.round(tanakaFcMax(plan.edad) * plan.pctFc / 100) : null; }
 // lee el formulario; rearmar=true recalcula los parciales desde ritmo y estrategia
-function planCarreraDesdeForm(rearmar) {
+function planCarreraDesdeForm(rearmar, editado) {
   const distKm = parseFloat(document.getElementById('pcDist').value) || 0;
-  const ritmo = textoASeg(document.getElementById('pcRitmo').value);
+  // v109: tiempo final o ritmo — manda el último que se escribió (se recuerda en el plan)
+  const objetivo = editado || (planCarrera && planCarrera.objetivo) || 'ritmo';
+  let ritmo;
+  if (objetivo === 'tiempo') {
+    const T = textoATiempo(document.getElementById('pcTiempo').value);
+    ritmo = (T && distKm > 0) ? T / distKm : null; // sin redondear: el plan suma exacto ese tiempo
+    if (editado !== 'ritmo') document.getElementById('pcRitmo').value = ritmo ? segAMMSS(ritmo) : '';
+  } else {
+    ritmo = textoASeg(document.getElementById('pcRitmo').value);
+    if (editado !== 'tiempo') document.getElementById('pcTiempo').value = (ritmo && distKm > 0) ? segAHMS(Math.round(ritmo * distKm)) : '';
+  }
   const estrategia = document.getElementById('pcEstrategia').value, dif = parseInt(document.getElementById('pcDif').value, 10) || 0;
   const previo = planCarrera || {};
   let parciales = previo.parciales || [];
   const n = tramosPlan(distKm).length;
   if (rearmar || parciales.length !== n) parciales = (ritmo && distKm > 0) ? parcialesEstrategia(distKm, ritmo, estrategia, dif) : [];
   planCarrera = {
-    distKm, ritmoSegKm: ritmo, estrategia, dif, parciales,
+    distKm, ritmoSegKm: ritmo, objetivo, estrategia, dif, parciales,
     tolSeg: parseInt(document.getElementById('pcTol').value, 10) || 15,
     pctFc: parseInt(document.getElementById('pcPct').value, 10) || 92,
     edad: edadParaPlan(),
@@ -3742,6 +3768,7 @@ function cargarFormPlanCarrera() {
   if (p) {
     document.getElementById('pcDist').value = p.distKm;
     document.getElementById('pcRitmo').value = p.ritmoSegKm ? segAMMSS(p.ritmoSegKm) : '';
+    document.getElementById('pcTiempo').value = (p.ritmoSegKm && p.distKm) ? segAHMS(Math.round(p.ritmoSegKm * p.distKm)) : ''; // v109
     document.getElementById('pcEstrategia').value = p.estrategia || 'parejo';
     document.getElementById('pcDif').value = p.dif != null ? p.dif : 10;
     document.getElementById('pcTol').value = p.tolSeg || 15;
