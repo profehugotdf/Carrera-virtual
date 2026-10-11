@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v110</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v111</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -352,11 +352,26 @@
       <div style="display:flex; gap:8px;">
         <div style="flex:2;"><label>Estrategia</label><select id="pcEstrategia" onchange="planCarreraDesdeForm(true)">
           <option value="parejo">Parejo</option>
+          <option value="progresivo">Progresiva (positivo ↔ negativo)</option>
           <option value="negativo">Negativo (2ª mitad más rápida)</option>
           <option value="prudente">Salida prudente (1er km más lento)</option>
           <option value="fatiga">Curva de fatiga (logarítmica)</option>
         </select></div>
-        <div style="flex:1;"><label id="lblPcDif">Diferencia (s/km)</label><input type="number" id="pcDif" value="10" min="0" step="1" oninput="planCarreraDesdeForm(true)"></div>
+        <div style="flex:1;" id="pcDifWrap"><label id="lblPcDif">Diferencia (s/km)</label><input type="number" id="pcDif" value="10" min="0" step="1" oninput="planCarreraDesdeForm(true)"></div>
+      </div>
+      <!-- v111: estrategia progresiva, como PacePro -->
+      <div id="pcProgWrap" style="display:none;">
+        <label>Estrategia de ritmo: <b id="lblPcProg"></b></label>
+        <input type="range" id="pcProg" min="-100" max="100" value="30" oninput="planCarreraDesdeForm(true)" style="width:100%;">
+        <div style="display:flex; justify-content:space-between; color:var(--muted); font-size:.75rem;"><span>Positivo (termina más lento)</span><span>Negativo (termina más rápido)</span></div>
+        <label style="margin-top:8px;">Dónde se nota el cambio: <b id="lblPcForma"></b></label>
+        <input type="range" id="pcForma" min="-100" max="100" value="0" oninput="planCarreraDesdeForm(true)" style="width:100%;">
+        <div style="display:flex; justify-content:space-between; color:var(--muted); font-size:.75rem;"><span>al principio</span><span>parejo</span><span>al final</span></div>
+      </div>
+      <div style="display:flex; gap:8px; align-items:flex-end;">
+        <div style="flex:1;"><label>Tramos y avisos cada</label><select id="pcTramo" onchange="planCarreraDesdeForm(true)">
+          <option value="1000">1 km</option><option value="500">500 m</option><option value="400">400 m</option><option value="200">200 m</option>
+        </select></div>
       </div>
       <!-- v110: forma de la curva de fatiga -->
       <div id="pcCurvaWrap" style="display:none;">
@@ -3031,6 +3046,22 @@
        parciales cambiado a "mayor resto" (ver parcialesEstrategia):
        mismo total exacto y sin romper el orden de una curva — el reparto
        de v108 podía dejar un km más rápido que el anterior.
+   v111: (día de la 10K) dos pedidos, con PacePro de Garmin de modelo:
+       - Estrategia "Progresiva (positivo ↔ negativo)": deslizador de
+         −100 (positivo) a +100 (negativo) = cambio total de hasta ±15%
+         del ritmo entre el primer y el último tramo, y otro de "dónde se
+         nota el cambio" (al principio = curva logarítmica, parejo =
+         recta, al final = la misma curva espejada). Tiempo final fijo.
+         En el redondeo, si el ritmo se va haciendo más rápido, los
+         empates van a los primeros tramos (si no, uno posterior podía
+         quedar más lento).
+       - "Tramos y avisos cada" 1 km / 500 / 400 / 200 m: largo de los
+         parciales (plan.tramoM; los planes viejos = 1000), del objetivo
+         de las alarmas de ritmo y del aviso por voz, que ahora dice la
+         distancia ("3 kilómetros 400"), la diferencia y, si cambia, el
+         ritmo que sigue. Gráfico en escalones por distancia. FIT: un paso
+         por tramo; con más de 50 tramos (límite de los entrenamientos de
+         Garmin) se exporta por km con el ritmo medio de cada km.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3694,11 +3725,20 @@ function edadParaPlan() {
   }
   return comp.edad || propio.edad || null;
 }
-// largo (m) de cada tramo: km enteros y el último el resto
-function tramosPlan(distKm) {
-  const total = Math.round(distKm * 1000), out = [];
-  for (let d = 0; d < total; d += 1000) out.push(Math.min(1000, total - d));
+// largo (m) de cada tramo: tramos enteros y el último el resto. v111: largo elegible (1000/500/400/200)
+function tramosPlan(distKm, tramoM) {
+  const L = tramoM || 1000, total = Math.round(distKm * 1000), out = [];
+  for (let d = 0; d < total; d += L) out.push(Math.min(L, total - d));
   return out;
+}
+// "1 km", "1,5 km", "800 m": nombre de una distancia para la pantalla
+function nombreDist(m) { return m >= 1000 ? (Math.round(m / 100) / 10).toString().replace('.', ',') + ' km' : Math.round(m) + ' m'; }
+// en voz: "kilómetro 3", "3 kilómetros 400", "800 metros"
+function decirDist(m) {
+  m = Math.round(m); const k = Math.floor(m / 1000), r = m % 1000;
+  if (!r) return 'Kilómetro ' + k;
+  if (!k) return r + ' metros';
+  return k + (k === 1 ? ' kilómetro ' : ' kilómetros ') + r;
 }
 // v108: el redondeo a segundos enteros se reparte (de atrás para adelante) para que el tiempo final
 // sea el de ritmo × distancia — sin esto, 10 km a 6:00 con salida prudente daba 59:57
@@ -3706,12 +3746,17 @@ function tramosPlan(distKm) {
 // que faltan para el tiempo final se dan a los km con mayor parte decimal (en empate, a los últimos).
 // Respeta el orden de los parciales: una curva que va empeorando nunca queda con un km más rápido
 // que el anterior (el reparto de v108, desde el último km para atrás, podía romperla).
-function parcialesEstrategia(distKm, ritmo, estrategia, dif, curva) {
-  const tr = tramosPlan(distKm), exacto = parcialesBase(distKm, ritmo, estrategia, dif, curva);
-  const p = exacto.map((v, i) => tr[i] < 1000 ? Math.round(v) : Math.floor(v));
-  let faltan = Math.round(ritmo * distKm - tr.reduce((a, l, i) => a + p[i] * l / 1000, 0));
-  const orden = exacto.map((v, i) => i).filter(i => tr[i] === 1000)
-    .sort((a, b) => (exacto[b] - Math.floor(exacto[b])) - (exacto[a] - Math.floor(exacto[a])) || b - a);
+function parcialesEstrategia(distKm, ritmo, estrategia, dif, curva, tramoM, extra) {
+  const L = tramoM || 1000, tr = tramosPlan(distKm, L), exacto = parcialesBase(distKm, ritmo, estrategia, dif, curva, L, extra);
+  const p = exacto.map((v, i) => tr[i] < L ? Math.round(v) : Math.floor(v));
+  // v111: cada +1 s/km en un tramo de L metros suma L/1000 s al total — los "faltan" se cuentan en esa
+  // unidad (antes se contaban en segundos enteros: con tramos de 500 m el total quedaba corrido)
+  let faltan = Math.round((ritmo * distKm - tr.reduce((a, l, i) => a + p[i] * l / 1000, 0)) * 1000 / L);
+  // v111: si el ritmo se hace más rápido (negativo), en empate el segundo extra va a los PRIMEROS tramos
+  // — si no, un tramo posterior podía quedar más lento que el anterior
+  const baja = exacto[exacto.length - 1] < exacto[0];
+  const orden = exacto.map((v, i) => i).filter(i => tr[i] === L)
+    .sort((a, b) => (exacto[b] - Math.floor(exacto[b])) - (exacto[a] - Math.floor(exacto[a])) || (baja ? a - b : b - a));
   for (let k = 0; faltan > 0 && orden.length; k++, faltan--) p[orden[k % orden.length]] += 1;
   for (let k = orden.length - 1; faltan < 0 && orden.length; k--, faltan++) p[orden[(k + orden.length) % orden.length]] -= 1;
   return p;
@@ -3721,8 +3766,24 @@ function parcialesEstrategia(distKm, ritmo, estrategia, dif, curva) {
 function textoFormaCurva(v) { return v < 25 ? 'casi pareja' : v < 60 ? 'intermedia' : 'fuerte al principio'; }
 function formaFatiga(x, c) { return c < 0.01 ? x : Math.log(1 + c * x) / Math.log(1 + c); }
 function curvaDesdeSlider(v) { return 0.2 * Math.pow(150, v / 100); } // 0,2 … 30, escala logarítmica
-function parcialesBase(distKm, ritmo, estrategia, dif, curva) {
-  const tr = tramosPlan(distKm), n = tr.length, D = distKm * 1000;
+// v111: forma de la estrategia progresiva. forma −1…1: <0 el cambio se concentra al principio
+// (curva logarítmica), 0 recta, >0 se concentra al final (la misma curva espejada)
+function formaProgresiva(x, forma) {
+  if (Math.abs(forma) < 0.02) return x;
+  const c = Math.pow(31, Math.abs(forma)) - 1;
+  return forma < 0 ? formaFatiga(x, c) : 1 - formaFatiga(1 - x, c);
+}
+// cambio total del primer al último tramo (s/km): prog −100…100 → hasta ±15% del ritmo; + = termina más rápido
+function cambioProgresivo(ritmo, prog) { return (prog / 100) * 0.15 * ritmo; }
+function parcialesBase(distKm, ritmo, estrategia, dif, curva, tramoM, extra) {
+  const tr = tramosPlan(distKm, tramoM), n = tr.length, D = distKm * 1000;
+  if (estrategia === 'progresivo') {
+    const cambio = cambioProgresivo(ritmo, (extra && extra.prog) || 0), forma = ((extra && extra.forma) || 0) / 100;
+    let acum = 0;
+    const f = tr.map(l => { const x = (acum + l / 2) / D; acum += l; return formaProgresiva(x, forma); });
+    const r0 = ritmo + cambio * tr.reduce((a, l, i) => a + l * f[i], 0) / D;   // más lento al largar si es negativo
+    return f.map(fi => r0 - cambio * fi);
+  }
   if (estrategia === 'negativo') {
     let acum = 0; const mitad = D / 2;
     return tr.map(l => { const centro = acum + l / 2; acum += l; return ritmo + (centro < mitad ? dif / 2 : -dif / 2); });
@@ -3745,20 +3806,25 @@ function dibujarGraficoPlan(p) {
   const svg = document.getElementById('pcGrafico');
   if (!p || !p.parciales || p.parciales.length < 2) { svg.style.display = 'none'; return; }
   svg.style.display = 'block';
+  // v111: escalones por distancia (como PacePro): cada tramo es un tramo horizontal de su largo
   const v = p.parciales, n = v.length, min = Math.min(...v), max = Math.max(...v), rango = Math.max(10, max - min);
-  const X = i => 34 + (n === 1 ? 0 : i * (276 / (n - 1))), Y = r => 14 + (r - min) / rango * 74; // más lento = más abajo
-  const pts = v.map((r, i) => X(i).toFixed(1) + ',' + Y(r).toFixed(1)).join(' ');
+  const tr = tramosPlan(p.distKm, p.tramoM), D = p.distKm * 1000;
+  const Xd = d => 34 + d / D * 276, Y = r => 14 + (r - min) / rango * 74; // más lento = más abajo
+  let acum = 0; const esc = [];
+  tr.forEach((l, i) => { esc.push(Xd(acum).toFixed(1) + ',' + Y(v[i]).toFixed(1)); acum += l; esc.push(Xd(acum).toFixed(1) + ',' + Y(v[i]).toFixed(1)); });
+  const pts = esc.join(' ');
+  const X = i => Xd(tr.slice(0, i).reduce((a, b) => a + b, 0) + tr[i] / 2);
   const yMedio = Y(tiempoTotalPlan(p) / p.distKm);
   svg.innerHTML =
     '<line x1="34" x2="310" y1="' + yMedio.toFixed(1) + '" y2="' + yMedio.toFixed(1) + '" stroke="#9aa5ad" stroke-dasharray="3 3" stroke-width="1"/>' +
     '<polyline points="' + pts + '" fill="none" stroke="#4FD8C4" stroke-width="2.5" stroke-linejoin="round"/>' +
-    v.map((r, i) => '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(r).toFixed(1) + '" r="3" fill="#4FD8C4"/>').join('') +
+    (n <= 15 ? v.map((r, i) => '<circle cx="' + X(i).toFixed(1) + '" cy="' + Y(r).toFixed(1) + '" r="3" fill="#4FD8C4"/>').join('') : '') +
     '<text x="2" y="' + (Y(min) + 4).toFixed(1) + '" fill="#9aa5ad" font-size="10" font-family="monospace">' + segAMMSS(min) + '</text>' +
     '<text x="2" y="' + (Y(min + rango) + 4).toFixed(1) + '" fill="#9aa5ad" font-size="10" font-family="monospace">' + segAMMSS(min + rango) + '</text>' +
-    '<text x="34" y="104" fill="#9aa5ad" font-size="10">km 1</text><text x="310" y="104" fill="#9aa5ad" font-size="10" text-anchor="end">km ' + n + '</text>' +
+    '<text x="34" y="104" fill="#9aa5ad" font-size="10">0</text><text x="310" y="104" fill="#9aa5ad" font-size="10" text-anchor="end">' + nombreDist(D) + '</text>' +
     '<text x="310" y="' + (yMedio - 4).toFixed(1) + '" fill="#9aa5ad" font-size="9" text-anchor="end">medio ' + segAMMSS(tiempoTotalPlan(p) / p.distKm) + '</text>';
 }
-function tiempoTotalPlan(plan) { return tramosPlan(plan.distKm).reduce((a, l, i) => a + plan.parciales[i] * l / 1000, 0); }
+function tiempoTotalPlan(plan) { return tramosPlan(plan.distKm, plan.tramoM).reduce((a, l, i) => a + plan.parciales[i] * l / 1000, 0); }
 function limitePulsoPlan(plan) { return plan.edad ? Math.round(tanakaFcMax(plan.edad) * plan.pctFc / 100) : null; }
 // lee el formulario; rearmar=true recalcula los parciales desde ritmo y estrategia
 function planCarreraDesdeForm(rearmar, editado) {
@@ -3777,14 +3843,20 @@ function planCarreraDesdeForm(rearmar, editado) {
   const estrategia = document.getElementById('pcEstrategia').value, dif = parseInt(document.getElementById('pcDif').value, 10) || 0;
   const curvaSlider = parseInt(document.getElementById('pcCurva').value, 10), curva = curvaDesdeSlider(curvaSlider); // v110
   document.getElementById('pcCurvaWrap').style.display = estrategia === 'fatiga' ? 'block' : 'none';
+  // v111: progresiva y largo de los tramos
+  const tramoM = parseInt(document.getElementById('pcTramo').value, 10) || 1000;
+  const prog = parseInt(document.getElementById('pcProg').value, 10) || 0, forma = parseInt(document.getElementById('pcForma').value, 10) || 0;
+  document.getElementById('pcProgWrap').style.display = estrategia === 'progresivo' ? 'block' : 'none';
+  document.getElementById('pcDifWrap').style.display = (estrategia === 'progresivo' || estrategia === 'parejo') ? 'none' : 'block';
+  actualizarEtiquetasProgresiva(ritmo, prog, forma);
   document.getElementById('lblPcDif').textContent = estrategia === 'fatiga' ? 'Caída total (s/km)' : 'Diferencia (s/km)';
   document.getElementById('lblPcCurva').textContent = textoFormaCurva(curvaSlider);
   const previo = planCarrera || {};
   let parciales = previo.parciales || [];
-  const n = tramosPlan(distKm).length;
-  if (rearmar || parciales.length !== n) parciales = (ritmo && distKm > 0) ? parcialesEstrategia(distKm, ritmo, estrategia, dif, curva) : [];
+  const n = tramosPlan(distKm, tramoM).length;
+  if (rearmar || parciales.length !== n) parciales = (ritmo && distKm > 0) ? parcialesEstrategia(distKm, ritmo, estrategia, dif, curva, tramoM, { prog, forma }) : [];
   planCarrera = {
-    distKm, ritmoSegKm: ritmo, objetivo, estrategia, dif, curvaSlider, parciales,
+    distKm, ritmoSegKm: ritmo, objetivo, estrategia, dif, curvaSlider, prog, forma, tramoM, parciales,
     tolSeg: parseInt(document.getElementById('pcTol').value, 10) || 15,
     pctFc: parseInt(document.getElementById('pcPct').value, 10) || 92,
     edad: edadParaPlan(),
@@ -3794,19 +3866,26 @@ function planCarreraDesdeForm(rearmar, editado) {
   lsSet(K_PLAN_CARRERA, planCarrera);
   renderPlanCarrera(rearmar);
 }
+function actualizarEtiquetasProgresiva(ritmo, prog, forma) {
+  const c = ritmo ? Math.round(Math.abs(cambioProgresivo(ritmo, prog))) : null;
+  document.getElementById('lblPcProg').textContent = Math.abs(prog) < 3 ? 'parejo'
+    : (prog > 0 ? 'negativo' : 'positivo') + (c != null ? ' · ' + c + ' s/km ' + (prog > 0 ? 'más rápido' : 'más lento') + ' al final' : '');
+  document.getElementById('lblPcForma').textContent = Math.abs(forma) < 15 ? 'parejo a lo largo' : forma < 0 ? 'más al principio' : 'más al final';
+}
 function renderPlanCarrera(rehacerTabla) {
   const p = planCarrera, tabla = document.getElementById('pcTabla');
   if (!p || !p.parciales || !p.parciales.length) { tabla.innerHTML = ''; document.getElementById('pcTotal').textContent = 'Cargá distancia y ritmo objetivo.'; }
   else {
-    const tr = tramosPlan(p.distKm);
+    const L = p.tramoM || 1000, tr = tramosPlan(p.distKm, L);
     if (rehacerTabla !== false || tabla.children.length !== tr.length) {
-      tabla.innerHTML = tr.map((l, i) =>
-        '<div><div style="color:var(--muted); font-size:.75rem;">' + (l < 1000 ? 'Últ. ' + l + ' m' : 'Km ' + (i + 1)) + '</div>' +
-        '<input type="text" inputmode="numeric" value="' + segAMMSS(p.parciales[i]) + '" onchange="editarParcialPlan(' + i + ', this)" style="padding:6px;"></div>').join('');
+      let fin = 0;
+      tabla.innerHTML = tr.map((l, i) => { fin += l;
+        return '<div><div style="color:var(--muted); font-size:.75rem;">' + (l < L ? 'Últ. ' + l + ' m' : L === 1000 ? 'Km ' + (i + 1) : 'hasta ' + nombreDist(fin)) + '</div>' +
+        '<input type="text" inputmode="numeric" value="' + segAMMSS(p.parciales[i]) + '" onchange="editarParcialPlan(' + i + ', this)" style="padding:6px;"></div>'; }).join('');
     }
     const T = tiempoTotalPlan(p), ult = p.parciales[p.parciales.length - 1];
     document.getElementById('pcTotal').innerHTML = 'Tiempo final del plan: <b>' + segAHMS(Math.round(T)) + '</b> · ritmo medio ' + segAMMSS(T / p.distKm) + '/km' +
-      (p.parciales.length > 1 ? '<br>1er km ' + segAMMSS(p.parciales[0]) + ' → último ' + segAMMSS(ult) : ''); // v110
+      (p.parciales.length > 1 ? '<br>Primer tramo ' + segAMMSS(p.parciales[0]) + ' → último ' + segAMMSS(ult) + ' (ritmo /km)' : ''); // v110
   }
   dibujarGraficoPlan(p); // v110
   const lim = p ? limitePulsoPlan(p) : null;
@@ -3830,6 +3909,12 @@ function cargarFormPlanCarrera() {
     document.getElementById('pcEstrategia').value = p.estrategia || 'parejo';
     document.getElementById('pcDif').value = p.dif != null ? p.dif : 10;
     document.getElementById('pcCurva').value = p.curvaSlider != null ? p.curvaSlider : 50; // v110
+    document.getElementById('pcTramo').value = String(p.tramoM || 1000); // v111
+    document.getElementById('pcProg').value = p.prog != null ? p.prog : 30;
+    document.getElementById('pcForma').value = p.forma != null ? p.forma : 0;
+    document.getElementById('pcProgWrap').style.display = p.estrategia === 'progresivo' ? 'block' : 'none';
+    document.getElementById('pcDifWrap').style.display = (p.estrategia === 'progresivo' || p.estrategia === 'parejo') ? 'none' : 'block';
+    actualizarEtiquetasProgresiva(p.ritmoSegKm, p.prog != null ? p.prog : 30, p.forma || 0);
     document.getElementById('lblPcCurva').textContent = textoFormaCurva(p.curvaSlider != null ? p.curvaSlider : 50);
     document.getElementById('pcCurvaWrap').style.display = p.estrategia === 'fatiga' ? 'block' : 'none';
     document.getElementById('lblPcDif').textContent = p.estrategia === 'fatiga' ? 'Caída total (s/km)' : 'Diferencia (s/km)';
@@ -3845,7 +3930,7 @@ function cargarFormPlanCarrera() {
 }
 // el plan como fantasma: un punto cada 50 m con el tiempo planeado
 function puntosFantasmaDePlan(plan) {
-  const tr = tramosPlan(plan.distKm), pts = [{ t: 0, distAcum: 0, velocidad: 1000 / plan.parciales[0] }];
+  const tr = tramosPlan(plan.distKm, plan.tramoM), pts = [{ t: 0, distAcum: 0, velocidad: 1000 / plan.parciales[0] }];
   let d0 = 0, t0 = 0;
   tr.forEach((l, i) => {
     const v = 1000 / plan.parciales[i];
@@ -3856,7 +3941,7 @@ function puntosFantasmaDePlan(plan) {
   return pts;
 }
 function tiempoPlanEnDistancia(plan, d) {
-  const tr = tramosPlan(plan.distKm); let acum = 0, t = 0;
+  const tr = tramosPlan(plan.distKm, plan.tramoM); let acum = 0, t = 0;
   for (let i = 0; i < tr.length; i++) {
     if (d <= acum + tr[i]) return t + (d - acum) * plan.parciales[i] / 1000;
     acum += tr[i]; t += tr[i] * plan.parciales[i] / 1000;
@@ -3913,7 +3998,7 @@ function iniciarPlanCarreraSesion() {
 function revisarPlanCarrera(t, pulso) {
   const P = planCarreraActivo, E = pcEstado;
   if (!P || !E) return;
-  const d = distanciaAcumM, tr = tramosPlan(P.distKm);
+  const d = distanciaAcumM, L = P.tramoM || 1000, tr = tramosPlan(P.distKm, L);
   let idx = 0, acum = 0;
   while (idx < tr.length - 1 && d >= acum + tr[idx]) { acum += tr[idx]; idx++; }
   const objetivo = P.parciales[idx];
@@ -3927,7 +4012,7 @@ function revisarPlanCarrera(t, pulso) {
   // pantalla
   const terminado = d >= P.distKm * 1000;
   document.getElementById('hudPlanCarrera').textContent = terminado ? '🏁 ' + formatearDelta(t - tiempoTotalPlan(P))
-    : (tr[idx] < 1000 ? 'Últ. ' + tr[idx] + ' m' : 'Km ' + (idx + 1)) + ' · ' + segAMMSS(objetivo) + (ritmoAct ? ' · vas ' + segAMMSS(ritmoAct) : '');
+    : (tr[idx] < L ? 'Últ. ' + tr[idx] + ' m' : L === 1000 ? 'Km ' + (idx + 1) : 'Hasta ' + nombreDist(acum + tr[idx])) + ' · ' + segAMMSS(objetivo) + (ritmoAct ? ' · vas ' + segAMMSS(ritmoAct) : '');
   document.getElementById('lblPlanCarrera').textContent = terminado ? 'Plan terminado (vs tiempo planeado)' : 'Plan · objetivo del km' + (delta != null ? ' · ' + formatearDelta(delta) : '');
   const tile = document.getElementById('tilePlanCarrera');
   if (terminado) { tile.style.borderColor = ''; return; }
@@ -3958,16 +4043,20 @@ function revisarPlanCarrera(t, pulso) {
   }
   tile.style.borderColor = alarma === 'pulso' ? '#f85149' : alarma === 'ritmo' ? '#d29922' : '';
   // cada km: la diferencia contra el plan
-  const kmHechos = Math.floor(d / 1000);
-  if (kmHechos > E.kmAvisado && kmHechos <= tr.length && delta != null) {
-    E.kmAvisado = kmHechos;
-    if (P.voz && !(t - E.ultAvisoPulso < 3 || t - E.ultAvisoRitmo < 3))
-      hablar('Kilómetro ' + kmHechos + '. ' + (Math.abs(delta) < 3 ? 'Justo en el plan.' : decirTiempo(delta) + (delta < 0 ? ' adelante del plan.' : ' atrás del plan.')));
+  // al pasar cada tramo (v111: del largo elegido): la diferencia con el plan y, si cambia, el ritmo que sigue
+  const tramosHechos = Math.floor(d / L);
+  if (tramosHechos > E.kmAvisado && tramosHechos <= tr.length && delta != null) {
+    E.kmAvisado = tramosHechos;
+    if (P.voz && !(t - E.ultAvisoPulso < 3 || t - E.ultAvisoRitmo < 3)) {
+      const sig = P.parciales[tramosHechos], cambia = sig != null && sig !== P.parciales[tramosHechos - 1];
+      hablar(decirDist(tramosHechos * L) + '. ' + (Math.abs(delta) < 3 ? 'Justo en el plan.' : decirTiempo(delta) + (delta < 0 ? ' adelante.' : ' atrás.')) +
+        (cambia ? ' Ahora ' + decirRitmo(sig) + '.' : ''));
+    }
   }
 }
 function resumenPlanCarrera() {
   const P = planCarreraActivo; if (!P) return null;
-  return { distKm: P.distKm, parciales: P.parciales, tiempoPlanSeg: Math.round(tiempoTotalPlan(P)), tolSeg: P.tolSeg, pctFc: P.pctFc, limitePulso: limitePulsoPlan(P),
+  return { distKm: P.distKm, tramoM: P.tramoM || 1000, parciales: P.parciales, tiempoPlanSeg: Math.round(tiempoTotalPlan(P)), tolSeg: P.tolSeg, pctFc: P.pctFc, limitePulso: limitePulsoPlan(P),
            alarmasPulso: pcEstado ? pcEstado.alarmasPulso : 0, alarmasRitmo: pcEstado ? pcEstado.alarmasRitmo : 0 };
 }
 // ---- exportar / importar ----
@@ -4015,16 +4104,17 @@ function generarWorkoutFIT(plan, nombre) {
   def(0, 0, [[0, 1, 0x00], [1, 2, 0x84], [2, 2, 0x84], [3, 4, 0x8C], [4, 4, 0x86]]);
   u8(0); u8(5); u16(255); u16(1); u32(Date.now() % 100000000 + 1); u32(Math.round(Date.now() / 1000) - EPOCA_FIT_SEG);
   // workout (26): sport=1 running, num_valid_steps, wkt_name
-  const tr = tramosPlan(plan.distKm);
+  const L = plan.tramoM || 1000, tr = tramosPlan(plan.distKm, L);
   def(1, 26, [[4, 1, 0x00], [6, 2, 0x84], [8, 16, 0x07]]);
   u8(1); u8(1); u16(tr.length); str(nombre, 16);
   // workout_step (27)
   def(2, 27, [[254, 2, 0x84], [0, 16, 0x07], [1, 1, 0x00], [2, 4, 0x86], [3, 1, 0x00], [4, 4, 0x86], [5, 4, 0x86], [6, 4, 0x86], [7, 1, 0x00]]);
+  let finTramo = 0;
   tr.forEach((l, i) => {
-    const r = plan.parciales[i];
+    const r = plan.parciales[i]; finTramo += l;
     const vBaja = 1000 / (r + plan.tolSeg), vAlta = 1000 / Math.max(60, r - plan.tolSeg);
     u8(2); u16(i);
-    str((l < 1000 ? 'Ult ' + l + 'm ' : 'Km ' + (i + 1) + ' ') + segAMMSS(r), 16);
+    str((l < L ? 'Ult ' + l + 'm ' : L === 1000 ? 'Km ' + (i + 1) + ' ' : (finTramo / 1000).toFixed(1) + 'k ') + segAMMSS(r), 16);
     u8(1);                       // duration_type = distance
     u32(l * 100);                // en centímetros
     u8(0);                       // target_type = speed
@@ -4039,11 +4129,20 @@ function generarWorkoutFIT(plan, nombre) {
   todo.push(cFin & 0xFF, cFin >> 8);
   return new Uint8Array(todo);
 }
+// v111: un entrenamiento de Garmin admite hasta 50 pasos; con más tramos se exporta por km
+// (cada km con el ritmo medio de sus tramos, ponderado por largo)
+function planAgrupadoPorKm(plan) {
+  const L = plan.tramoM || 1000, tr = tramosPlan(plan.distKm, L), km = tramosPlan(plan.distKm, 1000), out = km.map(() => 0);
+  let d = 0;
+  tr.forEach((l, i) => { for (let x = 0; x < l; x += 1) { const k = Math.floor((d + x) / 1000); out[k] += plan.parciales[i] / km[k]; } d += l; });
+  return Object.assign({}, plan, { tramoM: 1000, parciales: out.map(v => Math.round(v)) });
+}
 function exportarPlanFIT() {
   if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) { toast('Primero armá el plan'); return; }
-  const P = planCarrera, nombre = String(P.distKm).replace('.', ',') + 'k ' + segAHMS(Math.round(tiempoTotalPlan(P)));
+  const agrupar = planCarrera.parciales.length > 50;
+  const P = agrupar ? planAgrupadoPorKm(planCarrera) : planCarrera, nombre = String(P.distKm).replace('.', ',') + 'k ' + segAHMS(Math.round(tiempoTotalPlan(P)));
   descargarBlob(new Blob([generarWorkoutFIT(P, nombre)], { type: 'application/octet-stream' }), nombreArchivoPlan('fit'));
-  toast('Entrenamiento para Garmin descargado');
+  toast(agrupar ? 'Garmin admite hasta 50 pasos: el entrenamiento va por km' : 'Entrenamiento para Garmin descargado');
 }
 function renderSelectorFantasma() {
   const sel = document.getElementById('selectFantasma');
