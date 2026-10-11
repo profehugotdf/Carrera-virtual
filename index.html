@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v113</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v114</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3096,6 +3096,19 @@
        antes caía en el else y la velocidad del acelerómetro de la banda
        pisaba a la del GPS cada segundo. Con cadencia + GPS hay zancada
        estimada en vivo, como en la cinta.
+   v114: (después de la 10K de La Gaceta) Hugo vio el gráfico de ritmo
+       pegado arriba en "4:32" con un ritmo medio de 6:28. Causa: la
+       escala usaba mínimo y máximo exactos, y los segundos parado al
+       cruzar la meta (108:58/km) estiraban el eje. Ahora la escala va
+       del 2% al 98% de los valores (más un margen) y lo que queda afuera
+       se dibuja en el borde — para todos los gráficos del detalle. El de
+       ritmo suma una línea punteada con el ritmo medio. Y la cadencia de
+       los TCX de Garmin (de un pie, ~82) se duplica al importar; las
+       sesiones TCX ya importadas se corrigen una vez al abrirlas
+       (sesión, muestras y pasos del registro compartido). Además: los
+       gráficos opcionales (potencia, Running Dynamics) se muestran antes
+       de dibujarse — si venían ocultos de la sesión anterior, se
+       dibujaban con ancho 0 y quedaban en blanco.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -8292,10 +8305,25 @@ function mostrarResumenPost(s) {
 }
 function cerrarResumenPost() { document.getElementById('overlayResumenPost').classList.remove('activa'); }
 
+// v114: sesiones TCX importadas antes de v114 con la cadencia de un pie (< 110): se pasan a pasos por
+// minuto una sola vez (en la sesión guardada, sus muestras y los pasos del registro compartido)
+function corregirCadenciaTcx(sesiones, s) {
+  if (s.modo !== 'import_tcx' || !(s.cadenciaPromedio > 0) || s.cadenciaPromedio >= 110 || s.cadenciaCorregida) return false;
+  s.cadenciaPromedio *= 2;
+  if (Array.isArray(s.puntos)) s.puntos.forEach(p => { if (p.cadencia) p.cadencia *= 2; });
+  else if (s.puntos && Array.isArray(s.puntos.cadencia)) s.puntos.cadencia = s.puntos.cadencia.map(c => c ? c * 2 : c);
+  s.cadenciaCorregida = true;
+  bigSet(K_SESIONES, sesiones);
+  const reg = lsGet(K_FORMA_COMPARTIDA, []), r = reg.find(x => x.id === s.id);
+  if (r && r.pasos) { r.pasos *= 2; lsSet(K_FORMA_COMPARTIDA, reg); }
+  logBLE('Sesión importada: cadencia corregida a pasos por minuto (' + s.cadenciaPromedio + ' spm)', '#4FD8C4');
+  return true;
+}
 function abrirDetalle(id) {
   const sesiones = bigGet(K_SESIONES, []);
   const s = sesiones.find(x => x.id === id);
   if (!s) return;
+  corregirCadenciaTcx(sesiones, s); // v114
   sesionDetalleActual = s;
   document.getElementById('detalleTitulo').textContent = new Date(s.fecha).toLocaleDateString('es-AR', { day: '2-digit', month: 'long', year: 'numeric' });
   renderResumenSesion(s, 'detalleResumen');
@@ -8595,7 +8623,7 @@ function procesarRetoJSON(texto, nombreOverride) {
 // invertirY=true significa "el valor más BAJO se dibuja arriba" (usado para ritmo: más rápido = mejor).
 // formateador(v) da el texto de la etiqueta (ej. mm:ss para ritmo, número plano para lo demás).
 // Devuelve {minV, maxV} o null si no hay datos suficientes (para que el llamador pueda ocultar la tarjeta).
-function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formateador, tMax, puntoMarcado) {
+function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formateador, tMax, puntoMarcado, valorMedio) {
   const canvas = document.getElementById(canvasId);
   const ctx = canvas.getContext('2d');
   const w = canvas.clientWidth, h = canvas.clientHeight || 100;
@@ -8604,10 +8632,17 @@ function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formate
   ctx.clearRect(0, 0, w, h);
   const validos = puntos.filter(p => p[key] != null && p[key] > 0);
   if (validos.length < 2) return null;
-  const valores = validos.map(p => p[key]);
-  const minV = Math.min(...valores), maxV = Math.max(...valores);
+  // v114: escala robusta — del 2% al 98% de los valores, con un margen. Antes era mínimo/máximo exactos:
+  // un solo extremo (los segundos parado al cruzar la meta: 108:58/km) estiraba el eje y aplastaba la
+  // curva contra un borde (la línea de 6:28 se veía en 4:32). Lo que queda afuera se dibuja en el borde.
+  const orden = validos.map(p => p[key]).sort((a, b) => a - b);
+  const pct = f => orden[Math.min(orden.length - 1, Math.max(0, Math.round(f * (orden.length - 1))))];
+  let minV = pct(0.02), maxV = pct(0.98);
+  const margen = (maxV - minV) * 0.08 || Math.max(1, Math.abs(maxV) * 0.02);
+  minV -= margen; maxV += margen;
+  if (minV < 0 && orden[0] >= 0) minV = 0;
   const rango = (maxV - minV) || 1;
-  const escalaY = v => { const t = (v - minV) / rango; return invertirY ? 16 + t * (h - 30) : (h - 14) - t * (h - 30); };
+  const escalaY = v => { const t = Math.max(0, Math.min(1, (v - minV) / rango)); return invertirY ? 16 + t * (h - 30) : (h - 14) - t * (h - 30); };
   const escalaX = t => (t / tMax) * (w - 10) + 5;
   ctx.beginPath();
   let first = true;
@@ -8617,6 +8652,13 @@ function dibujarMiniChartSesion(canvasId, puntos, key, color, invertirY, formate
     if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
   });
   ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.stroke();
+  if (valorMedio != null && valorMedio > 0) { // v114: línea punteada del valor medio de la sesión
+    const ym = escalaY(valorMedio);
+    ctx.save(); ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 1; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(5, ym); ctx.lineTo(w - 5, ym); ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.font = '11px sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText('medio ' + formateador(valorMedio), w - 6, ym - 4); ctx.restore();
+  }
   const valorArriba = invertirY ? minV : maxV, valorAbajo = invertirY ? maxV : minV;
   ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.font = '11px sans-serif';
   ctx.fillText(formateador(valorArriba), 4, 12);
@@ -8641,8 +8683,15 @@ function dibujarGraficasDetalle(s) {
   const puntos = puntosDeSesion(s);
   if (!puntos.length) return;
   const tMax = puntos[puntos.length - 1].t || 1;
+  // v114: mostrar ANTES de dibujar los gráficos opcionales que tienen datos. Si no, uno que venía oculto
+  // de la sesión anterior se dibujaba con ancho 0 y recién después se mostraba: quedaba en blanco.
+  [['potencia', 'chartDetPotenciaWrap'], ['vo', 'chartDetVoWrap'], ['gct', 'chartDetGctWrap'], ['zancada', 'chartDetZancadaWrap'],
+   ['vRatio', 'chartDetVRatioWrap'], ['balance', 'chartDetBalanceWrap'], ['stance', 'chartDetStanceWrap']].forEach(([k, id]) => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = puntos.filter(p => p[k] != null && p[k] > 0).length >= 2 ? 'block' : 'none';
+  });
   function redibujar(puntoMarcado) {
-    dibujarMiniChartSesion('chartDetRitmo', puntos, 'ritmo', '#4FD8C4', true, v => segAMMSS(Math.round(v)), tMax, puntoMarcado);
+    dibujarMiniChartSesion('chartDetRitmo', puntos, 'ritmo', '#4FD8C4', true, v => segAMMSS(Math.round(v)), tMax, puntoMarcado, s.ritmoPromedioSegKm); // v114: + ritmo medio
     dibujarMiniChartSesion('chartDetPulso', puntos, 'pulso', '#FF6B57', false, v => Math.round(v), tMax, puntoMarcado);
     dibujarMiniChartSesion('chartDetCadencia', puntos, 'cadencia', '#818B95', false, v => Math.round(v), tMax, puntoMarcado);
     const hayPotencia = dibujarMiniChartSesion('chartDetPotencia', puntos, 'potencia', '#F5C542', false, v => Math.round(v), tMax, puntoMarcado);
@@ -8805,6 +8854,10 @@ function procesarTCX(xmlTexto, nombreArchivo) {
       velocidad: null // se completa abajo por derivación
     });
   });
+  // v114: Garmin guarda en el TCX la cadencia de UN pie (RunCadence ≈ 80-95): si el promedio es bajo,
+  // se pasa a pasos por minuto (ambos pies), como ya hacía el importador de GPX
+  const cadsTcx = puntos.filter(p => p.cadencia > 0).map(p => p.cadencia);
+  if (cadsTcx.length && promedio(cadsTcx) < 110) puntos.forEach(p => { if (p.cadencia) p.cadencia *= 2; });
   const conAlt = puntos.filter(p => p.alt != null && isFinite(p.alt));
   const desnivel = conAlt.length >= puntos.length * 0.8 ? desnivelPositivo(conAlt.map(p => p.alt)) : null; // v107
   mostrarImportacion(puntos, t0, nombreArchivo, 'import_tcx', desnivel, null);
