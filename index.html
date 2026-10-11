@@ -199,7 +199,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v111</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v113</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -316,7 +316,10 @@
 
       <div id="panelAireLibre" style="display:none;">
         <button class="btn" id="btnActivarGPS" onclick="iniciarGPS()">Activar GPS</button>
-        <button class="btn chico" id="btnConectarBandaGPS" onclick="conectarBandaHR()">+ Conectar banda de pulso (BLE)</button>
+        <!-- v113: la banda con cadencia también al aire libre (antes solo había pulso) -->
+        <button class="btn chico" id="btnConectarBandaCadGPS" onclick="conectarRelojBLE()">+ Conectar banda (cadencia + pulso, BLE)</button>
+        <button class="btn chico" id="btnConectarBandaGPS" onclick="conectarBandaHR()">+ Solo pulso (banda sin cadencia, ej. Polar H7)</button>
+        <div class="estado-conexion" id="estadoBandaGPS">Banda sin conectar. El ritmo sale del GPS; la banda aporta pulso y cadencia.</div>
         <div class="estado-conexion" id="estadoGPS">GPS sin activar.</div>
       </div>
 
@@ -3062,6 +3065,37 @@
          ritmo que sigue. Gráfico en escalones por distancia. FIT: un paso
          por tramo; con más de 50 tramos (límite de los entrenamientos de
          Garmin) se exporta por km con el ritmo medio de cada km.
+   v112: GPS al aire libre (Hugo veía saltos de ritmo con el teléfono en
+       la mano). No era el braceo (±30-40 cm, nada al lado del error del
+       GPS): eran dos errores de procesamiento.
+       - Ritmo instantáneo: d/dt entre dos puntos de 1 s. A 1,8 m/s y con
+         ±3-5 m de error por punto, saltaba de 5:00 a 14:00. Ahora:
+         velocidad Doppler del chip (coords.speed) suavizada (EMA 0,25,
+         ~4 s); sin Doppler, distancia de los últimos 15 s.
+       - Distancia: sumar posición a posición a ritmo lento dibuja un
+         zigzag (el error de cada punto pesa como el avance real): en la
+         simulación inflaba la distancia +57-69% con ruido fuerte y sumaba
+         metros parado. Ahora con Doppler: distancia = velocidad × tiempo;
+         sin Doppler: posiciones suavizadas (EMA 0,3) y pasos acumulados;
+         hueco > 5 s: línea recta (sirve a la recuperación de v104).
+         El punto de recuperación guarda el punto suavizado (sin Doppler,
+         si no, en cada recarga se perdía el retraso del suavizado).
+         Además, antes un paso < 1,5 m se descartaba pero pasaba a ser el
+         origen: ese tramo se perdía.
+       - Desnivel: altura suavizada (EMA 0,05, ~20 s) e histéresis de 5 m
+         (antes sumaba cada subida > 1 m entre puntos: en llano, con el
+         ruido de altura del teléfono, sumaba más de 100 m).
+       - Registro de sensores: cada 15 s, precisión, ritmo Doppler, por
+         posiciones y en pantalla, para diagnosticar en la calle.
+       La recuperación de sesión (v104) sigue sumando el tramo del corte
+       desde gpsUltimo.
+   v113: cadencia al aire libre. En Aire libre solo había "Conectar banda
+       de pulso" (sin cadencia). Nuevo botón "Conectar banda (cadencia +
+       pulso, BLE)" (conectarRelojBLE) con cartel de estado propio
+       (estadoBandaGPS). handleRSC en aire_libre toma solo la cadencia:
+       antes caía en el else y la velocidad del acelerómetro de la banda
+       pisaba a la del GPS cada segundo. Con cadencia + GPS hay zancada
+       estimada en vivo, como en la cinta.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4235,10 +4269,11 @@ function logBLE(mensaje, color) {
 function estadoElReloj() {
   return modo === 'calibracion' ? document.getElementById('estadoBLECalib')
     : modo === 'manual' ? document.getElementById('estadoBandaManual')
+    : modo === 'aire_libre' ? document.getElementById('estadoBandaGPS') // v113
     : document.getElementById('estadoBLE');
 }
 function estadoElBanda() {
-  return modo === 'manual' ? document.getElementById('estadoBandaManual') : document.getElementById('estadoBLE');
+  return modo === 'manual' ? document.getElementById('estadoBandaManual') : modo === 'aire_libre' ? document.getElementById('estadoBandaGPS') : document.getElementById('estadoBLE'); // v113
 }
 // Condición pura del watchdog — sin DOM ni BLE, se prueba aislada con valores a mano.
 function debeDispararWatchdog(sesionActivaFlag, ultimoDatoAt, ahoraMs, yaManejado, umbralMs) {
@@ -4443,7 +4478,9 @@ function handleRSC(event) {
     // solo alimenta el par de referencia que se compara contra ese valor real en tick().
     actual.velocidadBLE = speed;
     actual.cadenciaBLE = cadence;
-  } else if (modo === 'manual') {
+  } else if (modo === 'manual' || modo === 'aire_libre') {
+    // v113: al aire libre la velocidad es la del GPS — antes caía en el else de abajo y la velocidad
+    // de la banda (acelerómetro) pisaba a la del GPS cada segundo: otro origen de saltos de ritmo
     // en manual la velocidad la marca el botón +/- (la real, la que pusiste en la cinta) — pero
     // la cadencia sí conviene tomarla en vivo del sensor en vez del número tipeado, que queda
     // congelado. No se toca actual.velocidad acá: si no, el sensor le ganaría la pulseada al botón.
@@ -4646,6 +4683,7 @@ function distanciaHaversine(lat1, lon1, lat2, lon2) {
 function iniciarGPS() {
   if (!navigator.geolocation) { toast('Este navegador no soporta geolocalización'); return; }
   gpsAltHist = []; pendienteGPSSuave = 0; // v107
+  gpsVentana = []; velDopplerSuave = null; gpsLogAt = 0; gpsSuave = null; gpsAnclaSuave = null; gpsElevRef = null; gpsAltSuave = null; // v112
   const estadoEl = document.getElementById('estadoGPS');
   estadoEl.textContent = 'Buscando señal GPS...';
   estadoEl.className = 'estado-conexion';
@@ -4672,28 +4710,75 @@ function procesarPosicionGPS(pos) {
   }
   estadoEl.textContent = 'GPS activo (±' + Math.round(accuracy) + 'm)';
   estadoEl.className = 'estado-conexion ok';
+  const speed = pos.coords.speed;
+  const punto = { lat: latitude, lon: longitude, t, alt: altitude };
+  const dop = speed != null && isFinite(speed) && speed >= 0;
 
-  if (gpsUltimo) {
-    const dt = t - gpsUltimo.t;
-    if (dt > 0) {
+  // sin sesión corriendo, todo sigue al último punto (al reanudar se arranca de ahí)
+  if (!sesionActiva || sesionPausada) {
+    gpsUltimo = punto; gpsVentana = []; velDopplerSuave = null; gpsSuave = null; gpsElevRef = null; gpsAltSuave = null;
+    if (!sesionActiva) actual.velocidad = 0;
+    return;
+  }
+  // v112: DISTANCIA. A ritmo lento el error de cada punto (±3-5 m) pesa tanto como el avance real
+  // (1,8 m/s): sumar posición a posición dibuja un zigzag que infla la distancia y suma metros
+  // estando quieto (probado: +57% a +69% con ruido fuerte). Ahora:
+  // - con velocidad Doppler del chip: distancia = velocidad × tiempo (no ve el zigzag; parado da 0)
+  // - sin Doppler: posiciones suavizadas (promedio exponencial) y pasos chicos acumulados
+  // - hueco de más de 5 s (señal perdida, sesión recuperada): línea recta desde el último punto
+  let dSum = 0;
+  const dt = gpsUltimo ? t - gpsUltimo.t : 0;
+  if (gpsUltimo && dt > 0) {
+    if (dt > 5) {
       const d = distanciaHaversine(gpsUltimo.lat, gpsUltimo.lon, latitude, longitude);
-      const v = d / dt; // m/s
-      // filtro de ruido: descarto microsaltos (deriva GPS parado) y saltos imposibles (>8 m/s ~ 2:05/km)
-      if (d >= 1.5 && v < 8 && sesionActiva && !sesionPausada) {
-        actual.velocidad = v;
-        distanciaAcumM += d;
-        if (altitude != null && gpsUltimo.alt != null) {
-          const deltaAlt = altitude - gpsUltimo.alt;
-          if (deltaAlt > 1) elevGanadaAcumM += deltaAlt; // ignoro ruido menor a 1m
-        }
-        if (altitude != null) actualizarPendienteGPS(distanciaAcumM, altitude); // v107
-      } else if (!sesionActiva) {
-        actual.velocidad = 0;
-      }
+      if (d / dt < 8) dSum = d;
+      gpsSuave = null;
+    } else if (dop) {
+      dSum = (speed < 0.3 ? 0 : Math.min(speed, 8)) * dt;
+    } else {
+      const a = 0.3;
+      // si recién arranca (o se recuperó la sesión), el suavizado parte del último punto conocido:
+      // así el tramo desde ahí se cuenta en vez de perderse
+      if (!gpsSuave) { gpsSuave = { lat: gpsUltimo.lat, lon: gpsUltimo.lon }; gpsAnclaSuave = { lat: gpsUltimo.lat, lon: gpsUltimo.lon }; }
+      gpsSuave = { lat: gpsSuave.lat + a * (latitude - gpsSuave.lat), lon: gpsSuave.lon + a * (longitude - gpsSuave.lon) };
+      if (!gpsAnclaSuave) gpsAnclaSuave = { lat: gpsSuave.lat, lon: gpsSuave.lon };
+      const d = distanciaHaversine(gpsAnclaSuave.lat, gpsAnclaSuave.lon, gpsSuave.lat, gpsSuave.lon);
+      if (d >= Math.max(1, Math.min(accuracy || 4, 20) * 0.25)) { dSum = d; gpsAnclaSuave = { lat: gpsSuave.lat, lon: gpsSuave.lon }; }
     }
   }
-  gpsUltimo = { lat: latitude, lon: longitude, t, alt: altitude };
+  if (!gpsSuave && !dop) { gpsSuave = { lat: latitude, lon: longitude }; gpsAnclaSuave = { lat: latitude, lon: longitude }; }
+  gpsUltimo = punto;
+  if (dSum > 0) {
+    distanciaAcumM += dSum;
+    if (altitude != null) actualizarPendienteGPS(distanciaAcumM, altitude); // v107
+  }
+  // desnivel: altura suavizada (~20 s) y tolerancia de 5 m — la altura del GPS del teléfono oscila varios
+  // metros, y sumar cada subida entre puntos inflaba el desnivel (en llano sumaba más de 100 m)
+  if (altitude != null) {
+    gpsAltSuave = gpsAltSuave == null ? altitude : gpsAltSuave + 0.05 * (altitude - gpsAltSuave);
+    if (gpsElevRef == null) gpsElevRef = gpsAltSuave;
+    else if (gpsAltSuave > gpsElevRef + 5) { elevGanadaAcumM += gpsAltSuave - gpsElevRef; gpsElevRef = gpsAltSuave; }
+    else if (gpsAltSuave < gpsElevRef - 5) gpsElevRef = gpsAltSuave;
+  }
+  // v112: RITMO. Antes era d/dt entre dos puntos de 1 s: saltaba de 5:00 a 14:00. Ahora: velocidad
+  // Doppler suavizada (~4 s); sin Doppler, distancia de los últimos 15 s.
+  gpsVentana.push({ t, d: distanciaAcumM });
+  while (gpsVentana.length > 2 && t - gpsVentana[0].t > 15) gpsVentana.shift();
+  const w0 = gpsVentana[0], dtw = t - w0.t;
+  const velPosiciones = dtw >= 5 ? (distanciaAcumM - w0.d) / dtw : null;
+  if (dop) {
+    velDopplerSuave = velDopplerSuave == null ? speed : velDopplerSuave + 0.25 * (speed - velDopplerSuave);
+    actual.velocidad = velDopplerSuave < 0.3 ? 0 : velDopplerSuave;
+  } else if (velPosiciones != null) actual.velocidad = velPosiciones;
+  // diagnóstico en el Registro de sensores cada 15 s
+  if (t - gpsLogAt >= 15) {
+    gpsLogAt = t;
+    const r = v => v > 0.3 ? segAMMSS(1000 / v) + '/km' : 'parado';
+    logBLE('GPS ±' + Math.round(accuracy) + ' m · Doppler ' + (dop ? r(speed) : 'no disponible') +
+      ' · últimos 15 s ' + (velPosiciones != null ? r(velPosiciones) : '--') + ' · en pantalla ' + r(actual.velocidad) + ' · ' + (distanciaAcumM / 1000).toFixed(2) + ' km');
+  }
 }
+let gpsVentana = [], velDopplerSuave = null, gpsLogAt = 0, gpsSuave = null, gpsAnclaSuave = null, gpsElevRef = null, gpsAltSuave = null; // v112
 
 // v107: pendiente al aire libre con la altura del GPS. La del teléfono es ruidosa (±5-10 m): se usa
 // la pendiente de una recta ajustada a los últimos 80 m recorridos (mínimo 40 m), suavizada y
@@ -6896,6 +6981,7 @@ function estadoSesionActual() {
     testVmaActivo, testVmaCfg, testVmaEscalonPrevio, testVmaAvisado, testUmbralActivo,
     muestrasCalibracionSesion, notas: document.getElementById('notasSesion').value,
     planCarreraActivo, pcEstado, // v108
+    gpsAnclaSuave, // v112: punto suavizado desde donde se mide (sin Doppler); si no, se perdía el retraso del suavizado
   };
 }
 function guardarCheckpoint() {
@@ -6996,6 +7082,7 @@ function restaurarSesion(snap, continuar) {
   if (snap.modo === 'aire_libre' && continuar) {
     iniciarGPS();
     if (sigueCorriendo && snap.gpsUltimo) gpsUltimo = snap.gpsUltimo; // el primer punto nuevo suma el tramo del corte
+    if (sigueCorriendo && snap.gpsAnclaSuave) { gpsSuave = Object.assign({}, snap.gpsAnclaSuave); gpsAnclaSuave = Object.assign({}, snap.gpsAnclaSuave); } // v112
   }
   // pantalla, igual que al iniciar
   document.getElementById('btnIniciar').disabled = true;
