@@ -39,6 +39,20 @@
   header .titulowrap{display:flex; align-items:baseline;}
 
   main{padding:14px 14px 24px;}
+  /* v115: barra fija de sesión (largar sin scrollear) — solo en la pantalla en vivo */
+  #barraSesion{position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--bg); border-top:1px solid var(--borde);
+    padding:8px 12px calc(8px + env(safe-area-inset-bottom)); display:none; box-shadow:0 -6px 18px rgba(0,0,0,.35);}
+  body.con-barra #barraSesion{display:block;}
+  body.con-barra main{padding-bottom:170px;}
+  body.con-barra .toast{bottom:180px;}
+  #barraSesion .chips{display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap;}
+  #barraSesion .chip{flex:1; min-width:0; font-size:12px; padding:6px 8px; border-radius:10px; border:1px solid var(--borde);
+    background:var(--panel); color:var(--texto, #e6edf3); text-align:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer;}
+  #barraSesion .chip.ok{border-color:#3fb950; color:#7ee787;}
+  #barraSesion .chip.warn{border-color:#d29922; color:#e3b341;}
+  #barraSesion .chip.mal{border-color:#f85149; color:#ff7b72;}
+  #barraSesion .btn{margin:0; padding:12px 8px;}
+  #barraSesion #btnIniciar{font-size:18px; font-weight:700;}
   .view{display:none;}
   .view.activa{display:block;}
 
@@ -199,7 +213,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v114</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v115</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -561,11 +575,20 @@
 
       <div class="zona-actual">Zona actual: <b id="zonaActualTxt">--</b></div>
 
-      <div class="fila" style="margin-top:14px;">
-        <button class="btn primario" id="btnIniciar" onclick="iniciarSesion()">Iniciar</button>
-        <button class="btn" id="btnPausar" onclick="pausarSesion()" disabled>Pausar</button>
+      <!-- v115: Iniciar / Pausar / Finalizar viven en la barra fija de abajo (#barraSesion) -->
+    </div>
+
+    <div id="barraSesion">
+      <div class="chips">
+        <div class="chip" id="chipModo" onclick="irAModo()">Modo</div>
+        <div class="chip" id="chipGPS" onclick="iniciarGPS()">GPS</div>
+        <div class="chip" id="chipBanda" onclick="conectarBandaSegunModo()">Banda</div>
       </div>
-      <button class="btn peligro" id="btnFinalizar" onclick="finalizarSesion()" disabled style="margin-top:8px;">Finalizar y guardar</button>
+      <div class="fila">
+        <button class="btn primario" id="btnIniciar" onclick="iniciarSesion()" style="flex:2;">Iniciar</button>
+        <button class="btn" id="btnPausar" onclick="pausarSesion()" disabled>Pausar</button>
+        <button class="btn peligro" id="btnFinalizar" onclick="finalizarSesion()" disabled>Finalizar</button>
+      </div>
     </div>
 
     <div class="card" id="cardNotas" style="display:none;">
@@ -3109,6 +3132,22 @@
        gráficos opcionales (potencia, Running Dynamics) se muestran antes
        de dibujarse — si venían ocultos de la sesión anterior, se
        dibujaban con ancho 0 y quedaban en blanco.
+   v115: largada sin errores (en la 10K solo se registró el pulso:
+       probablemente quedó en "Sensor BLE", el modo con el que la app
+       arrancaba siempre, sin sensor de distancia ni aviso).
+       - Barra fija abajo en la pantalla en vivo (los mismos botones
+         Iniciar / Pausar / Finalizar, movidos, con sus id) y tres chips
+         de estado tocables: Modo (lleva a elegir modo), GPS (lo activa) y
+         Banda (conecta pulso + cadencia), en verde/ámbar/rojo.
+       - Se recuerda el último modo (correr_modo): abre en Aire libre si
+         fue el último. El GPS se activa solo al entrar a Aire libre y al
+         Iniciar; iniciarGPS ya no puede quedar duplicado.
+       - Al Iniciar en Sensor BLE sin sensor de ritmo: confirm para pasar
+         a Aire libre (o largar igual, con un segundo confirm).
+       - Al Iniciar se oculta la tarjeta del plan de carrera (no se edita
+         en carrera) y la pantalla va a "Sesión en vivo".
+       - En sesión al aire libre: si el GPS lleva 30 s sin señal,
+         vibración + pitido + voz "Sin señal de GPS", repite cada 60 s.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3720,6 +3759,7 @@ function sincronizarUmbralesCompartidos() {
 function cambiarTab(nombre) {
   document.querySelectorAll('.view').forEach(v => v.classList.remove('activa'));
   document.getElementById('view-' + nombre).classList.add('activa');
+  document.body.classList.toggle('con-barra', nombre === 'vivo'); // v115
   if (nombre === 'historial') renderHistorial();
   if (nombre === 'zonas') renderZonas();
   if (nombre === 'vivo' && escenarioActual !== 'ninguno') iniciarBucleEscena();
@@ -4212,6 +4252,14 @@ function renderSelectorFantasma() {
    ============================================================ */
 function seleccionarModo(m) {
   modo = m;
+  // v115: se recuerda el modo (si la última vez fue Aire libre, la app abre en Aire libre) y el GPS se
+  // prende solo al entrar a Aire libre — en una largada no hay que acordarse de tocar "Activar GPS"
+  if (!sesionActiva) {
+    lsSet(K_MODO, m);
+    if (m === 'aire_libre' && watchIdGPS == null) iniciarGPS();
+    else if (m !== 'aire_libre' && watchIdGPS != null) detenerGPS();
+  }
+  setTimeout(actualizarBarraSesion, 0); // v115: la barra refleja el cambio en el momento
   document.getElementById('btnModoBLE').classList.toggle('sel', m === 'ble');
   document.getElementById('btnModoManual').classList.toggle('sel', m === 'manual');
   document.getElementById('btnModoAireLibre').classList.toggle('sel', m === 'aire_libre');
@@ -4695,6 +4743,7 @@ function distanciaHaversine(lat1, lon1, lat2, lon2) {
 }
 function iniciarGPS() {
   if (!navigator.geolocation) { toast('Este navegador no soporta geolocalización'); return; }
+  if (watchIdGPS != null) detenerGPS(); // v115: nunca dos seguimientos a la vez (se llama solo y a mano)
   gpsAltHist = []; pendienteGPSSuave = 0; // v107
   gpsVentana = []; velDopplerSuave = null; gpsLogAt = 0; gpsSuave = null; gpsAnclaSuave = null; gpsElevRef = null; gpsAltSuave = null; // v112
   const estadoEl = document.getElementById('estadoGPS');
@@ -4705,6 +4754,47 @@ function iniciarGPS() {
     enableHighAccuracy: true, maximumAge: 1000, timeout: 10000
   });
 }
+/* v115: estado de la largada y vigilancia del GPS durante la sesión */
+const K_MODO = LS_PREFIX + 'modo';
+let gpsFixAt = 0, gpsAccActual = null, gpsAvisoSinSenalAt = 0;
+function irAModo() {
+  if (sesionActiva) { toast('El modo no se cambia con la sesión en marcha'); return; }
+  document.getElementById('cardModo').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function conectarBandaSegunModo() {
+  if (relojConectado) { toast('La banda ya está conectada'); return; }
+  conectarRelojBLE(); // pulso + cadencia (HRM-Pro+); en manual/aire libre la banda no toca la velocidad
+}
+function actualizarBarraSesion() {
+  const nombres = { ble: 'Sensor BLE', manual: 'Cinta (manual)', aire_libre: 'Aire libre', calibracion: 'Calibración' };
+  const chip = (id, txt, clase) => { const el = document.getElementById(id); el.textContent = txt; el.className = 'chip' + (clase ? ' ' + clase : ''); };
+  chip('chipModo', (sesionActiva ? '● ' : '') + (nombres[modo] || 'Elegí modo'), modo ? 'ok' : 'mal');
+  const elGps = document.getElementById('chipGPS');
+  if (modo === 'aire_libre') {
+    elGps.style.display = '';
+    const hace = gpsFixAt ? (Date.now() - gpsFixAt) / 1000 : Infinity;
+    if (watchIdGPS == null) chip('chipGPS', 'GPS apagado · tocá', 'mal');
+    else if (hace < 5) chip('chipGPS', 'GPS ✓ ±' + Math.round(gpsAccActual || 0) + ' m', gpsAccActual > 15 ? 'warn' : 'ok');
+    else if (hace === Infinity) chip('chipGPS', 'GPS buscando…', 'warn');
+    else chip('chipGPS', 'GPS sin señal ' + Math.round(hace) + ' s', hace > 20 ? 'mal' : 'warn');
+  } else elGps.style.display = 'none';
+  const pulsoOk = (bandaConectada || relojConectado) && actual.pulso > 0, cadOk = relojConectado && actual.cadencia > 0;
+  if (relojConectado || bandaConectada) chip('chipBanda', 'Banda ✓ ' + (pulsoOk ? actual.pulso + ' ppm' : 'pulso --') + (relojConectado ? (cadOk ? ' · cad ✓' : ' · cad --') : ''), pulsoOk ? 'ok' : 'warn');
+  else chip('chipBanda', 'Banda · tocá para conectar', modo === 'aire_libre' || modo === 'manual' ? 'warn' : '');
+  // durante la sesión al aire libre: aviso si el GPS lleva 30 s sin señal (la distancia no se registra)
+  if (sesionActiva && !sesionPausada && modo === 'aire_libre') {
+    const hace = gpsFixAt ? Date.now() - gpsFixAt : Date.now() - inicioSesionMs;
+    if (hace > 30000 && Date.now() - gpsAvisoSinSenalAt > 60000) {
+      gpsAvisoSinSenalAt = Date.now();
+      if (navigator.vibrate) { try { navigator.vibrate([400, 150, 400, 150, 400]); } catch (e) {} }
+      pitido(3, true);
+      hablar('Sin señal de GPS. La distancia no se está registrando.');
+      toast('Sin señal de GPS hace ' + Math.round(hace / 1000) + ' s: la distancia no se registra');
+      logBLE('GPS sin señal hace ' + Math.round(hace / 1000) + ' s durante la sesión', '#f85149');
+    }
+  }
+}
+setInterval(actualizarBarraSesion, 1000);
 function detenerGPS() {
   if (watchIdGPS != null) { navigator.geolocation.clearWatch(watchIdGPS); watchIdGPS = null; }
 }
@@ -4723,6 +4813,7 @@ function procesarPosicionGPS(pos) {
   }
   estadoEl.textContent = 'GPS activo (±' + Math.round(accuracy) + 'm)';
   estadoEl.className = 'estado-conexion ok';
+  gpsFixAt = Date.now(); gpsAccActual = accuracy; // v115: para la barra de largada y el aviso de "sin señal"
   const speed = pos.coords.speed;
   const punto = { lat: latitude, lon: longitude, t, alt: altitude };
   const dop = speed != null && isFinite(speed) && speed >= 0;
@@ -6842,6 +6933,15 @@ function procesarArchivoEdicion(texto) {
    ============================================================ */
 function iniciarSesion() {
   if (!modo) { toast('Elegí primero el modo (Sensor BLE, Manual o Aire libre)'); return; }
+  // v115: sin nada que mida la distancia, la sesión solo guardaba el pulso (pasó en la 10K): se avisa antes
+  if (modo === 'ble' && !relojConectado) {
+    if (confirm('No hay sensor de ritmo conectado: así solo se registra el pulso, sin distancia ni ritmo.\n\n¿Pasar a Aire libre (GPS) y largar?')) seleccionarModo('aire_libre');
+    else if (!confirm('¿Largar igual en modo Sensor BLE, sin distancia?')) return;
+  }
+  if (modo === 'aire_libre') {
+    if (watchIdGPS == null) iniciarGPS();
+    if (!gpsFixAt || Date.now() - gpsFixAt > 10000) toast('Buscando GPS: la distancia empieza a contar en cuanto haya señal');
+  }
   // Test incremental de VMA: se valida ANTES de tocar nada del estado de la sesión — si la config
   // es inválida hay que poder salir sin dejar la sesión a medio arrancar ni el botón deshabilitado.
   const haceTestVma = (modo === 'manual' && document.getElementById('chkTestVma').checked);
@@ -6953,6 +7053,9 @@ function iniciarSesion() {
   }
   intervaloMuestreo = setInterval(tick, 1000);
   marcarSesionEnCurso(true); // v104
+  // v115: en carrera, el plan no se edita y la pantalla va directo a los datos en vivo
+  document.getElementById('cardPlanCarrera').style.display = 'none';
+  setTimeout(() => document.getElementById('tileRitmo').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   toast('Sesión iniciada');
 }
 /* ============================================================
@@ -7105,6 +7208,7 @@ function restaurarSesion(snap, continuar) {
   document.getElementById('cardNotas').style.display = 'block';
   document.getElementById('cardModo').style.display = 'none';
   document.getElementById('cardMeta').style.display = 'none';
+  document.getElementById('cardPlanCarrera').style.display = 'none'; // v115
   if (snap.modo === 'manual' || snap.modo === 'calibracion') mostrarBotonesVelocidadHud(true);
   if (!continuar) return; // solo para guardar: finalizarSesion se encarga del resto
   pedirWakeLock();
@@ -7565,6 +7669,7 @@ function resetearHUD() {
   marcarSesionEnCurso(false); // v104
   borrarCheckpoint();
   planCarreraActivo = null; pcEstado = null; // v108
+  document.getElementById('cardPlanCarrera').style.display = ''; // v115
   document.getElementById('tilePlanCarrera').style.display = 'none';
   document.getElementById('btnIniciar').disabled = false;
   document.getElementById('btnPausar').disabled = true;
@@ -9679,7 +9784,8 @@ function rdActualizarEstadoUI() {
    INICIALIZACIÓN
    ============================================================ */
 document.getElementById('hdrFecha').textContent = new Date().toLocaleDateString('es-AR', { weekday: 'short', day: '2-digit', month: 'short' });
-seleccionarModo('ble');
+seleccionarModo(lsGet(K_MODO, 'ble')); // v115: abre en el último modo usado (antes, siempre Sensor BLE)
+document.body.classList.add('con-barra');
 poblarOpcionesRutas(); // v101: recorridos GPX guardados en el selector de escenario
 document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
