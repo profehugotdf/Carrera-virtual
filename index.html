@@ -39,33 +39,28 @@
   header .titulowrap{display:flex; align-items:baseline;}
 
   main{padding:14px 14px 24px;}
-  /* v117: vista de carrera del plan (estilo PacePro): fondo claro, se lee al sol */
-  #tilePace{background:#f4f6f8; color:#0b0f14; border:4px solid #f4f6f8; border-radius:18px; margin:10px 0; overflow:hidden; text-align:center;}
-  #tilePace .pp-obj{display:inline-block; margin-top:10px; background:#0b0f14; color:#fff; font:700 30px var(--mono, monospace); padding:2px 18px; border-radius:10px;}
-  #tilePace .pp-ritmo{font:800 92px/1 var(--mono, monospace); margin:6px 0 0; letter-spacing:-2px;}
-  #tilePace .pp-lbl{font-size:14px; letter-spacing:1px; color:#4a5560; margin-bottom:8px;}
-  #tilePace .pp-fila{display:flex; align-items:center; gap:10px; padding:0 14px 10px;}
-  #tilePace .pp-barra{flex:1; height:22px; border:2px solid #0b0f14; border-radius:4px; overflow:hidden; background:#fff;}
-  #tilePace .pp-barra-in{height:100%; width:0; background:#0b0f14;}
-  #tilePace .pp-falta{font:700 22px var(--mono, monospace); min-width:62px; text-align:right;}
-  #tilePace .pp-total{background:#0b0f14; color:#fff; padding:6px 10px 10px;}
-  #tilePace .pp-total-lbl{font-size:15px; font-weight:800; letter-spacing:1px;}
-  #tilePace .pp-total-val{font:800 44px/1.05 var(--mono, monospace);}
-  #tilePace .ok{color:#127a2c;} #tilePace .lento{color:#c4161c;} #tilePace .rapido{color:#b06a00;}
-  #tilePace.alarma-pulso{border-color:#f85149;} #tilePace.alarma-ritmo{border-color:#d29922;}
+  /* v117: vista de carrera (estilo PacePro): fondo claro, se lee al sol. v118: clase compartida (plan y pasadas) */
+  .vista-pp{background:#f4f6f8; color:#0b0f14; border:4px solid #f4f6f8; border-radius:18px; margin:10px 0; overflow:hidden; text-align:center;}
+  .vista-pp .pp-obj{display:inline-block; margin-top:10px; background:#0b0f14; color:#fff; font:700 30px var(--mono, monospace); padding:2px 18px; border-radius:10px;}
+  .vista-pp .pp-ritmo{font:800 92px/1 var(--mono, monospace); margin:6px 0 0; letter-spacing:-2px;}
+  .vista-pp .pp-lbl{font-size:14px; letter-spacing:1px; color:#4a5560; margin-bottom:8px;}
+  .vista-pp .pp-fila{display:flex; align-items:center; gap:10px; padding:0 14px 10px;}
+  .vista-pp .pp-barra{flex:1; height:22px; border:2px solid #0b0f14; border-radius:4px; overflow:hidden; background:#fff;}
+  .vista-pp .pp-barra-in{height:100%; width:0; background:#0b0f14;}
+  .vista-pp .pp-falta{font:700 22px var(--mono, monospace); min-width:62px; text-align:right;}
+  .vista-pp .pp-total{background:#0b0f14; color:#fff; padding:6px 10px 10px;}
+  .vista-pp .pp-total-lbl{font-size:15px; font-weight:800; letter-spacing:1px;}
+  .vista-pp .pp-total-val{font:800 44px/1.05 var(--mono, monospace);}
+  .vista-pp .ok{color:#127a2c;} .vista-pp .lento{color:#c4161c;} .vista-pp .rapido{color:#b06a00;}
+  .vista-pp.alarma-pulso{border-color:#f85149;} .vista-pp.alarma-ritmo{border-color:#d29922;}
+  .vista-pp .pp-total-val.chico{font-size:24px; line-height:1.3;}
+  .vista-pp .pp-res{font:600 12px var(--mono, monospace); color:#c9d1d9; margin-top:4px; white-space:normal;}
+  .vista-pp .pp-sig{margin:0; border-radius:0; width:100%; background:#1f2630; color:#fff; border:0; padding:12px; font-weight:700;}
+  .vista-pp.recup{border-color:#58a6ff;} .vista-pp.ok{border-color:#3fb950;} .vista-pp.lento{border-color:#f85149;} .vista-pp.rapido{border-color:#d29922;}
   /* v116: pasadas */
   .ps-bloque{display:grid; grid-template-columns:52px 1fr 1fr; gap:6px; align-items:center; padding:8px 0; border-top:1px solid var(--borde);}
   .ps-bloque select, .ps-bloque input{padding:6px; margin:0;}
   .ps-bloque .ps-x{justify-self:end; padding:6px 12px;}
-  #tilePasadas{border:2px solid var(--borde); border-radius:14px; padding:10px 12px; margin:10px 0; background:var(--panel2, #161b22);}
-  #tilePasadas .ps-cab{font-size:13px; letter-spacing:.5px; color:var(--muted); display:flex; justify-content:space-between; gap:8px;}
-  #tilePasadas .ps-grande{display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:4px 0;}
-  #tilePasadas .ps-num{font-family:var(--mono, monospace); font-size:44px; font-weight:700; line-height:1.05;}
-  #tilePasadas .ps-sub{font-size:13px; color:var(--muted);}
-  #tilePasadas.ok{border-color:#3fb950;} #tilePasadas.ok .ps-estado{color:#3fb950;}
-  #tilePasadas.lento{border-color:#f85149;} #tilePasadas.lento .ps-estado{color:#ff7b72;}
-  #tilePasadas.rapido{border-color:#d29922;} #tilePasadas.rapido .ps-estado{color:#e3b341;}
-  #tilePasadas.recup{border-color:#58a6ff;}
   /* v115: barra fija de sesión (largar sin scrollear) — solo en la pantalla en vivo */
   #barraSesion{position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--bg); border-top:1px solid var(--borde);
     padding:8px 12px calc(8px + env(safe-area-inset-bottom)); display:none; box-shadow:0 -6px 18px rgba(0,0,0,.35);}
@@ -240,7 +235,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v117</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v119</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -544,7 +539,7 @@
       <h2>Sesión en vivo</h2>
       <div class="cinta-ritmo"><div class="cinta-marker" id="cintaMarker" style="left:50%;"></div></div>
       <!-- v117: vista de carrera del plan -->
-      <div id="tilePace" style="display:none;">
+      <div id="tilePace" class="vista-pp" style="display:none;">
         <div class="pp-obj" id="ppObj">--:--</div>
         <div class="pp-ritmo" id="ppRitmo">--:--</div>
         <div class="pp-lbl" id="ppLbl">RITMO DEL TRAMO</div>
@@ -552,15 +547,13 @@
         <div class="pp-total"><div class="pp-total-lbl" id="ppTotLbl">TOTAL</div><div class="pp-total-val" id="ppTot">0:00</div></div>
       </div>
       <!-- v116: pasadas en vivo -->
-      <div id="tilePasadas" style="display:none;">
-        <div class="ps-cab"><span id="psCab">PASADA</span><span id="psCab2"></span></div>
-        <div class="ps-grande"><span class="ps-num" id="psNumIzq">--</span><span class="ps-num ps-estado" id="psNumDer">--</span></div>
-        <div class="ps-grande" style="margin:0;"><span class="ps-sub" id="psSubIzq"></span><span class="ps-sub ps-estado" id="psSubDer"></span></div>
-        <div class="ps-sub" id="psLinea" style="margin-top:4px;"></div>
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <button class="btn chico" onclick="psSiguiente()" style="flex:1;">Siguiente ▸</button>
-        </div>
-        <div class="ps-sub" id="psResultados" style="margin-top:6px; font-family:var(--mono, monospace);"></div>
+      <div id="tilePasadas" class="vista-pp" style="display:none;">
+        <div class="pp-obj" id="psObj">--:--</div>
+        <div class="pp-ritmo" id="psGrande">--:--</div>
+        <div class="pp-lbl" id="psLbl">PASADA</div>
+        <div class="pp-fila"><div class="pp-barra"><div class="pp-barra-in" id="psBarra"></div></div><div class="pp-falta" id="psFalta">--</div></div>
+        <div class="pp-total"><div class="pp-total-lbl" id="psTotLbl">--</div><div class="pp-total-val" id="psTot">--</div><div class="pp-res" id="psResultados"></div></div>
+        <button class="btn pp-sig" onclick="psSiguiente()">Siguiente ▸</button>
       </div>
 
       <div class="hud-grid">
@@ -804,6 +797,10 @@
       <h2 id="detalleTitulo">Sesión</h2>
       <div id="detalleResumen"></div>
     </div>
+    <div class="card" id="cardUmbralCarreraDetalle" style="display:none;">
+      <h2>Umbral desde carrera</h2>
+      <div class="estado-conexion" id="umbralCarreraDetalle" style="line-height:1.5;"></div>
+    </div>
     <div class="card" id="cardTestVmaDetalle" style="display:none;">
       <h2>Test incremental de VMA</h2>
       <div class="estado-conexion" id="testVmaResumenDetalle" style="margin-bottom:8px;"></div>
@@ -919,6 +916,7 @@
     <div class="card">
       <h2>Sesión terminada</h2>
       <div id="resumenPostContenido"></div>
+      <div class="estado-conexion" id="avisoUmbralPost" style="display:none; margin-top:10px; line-height:1.5;"></div>
     </div>
     <div class="card">
       <h2>¿Cómo te sentiste?</h2>
@@ -3242,6 +3240,25 @@
        las alarmas de pulso/ritmo. Al terminar: tiempo final y diferencia.
        El recuadro del fantasma dice la diferencia en palabras ("0:38
        atrás") y "vs Plan" cuando el fantasma es el plan.
+   v118: las PASADAS usan la misma vista de carrera (clase compartida
+       .vista-pp). En pasada: ritmo objetivo arriba, ritmo medio de la
+       pasada en grande con color, barra con los metros que faltan, abajo
+       POR DETRÁS / POR DELANTE del objetivo. En recuperación: pulso en
+       grande (verde al entrar en zona), barra de cuánto bajó desde el fin
+       de la pasada hasta el límite, abajo la próxima pasada. Cuenta
+       regresiva, entrada en calor y final con el mismo formato; al final,
+       el promedio contra el objetivo. "Siguiente ▸" abajo del recuadro.
+   v119: UMBRAL DESDE CARRERAS. Una sesión con plan de carrera, o una
+       importada con "Fue una carrera" tildado (se tilda solo si la
+       distancia es 5/8/10/15/21/42 km ±3 % y el pulso es de esfuerzo
+       fuerte), recalcula el umbral: pulso = promedio del minuto 10 a
+       1 km de la llegada (×0,96–1,00 según duración), ritmo = equivalente
+       a 1 hora (Riegel). Queda protegido (origenUmbral 'carrera') y solo
+       se aplica si no hay un test/manual/carrera con fecha más nueva.
+       También recalcula umbral, IF y TSS de esa misma sesión y su
+       entrada en la Forma. Botón Deshacer; en el detalle de cualquier
+       sesión de 15 min a 2 h 30, "Sí, fue carrera" para usar una ya
+       guardada. Fechas del test en hora local (antes UTC).
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4486,6 +4503,7 @@ function psEmpezarPasada(t) {
 }
 function psTerminarPasada(t, hecho, cortada) {
   const E = pasEstado, F = E.fases[E.i];
+  const pulsoFin = actual.pulso || null;
   // tiempo al metro exacto: interpolado entre la muestra anterior y esta
   let tiempo = t - E.t0;
   if (!cortada && hecho > E.prevD) tiempo = (E.prevT - E.t0) + (F.dist - E.prevD) / (hecho - E.prevD) * (t - E.prevT);
@@ -4500,7 +4518,7 @@ function psTerminarPasada(t, hecho, cortada) {
   logBLE('Pasada ' + F.n + ': ' + nombreDist(dist) + ' en ' + segAMMSS(tiempo) + (ritmo ? ' (' + segAMMSS(ritmo) + '/km, obj ' + segAMMSS(F.obj) + ')' : '') + (cortada ? ' — cortada' : ''), '#4FD8C4');
   const sig = E.fases[E.i + 1];
   if (!sig) { E.etapa = 'fin'; E.i = E.fases.length; setTimeout(() => hablar('Pasadas terminadas. Buen trabajo.'), 4500); return; }
-  E.i++; E.etapa = 'recup'; E.t0 = t; E.bajoDesde = null;
+  E.i++; E.etapa = 'recup'; E.t0 = t; E.bajoDesde = null; E.pulsoIniRecup = pulsoFin; // v118: la barra mide cuánto bajó desde acá
   E.limite = sig.recup === 'tiempo' ? null : psLimiteZona(sig.recup === 'z1' ? 1 : 2);
   setTimeout(() => { if (pasEstado && pasEstado.etapa === 'recup') hablar(sig.recup === 'tiempo' ? 'Recuperación de ' + decirTiempo(sig.seg) + '.' : 'Recuperá hasta zona ' + (sig.recup === 'z1' ? 1 : 2) + (E.limite ? ', ' + E.limite + ' pulsaciones.' : '.')); }, 4500);
 }
@@ -4546,43 +4564,70 @@ function psSiguiente() {
   renderTilePasadas(t, actual.pulso);
 }
 function psEstadoRitmo(rm, obj, tol) { return Math.abs(rm - obj) <= tol ? 'ok' : rm > obj ? 'lento' : 'rapido'; }
+// v118: mismo formato que la vista de carrera del plan (estilo PacePro)
 function renderTilePasadas(t, pulso) {
   const E = pasEstado, tile = document.getElementById('tilePasadas'); if (!E) return;
   const set = (id, v) => { document.getElementById(id).textContent = v; };
-  let clase = '';
+  const grande = document.getElementById('psGrande'), tot = document.getElementById('psTot'), barra = document.getElementById('psBarra');
+  let clase = '', claseNum = '', totChico = false, pct = 0;
   if (E.etapa === 'pasada') {
     const F = E.fases[E.i], hecho = Math.max(0, distanciaAcumM - E.d0), trans = t - E.t0;
-    const rm = hecho > 30 ? trans / hecho * 1000 : null;
+    const rm = hecho >= 20 ? trans / hecho * 1000 : null;
     const difT = trans - hecho * F.obj / 1000; // + = atrás del objetivo a esta distancia
-    set('psCab', 'PASADA ' + F.n + '/' + F.total + ' · ' + nombreDist(F.dist)); set('psCab2', 'objetivo ' + segAMMSS(F.obj) + '/km');
-    set('psNumIzq', Math.max(0, Math.round(F.dist - hecho)) + ' m'); set('psNumDer', rm ? segAMMSS(rm) : '--:--');
-    set('psSubIzq', 'faltan · ⏱ ' + segAMMSS(trans)); set('psSubDer', rm ? (Math.abs(difT) < 1 ? 'en el objetivo' : Math.round(Math.abs(difT)) + ' s ' + (difT > 0 ? 'atrás' : 'adelante')) : 'ritmo de la pasada');
-    if (rm) clase = psEstadoRitmo(rm, F.obj, E.tol);
-    set('psLinea', 'Ritmo ahora ' + (actual.velocidad > 0.3 ? segAMMSS(1000 / actual.velocidad) : '--') + ' · pulso ' + (pulso || '--'));
+    set('psObj', segAMMSS(F.obj));
+    set('psGrande', rm ? segAMMSS(rm) : '--:--');
+    if (rm) { clase = psEstadoRitmo(rm, F.obj, E.tol); claseNum = clase; }
+    set('psLbl', 'PASADA ' + F.n + '/' + F.total + ' · ' + nombreDist(F.dist).toUpperCase() + ' · ⏱ ' + segAMMSS(trans));
+    pct = hecho / F.dist * 100;
+    set('psFalta', Math.max(0, Math.round(F.dist - hecho)) + ' m');
+    set('psTotLbl', !rm || Math.abs(difT) < 1 ? 'EN EL OBJETIVO' : difT > 0 ? 'POR DETRÁS' : 'POR DELANTE');
+    set('psTot', rm ? segAMMSS(Math.abs(difT)) : '0:00');
   } else if (E.etapa === 'recup') {
     const F = E.fases[E.i], trans = t - E.t0, prox = psProxPasada();
-    set('psCab', 'RECUPERACIÓN'); set('psCab2', F.recup === 'tiempo' ? segAMMSS(F.seg) : 'hasta Z' + (F.recup === 'z1' ? 1 : 2) + (E.limite ? ' (≤ ' + E.limite + ')' : ''));
-    set('psNumIzq', F.recup === 'tiempo' ? segAMMSS(Math.max(0, F.seg - trans)) : segAMMSS(trans));
-    set('psNumDer', pulso ? pulso + '' : '--');
-    set('psSubIzq', F.recup === 'tiempo' ? 'falta' : 'recuperando');
-    set('psSubDer', !E.limite || F.recup === 'tiempo' ? 'ppm' : pulso && pulso <= E.limite ? 'en zona ✓' : 'ppm · bajá');
+    if (E.pulsoIniRecup == null && pulso) E.pulsoIniRecup = pulso;
+    set('psObj', F.recup === 'tiempo' ? 'RECUPERACIÓN' : 'HASTA Z' + (F.recup === 'z1' ? 1 : 2) + (E.limite ? ' · ≤ ' + E.limite : ''));
     clase = 'recup';
-    if (E.limite && pulso && pulso <= E.limite) clase = 'ok';
-    set('psLinea', prox ? 'Próxima: pasada ' + prox.n + '/' + prox.total + ' · ' + nombreDist(prox.dist) + ' a ' + segAMMSS(prox.obj) : '');
+    if (F.recup === 'tiempo' || !E.limite) {
+      const total = F.recup === 'tiempo' ? F.seg : 90;
+      set('psGrande', segAMMSS(Math.max(0, total - trans))); set('psLbl', 'RECUPERACIÓN · FALTA · PULSO ' + (pulso || '--'));
+      pct = trans / total * 100; set('psFalta', segAMMSS(trans));
+    } else {
+      set('psGrande', pulso ? String(pulso) : '--');
+      const enZona = pulso && pulso <= E.limite;
+      if (enZona) { clase = 'ok'; claseNum = 'ok'; }
+      set('psLbl', 'PULSO · ' + (enZona ? 'EN ZONA ✓' : 'RECUPERANDO') + ' · ⏱ ' + segAMMSS(trans));
+      const ini = E.pulsoIniRecup || pulso || E.limite;
+      pct = ini > E.limite && pulso ? (ini - pulso) / (ini - E.limite) * 100 : (enZona ? 100 : 0);
+      set('psFalta', pulso && !enZona ? '−' + (pulso - E.limite) : '✓');
+    }
+    set('psTotLbl', prox ? 'PRÓXIMA · PASADA ' + prox.n + '/' + prox.total : 'ÚLTIMA RECUPERACIÓN');
+    set('psTot', prox ? nombreDist(prox.dist) + ' a ' + segAMMSS(prox.obj) : ''); totChico = true;
   } else if (E.etapa === 'cuenta') {
     const prox = psProxPasada();
-    set('psCab', 'PREPARADO'); set('psCab2', prox ? 'pasada ' + prox.n + '/' + prox.total : '');
-    set('psNumIzq', Math.max(0, Math.ceil(E.cuentaHasta - t)) + ''); set('psNumDer', prox ? segAMMSS(prox.obj) : '');
-    set('psSubIzq', 'largás en'); set('psSubDer', prox ? nombreDist(prox.dist) + ' a este ritmo' : ''); set('psLinea', '');
+    set('psObj', prox ? segAMMSS(prox.obj) : '--:--');
+    set('psGrande', String(Math.max(0, Math.ceil(E.cuentaHasta - t))));
+    set('psLbl', prox ? 'PREPARADO · PASADA ' + prox.n + '/' + prox.total + ' · ' + nombreDist(prox.dist).toUpperCase() : 'PREPARADO');
+    set('psFalta', prox ? prox.dist + ' m' : ''); pct = 0;
+    set('psTotLbl', 'LARGÁS EN'); set('psTot', Math.max(0, Math.ceil(E.cuentaHasta - t)) + ' s');
   } else if (E.etapa === 'calent') {
-    set('psCab', 'ENTRADA EN CALOR'); set('psCab2', '');
-    set('psNumIzq', segAMMSS(Math.max(0, E.calentSeg - (t - E.t0)))); set('psNumDer', pulso ? pulso + '' : '--');
-    set('psSubIzq', 'falta'); set('psSubDer', 'ppm'); set('psLinea', '');
+    const prox = psProxPasada();
+    set('psObj', 'ENTRADA EN CALOR');
+    set('psGrande', segAMMSS(Math.max(0, E.calentSeg - (t - E.t0))));
+    set('psLbl', 'FALTA · PULSO ' + (pulso || '--'));
+    pct = (t - E.t0) / E.calentSeg * 100; set('psFalta', segAMMSS(t - E.t0));
+    set('psTotLbl', 'DESPUÉS · PASADA 1/' + (prox ? prox.total : '')); set('psTot', prox ? nombreDist(prox.dist) + ' a ' + segAMMSS(prox.obj) : ''); totChico = true;
   } else {
-    set('psCab', 'PASADAS TERMINADAS'); set('psCab2', ''); set('psNumIzq', E.resultados.length + ''); set('psNumDer', ''); set('psSubIzq', 'pasadas'); set('psSubDer', ''); set('psLinea', 'Podés seguir trotando y finalizar cuando quieras.');
+    const R = E.resultados.filter(r => r.ritmo && !r.cortada), media = R.length ? R.reduce((a, r) => a + (r.ritmo - r.obj), 0) / R.length : null;
+    set('psObj', '🏁'); set('psGrande', String(E.resultados.length)); set('psLbl', 'PASADAS TERMINADAS'); pct = 100; set('psFalta', '');
+    set('psTotLbl', 'PROMEDIO CONTRA EL OBJETIVO');
+    set('psTot', media == null ? '--' : (Math.abs(media) < 1 ? 'justo' : (media > 0 ? '+' : '−') + Math.round(Math.abs(media)) + ' s/km'));
   }
-  tile.className = clase;
-  set('psResultados', E.resultados.map(r => '#' + r.n + ' ' + segAMMSS(r.tiempo) + (r.ritmo ? ' (' + segAMMSS(r.ritmo) + (r.ritmo - r.obj >= 0 ? ' +' : ' ') + Math.round(r.ritmo - r.obj) + ')' : '') + (r.cortada ? '✂' : '')).join(' · '));
+  grande.className = 'pp-ritmo' + (claseNum ? ' ' + claseNum : '');
+  tot.className = 'pp-total-val' + (totChico ? ' chico' : '');
+  const obj = document.getElementById('psObj'); obj.style.fontSize = obj.textContent.length > 7 ? '20px' : ''; // textos largos ("HASTA Z2 · ≤ 142")
+  barra.style.width = Math.max(0, Math.min(100, pct)) + '%';
+  tile.className = 'vista-pp' + (clase ? ' ' + clase : '');
+  set('psResultados', E.resultados.map(r => '#' + r.n + ' ' + segAMMSS(r.tiempo) + (r.ritmo ? ' (' + (r.ritmo - r.obj >= 0 ? '+' : '−') + Math.abs(Math.round(r.ritmo - r.obj)) + ')' : '') + (r.cortada ? '✂' : '')).join(' · '));
 }
 function resumenPasadas() {
   if (!pasEstado) return null;
@@ -7904,7 +7949,8 @@ function finalizarSesion(automatica) {
         zonas.umbralRitmoSegKm = ritmoProm;
         if (pulsoProm) zonas.umbralPulso = pulsoProm;
         zonas.origenUmbral = completo ? 'test30' : 'test30_parcial';
-        zonas.testUmbralFecha = new Date().toISOString().slice(0, 10);
+        zonas.testUmbralFecha = fechaLocalISO(new Date()); // v119: antes UTC (de noche daba el día siguiente)
+        delete zonas.umbralPrevio; // v119
         lsSet(K_ZONAS, zonas);
         sincronizarUmbralesCompartidos();
         const txtResultado = segAMMSS(ritmoProm) + '/km' + (pulsoProm ? (' · ' + pulsoProm + ' bpm') : '');
@@ -8027,6 +8073,12 @@ function finalizarSesion(automatica) {
 
   // mejores esfuerzos con la serie a resolución completa (puntosSesion, no la "sesion.puntos" ya comprimida).
   // Se llama DESPUÉS de guardar la sesión para que recalcularZonasDesdeMejores() pueda encontrarla al buscar el pulso.
+  // v119: con plan de carrera activo (y no siendo test ni pasadas) es una carrera: el umbral se
+  // estima antes que los mejores esfuerzos, así queda protegido y el TSS sale con el umbral nuevo.
+  if (sesion.planCarrera && !datosTestUmbral && !sesion.pasadas && sesion.distanciaM >= 3000) {
+    const rc = aplicarUmbralCarrera(sesion.id, puntosSesion, false);
+    if (rc.sesion) Object.assign(sesion, rc.sesion, { puntos: sesion.puntos });
+  }
   actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos: puntosSesion });
   actualizarFormaCompartida(sesion);
 
@@ -8165,8 +8217,9 @@ function recalcularZonasDesdeMejores() {
   // primera sesión normal después de un test de umbral hubiera vuelto a pisarlo en silencio.
   // 'test30_parcial' también protege — sigue siendo una medición directa (Friel), aunque con
   // ventana más corta que el ideal de 20 min, y es mejor que la estimación automática igual.
-  const protegido = zonas.origenUmbral === 'manual' || zonas.origenUmbral === 'test30' || zonas.origenUmbral === 'test30_parcial';
+  const protegido = zonas.origenUmbral === 'manual' || zonas.origenUmbral === 'test30' || zonas.origenUmbral === 'test30_parcial' || zonas.origenUmbral === 'carrera'; // v119: carrera
   zonas = {
+    ...zonas, // v119: conserva carreraUmbralFecha, manualFecha, umbralPrevio, etc.
     umbralRitmoSegKm: protegido ? zonas.umbralRitmoSegKm : ritmoUmbralSegKm,
     umbralPulso: protegido ? zonas.umbralPulso : pulsoUmbral,
     cv: modelo.cv, dprime: modelo.dprime, autoDesde: masLargo.fecha, filtroRpeAplicado: filtroAplicado,
@@ -8184,11 +8237,182 @@ function guardarUmbralManual() {
   if (!isNaN(pulso) && pulso > 0) zonas.umbralPulso = pulso;
   zonas.manual = true;
   zonas.origenUmbral = 'manual';
+  zonas.manualFecha = fechaLocalISO(new Date()); // v119
+  delete zonas.umbralPrevio; // v119: una carga manual no se deshace con el botón de la carrera
   lsSet(K_ZONAS, zonas);
   sincronizarUmbralesCompartidos();
   document.getElementById('estadoUmbral').textContent = 'Umbral guardado manualmente.';
   document.getElementById('estadoUmbral').className = 'estado-conexion ok';
   renderZonas();
+}
+
+/* ============================================================
+   v119: UMBRAL DESDE UNA CARRERA
+   Pulso: promedio desde el minuto 10 hasta 1 km antes de la llegada (saca el arranque, donde
+   el pulso todavía sube, y el sprint final). En carreras cortas el pulso promedio queda por
+   encima del umbral, así que se corrige: ×1,00 desde 55 min, ×0,96 hasta 30 min, lineal entre
+   medio (aproximación, no una fórmula publicada). Ritmo: el equivalente a 1 hora según el
+   tiempo de la carrera completa (Riegel, exponente 1,06). La mejor ventana de 40 min NO se usa:
+   con salida conservadora y final rápido junta la deriva cardíaca y el sprint, y da alto.
+   ============================================================ */
+const DIST_CARRERA_M = [5000, 8000, 10000, 15000, 21097, 42195];
+function fechaLocalISO(d) {
+  d = new Date(d);
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+// 'AAAA-MM-DD' → 'd/m/aaaa' sin pasar por Date (new Date('2026-10-11') es medianoche UTC = día anterior acá)
+function fechaCortaISO(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? (+m[3]) + '/' + (+m[2]) + '/' + m[1] : '';
+}
+function estimarUmbralCarrera(puntos, duracionSeg, distanciaM) {
+  if (!(duracionSeg >= 15 * 60) || duracionSeg > 150 * 60) return { error: 'para estimar el umbral la carrera tiene que durar entre 15 min y 2 h 30.' };
+  if (!(distanciaM >= 2000)) return { error: 'no tiene distancia suficiente.' };
+  const tIni = Math.min(600, duracionSeg * 0.2);
+  let tFin = duracionSeg * 0.95;
+  if (distanciaM >= 4000) { const p = puntos.find(q => q.distAcum >= distanciaM - 1000); if (p) tFin = p.t; }
+  if (tFin - tIni < 8 * 60) return { error: 'la ventana de medición queda muy corta.' };
+  const vent = puntos.filter(p => p.t >= tIni && p.t <= tFin);
+  const conPulso = vent.filter(p => p.pulso > 0);
+  let pulsoVentana = null, factor = 1, pulso = null;
+  if (conPulso.length >= Math.max(5, vent.length * 0.6)) {
+    pulsoVentana = promedio(conPulso.map(p => p.pulso));
+    factor = duracionSeg >= 55 * 60 ? 1 : duracionSeg <= 30 * 60 ? 0.96 : 0.96 + 0.04 * (duracionSeg - 1800) / 1500;
+    pulso = Math.round(pulsoVentana * factor);
+    if (pulso < 100 || pulso > 210) pulso = null; // banda con lecturas raras: no se toca el pulso
+  }
+  const dist60 = distanciaM * Math.pow(3600 / duracionSeg, 1 / 1.06);
+  return { ritmoSegKm: Math.round(3600 / (dist60 / 1000)), pulso, pulsoVentana: pulsoVentana ? Math.round(pulsoVentana) : null,
+           factor: Math.round(factor * 100) / 100, tIni: Math.round(tIni), tFin: Math.round(tFin) };
+}
+// distancia de carrera estándar (±3 %) y pulso de esfuerzo fuerte → se ofrece (o se tilda) solo
+function pareceCarrera(distanciaM, pulsoPromedio) {
+  const dist = DIST_CARRERA_M.some(d => Math.abs(distanciaM - d) / d <= 0.03);
+  return dist && (!zonas.umbralPulso || !pulsoPromedio || pulsoPromedio >= zonas.umbralPulso * 0.95);
+}
+// fecha del umbral protegido vigente (test, carrera o carga manual); null = automático o sin fecha
+function fechaReferenciaUmbral() {
+  const o = zonas.origenUmbral;
+  if (o === 'test30' || o === 'test30_parcial') return zonas.testUmbralFecha || null;
+  if (o === 'carrera') return zonas.carreraUmbralFecha || null;
+  if (o === 'manual') return zonas.manualFecha || null;
+  return null;
+}
+function textoOrigenUmbral() {
+  const o = zonas.origenUmbral;
+  return o === 'carrera' ? 'carrera' : o === 'manual' ? 'carga manual' : (o === 'test30' || o === 'test30_parcial') ? 'test de umbral' : 'umbral';
+}
+// recalcula umbral de la sesión, TSS e IF con las zonas vigentes, y corrige su entrada en la Forma
+function recalcularCargaSesion(s, puntos) {
+  s.umbralPulso = zonas.umbralPulso || null;
+  const c = calcularTSSSesion(puntos, s.duracionSeg, s.ritmoPromedioSegKm, s.pulsoPromedio);
+  s.tss = c.tss; s.tssMetodo = c.metodo; s.ngpSegKm = c.ngpSegKm; s.intensidadIF = c.if;
+  const reg = lsGet(K_FORMA_COMPARTIDA, []), r = reg.find(x => x.id === s.id);
+  if (r) { r.tss = s.tss; lsSet(K_FORMA_COMPARTIDA, reg); }
+}
+// Marca la sesión como carrera y, si no hay un umbral protegido MÁS NUEVO, lo reemplaza.
+// Devuelve la sesión actualizada (para que el guardado en curso use el TSS nuevo).
+function aplicarUmbralCarrera(sesionId, puntosCompletos, forzar) {
+  const sesiones = bigGet(K_SESIONES, []);
+  const s = sesiones.find(x => x.id === sesionId);
+  if (!s) return { aplicado: false, motivo: 'no encontré la sesión.' };
+  const puntos = puntosCompletos || puntosDeSesion(s);
+  const est = estimarUmbralCarrera(puntos, s.duracionSeg, s.distanciaM);
+  s.esCarrera = true;
+  s.umbralCarreraEst = est.error ? null : est;
+  s.umbralCarreraMotivo = null;
+  if (est.error) { s.umbralCarreraMotivo = 'No se pudo estimar el umbral: ' + est.error; bigSet(K_SESIONES, sesiones); return { aplicado: false, motivo: s.umbralCarreraMotivo, sesion: s }; }
+  const fechaSes = fechaLocalISO(s.inicioISO || s.fecha);
+  const ref = fechaReferenciaUmbral();
+  if (!forzar && ref && ref > fechaSes) {
+    s.umbralCarreraMotivo = 'No se aplicó: tu umbral actual (' + textoOrigenUmbral() + ' del ' + fechaCortaISO(ref) + ') es más nuevo que esta carrera.';
+    bigSet(K_SESIONES, sesiones);
+    return { aplicado: false, motivo: s.umbralCarreraMotivo, sesion: s, masReciente: true };
+  }
+  zonas.umbralPrevio = {
+    umbralRitmoSegKm: zonas.umbralRitmoSegKm || null, umbralPulso: zonas.umbralPulso || null, origenUmbral: zonas.origenUmbral || null,
+    testUmbralFecha: zonas.testUmbralFecha || null, carreraUmbralFecha: zonas.carreraUmbralFecha || null,
+    carreraSesionId: zonas.carreraSesionId || null, manualFecha: zonas.manualFecha || null,
+    sesionId: s.id, sesionAntes: { umbralPulso: s.umbralPulso, tss: s.tss, tssMetodo: s.tssMetodo, ngpSegKm: s.ngpSegKm, intensidadIF: s.intensidadIF }
+  };
+  zonas.umbralRitmoSegKm = est.ritmoSegKm;
+  if (est.pulso) zonas.umbralPulso = est.pulso;
+  zonas.origenUmbral = 'carrera';
+  zonas.carreraUmbralFecha = fechaSes;
+  zonas.carreraSesionId = s.id;
+  lsSet(K_ZONAS, zonas);
+  sincronizarUmbralesCompartidos();
+  recalcularCargaSesion(s, puntos);
+  bigSet(K_SESIONES, sesiones);
+  logBLE('Umbral desde carrera: ' + segAMMSS(est.ritmoSegKm) + '/km' + (est.pulso ? ' · ' + est.pulso + ' ppm' : ''), '#3fb950');
+  return { aplicado: true, sesion: s };
+}
+function deshacerUmbralCarrera() {
+  const P = zonas.umbralPrevio; if (!P) return false;
+  ['umbralRitmoSegKm', 'umbralPulso', 'origenUmbral', 'testUmbralFecha', 'carreraUmbralFecha', 'carreraSesionId', 'manualFecha'].forEach(k => {
+    if (P[k] == null) delete zonas[k]; else zonas[k] = P[k];
+  });
+  delete zonas.umbralPrevio;
+  lsSet(K_ZONAS, zonas);
+  sincronizarUmbralesCompartidos();
+  const sesiones = bigGet(K_SESIONES, []);
+  const s = sesiones.find(x => x.id === P.sesionId);
+  if (s) {
+    Object.assign(s, P.sesionAntes);
+    s.esCarrera = false; s.umbralCarreraMotivo = null;
+    bigSet(K_SESIONES, sesiones);
+    const reg = lsGet(K_FORMA_COMPARTIDA, []), r = reg.find(x => x.id === s.id);
+    if (r) { r.tss = s.tss; lsSet(K_FORMA_COMPARTIDA, reg); }
+  }
+  return true;
+}
+// Recuadro en el resumen post-sesión y en el detalle. enDetalle=false: solo aparece si hay algo
+// que decir (carrera aplicada/no aplicada, o la sesión parece carrera); en el detalle siempre se
+// ofrece para sesiones de 15 min a 2 h 30 con distancia (así se puede usar una carrera ya guardada).
+function renderUmbralCarrera(contId, cardId, s, enDetalle) {
+  const el = document.getElementById(contId); if (!el) return;
+  const txt = (r, p) => (r ? segAMMSS(r) + '/km' : '--') + (p ? ' · ' + p + ' ppm' : '');
+  const det = e => e ? ('Pulso: promedio del minuto ' + Math.round(e.tIni / 60) + ' al ' + Math.round(e.tFin / 60) +
+    (e.pulsoVentana ? ' (' + e.pulsoVentana + ' ppm' + (e.factor < 1 ? ', ×' + String(e.factor).replace('.', ',') + ' por ser una carrera corta' : '') + ')' : ' (sin datos de pulso)') +
+    '. Ritmo: lo que sostendrías 1 hora según tu tiempo.') : '';
+  const btn = (txtB, fn) => '<button class="btn" style="margin-top:8px;" onclick="' + fn + '">' + txtB + '</button>';
+  const fuente = zonas.origenUmbral === 'carrera' && zonas.carreraSesionId === s.id;
+  let html = '';
+  if (fuente) {
+    const P = zonas.umbralPrevio && zonas.umbralPrevio.sesionId === s.id ? zonas.umbralPrevio : null;
+    html = '<b>Umbral actualizado con esta carrera:</b> ' + txt(zonas.umbralRitmoSegKm, zonas.umbralPulso) +
+      (P ? ' (antes ' + txt(P.umbralRitmoSegKm, P.umbralPulso) + ')' : '') + '.<br>' +
+      '<span style="opacity:.75">' + det(s.umbralCarreraEst) + ' Las zonas, el TSS de esta sesión y los umbrales compartidos ya usan el valor nuevo.</span>' +
+      (P ? btn('Deshacer', "accionDeshacerUmbral('" + s.id + "')") : '');
+  } else if (s.esCarrera && s.umbralCarreraMotivo) {
+    html = '<b>Carrera.</b> ' + s.umbralCarreraMotivo +
+      (s.umbralCarreraEst ? '<br>Estimado: ' + txt(s.umbralCarreraEst.ritmoSegKm, s.umbralCarreraEst.pulso) + btn('Aplicar igual', "accionUmbralCarrera('" + s.id + "', true)") : '');
+  } else if (!(s.testUmbral && s.testUmbral.ritmoUmbralSegKm) && !s.pasadas && s.duracionSeg >= 900 && s.duracionSeg <= 9000 && s.distanciaM >= 2000) {
+    const parece = pareceCarrera(s.distanciaM, s.pulsoPromedio);
+    if (parece || enDetalle) html = (parece ? '<b>¿Fue una carrera?</b> ' : '¿Fue una carrera o un esfuerzo a fondo? ') +
+      'Usala para recalcular tu umbral de ritmo y pulso.' + btn('Sí, fue carrera: actualizar umbral', "accionUmbralCarrera('" + s.id + "', false)");
+  }
+  el.innerHTML = html;
+  const card = cardId ? document.getElementById(cardId) : el;
+  if (card) card.style.display = html ? '' : 'none';
+}
+function refrescarTrasUmbral(id) {
+  renderZonas();
+  const s = bigGet(K_SESIONES, []).find(x => x.id === id); if (!s) return;
+  if (sesionRecienGuardadaId === id && document.getElementById('overlayResumenPost').classList.contains('activa')) {
+    renderResumenSesion(s, 'resumenPostContenido');
+    renderUmbralCarrera('avisoUmbralPost', null, s, false);
+  }
+  if (sesionDetalleActual && sesionDetalleActual.id === id && document.getElementById('overlayDetalle').classList.contains('activa')) abrirDetalle(id);
+}
+function accionUmbralCarrera(id, forzar) {
+  const r = aplicarUmbralCarrera(id, null, forzar);
+  toast(r.aplicado ? 'Umbral actualizado: ' + segAMMSS(zonas.umbralRitmoSegKm) + '/km' + (zonas.umbralPulso ? ' · ' + zonas.umbralPulso + ' ppm' : '') : r.motivo);
+  refrescarTrasUmbral(id);
+}
+function accionDeshacerUmbral(id) {
+  if (deshacerUmbralCarrera()) toast('Umbral anterior restaurado');
+  refrescarTrasUmbral(id);
 }
 
 /* ============================================================
@@ -8324,9 +8548,10 @@ function renderZonas() {
   // que corría el auto-cálculo una sola vez, autoDesde quedaba pisado para siempre y el texto
   // decía "Auto-actualizado..." aunque después hubiera un umbral cargado a mano o medido.
   document.getElementById('estadoUmbral').textContent =
-    zonas.origenUmbral === 'test30' ? ('Medido con test de umbral (30 min, Friel) el ' + new Date(zonas.testUmbralFecha).toLocaleDateString('es-AR') + '.')
-    : zonas.origenUmbral === 'test30_parcial' ? ('Medido con test de umbral (parcial — se cortó antes de los 30 min) el ' + new Date(zonas.testUmbralFecha).toLocaleDateString('es-AR') + '. Repetilo completo cuando puedas para un dato más preciso.')
-    : zonas.origenUmbral === 'manual' ? 'Cargado manualmente.'
+    zonas.origenUmbral === 'test30' ? ('Medido con test de umbral (30 min, Friel) el ' + fechaCortaISO(zonas.testUmbralFecha) + '.')
+    : zonas.origenUmbral === 'test30_parcial' ? ('Medido con test de umbral (parcial — se cortó antes de los 30 min) el ' + fechaCortaISO(zonas.testUmbralFecha) + '. Repetilo completo cuando puedas para un dato más preciso.')
+    : zonas.origenUmbral === 'carrera' ? ('Estimado con la carrera del ' + fechaCortaISO(zonas.carreraUmbralFecha) + ' (pulso del minuto 10 al último km; ritmo equivalente a 1 hora). Se actualiza solo con cada carrera o test nuevo.')
+    : zonas.origenUmbral === 'manual' ? ('Cargado manualmente' + (zonas.manualFecha ? ' el ' + fechaCortaISO(zonas.manualFecha) : '') + '.')
     : zonas.autoDesde ? ('Auto-actualizado a partir de la sesión del ' + new Date(zonas.autoDesde).toLocaleDateString('es-AR') +
        (zonas.filtroRpeAplicado === false ? ' — usando TODOS los esfuerzos (no hay al menos 2 con RPE ' + RPE_MINIMO_MAXIMAL + '+), puede quedar subestimado' : ' — solo esfuerzos con RPE ' + RPE_MINIMO_MAXIMAL + '+'))
     : 'Todavía sin datos suficientes — cargá un umbral manual, hacé el test de 30 min, o importá un TCX.';
@@ -8778,6 +9003,7 @@ function renderResumenSesion(s, contenedorId) {
 function mostrarResumenPost(s) {
   sesionRecienGuardadaId = s.id;
   renderResumenSesion(s, 'resumenPostContenido');
+  renderUmbralCarrera('avisoUmbralPost', null, s, false); // v119
   marcarAnimoSeleccionado('animoPostRow', null);
   document.getElementById('rpePostSlider').value = 5;
   document.getElementById('lblRpePost').textContent = '--';
@@ -8815,6 +9041,7 @@ function abrirDetalle(id) {
   document.getElementById('lblRpeDetalle').textContent = s.rpe != null ? s.rpe : '--';
   document.getElementById('descRpeDetalle').textContent = RPE_DESCRIPCIONES[s.rpe || 5];
   renderTestVmaDetalle(s);
+  renderUmbralCarrera('umbralCarreraDetalle', 'cardUmbralCarreraDetalle', s, true); // v119
   document.getElementById('overlayDetalle').classList.add('activa');
   document.getElementById('overlayDetalle').scrollTop = 0;
   requestAnimationFrame(() => dibujarGraficasDetalle(s));
@@ -9387,6 +9614,8 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     '</div>' +
     '<button class="btn primario" id="btnUsarTCX">Usar para sembrar zonas (mejores esfuerzos)</button>' +
     (conPendiente ? '<div class="estado-conexion" style="margin:6px 0;">Trae altura: el TSS se ajusta por las subidas y bajadas.</div>' : '') +
+    '<label style="display:flex; gap:8px; align-items:flex-start; margin:8px 0; font-size:13px; line-height:1.4;"><input type="checkbox" id="chkCarreraTCX"' +
+      (pareceCarrera(distanciaM, pulsoPromedio) ? ' checked' : '') + ' style="margin-top:3px;"> Fue una carrera o un esfuerzo a fondo: al guardarla, actualizar el umbral de ritmo y pulso con esta sesión</label>' +
     '<button class="btn" id="btnGuardarTCX">Guardar también como sesión en el historial</button>' +
     (rutaGPX ? '<button class="btn" id="btnGuardarRutaGPX">Guardar como recorrido virtual</button>' : '') +
     '</div>';
@@ -9445,9 +9674,16 @@ function mostrarImportacion(puntos, t0, nombreArchivo, modoImport, elevGanadaM, 
     }
     sesiones.push(sesion);
     bigSet(K_SESIONES, sesiones);
+    // v119: tildada "fue una carrera" → umbral desde esta carrera (antes de los mejores esfuerzos)
+    const chkCarrera = document.getElementById('chkCarreraTCX');
+    if (chkCarrera && chkCarrera.checked) {
+      const rc = aplicarUmbralCarrera(sesion.id, puntos, false);
+      if (rc.sesion) Object.assign(sesion, rc.sesion, { puntos: sesion.puntos });
+    }
     actualizarMejoresEsfuerzos({ id: sesion.id, fecha: sesion.fecha, duracionSeg: sesion.duracionSeg, puntos });
     if (!mantenerGarmin) actualizarFormaCompartida(sesion);
-    toast('Sesión importada y guardada · TSS ' + tss + (duplicadas.length ? ' (reemplazó la de Garmin en la Forma)' : '') + (mantenerGarmin ? ' (en la Forma queda la de Garmin)' : ''));
+    renderZonas();
+    toast('Sesión importada y guardada · TSS ' + sesion.tss + (duplicadas.length ? ' (reemplazó la de Garmin en la Forma)' : '') + (mantenerGarmin ? ' (en la Forma queda la de Garmin)' : ''));
     mostrarResumenPost(sesion);
   };
 }
