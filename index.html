@@ -235,7 +235,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v119</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v120</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -744,6 +744,14 @@
       <div class="estado-conexion" id="estadoUmbral" style="margin-top:8px;"></div>
     </div>
 
+    <div class="card">
+      <h2>Modelo de zonas</h2>
+      <div class="modo-btns" style="margin-bottom:0;">
+        <button id="btnVistaZonas5" onclick="setVistaZonas(5)">5 zonas</button>
+        <button id="btnVistaZonas7" onclick="setVistaZonas(7)">7 zonas (Friel)</button>
+      </div>
+      <div class="estado-conexion" id="txtVistaZonas"></div>
+    </div>
     <div class="card">
       <h2>Zonas de ritmo</h2>
       <table class="tabla-zonas" id="tablaZonasRitmo"></table>
@@ -3259,6 +3267,13 @@
        entrada en la Forma. Botón Deshacer; en el detalle de cualquier
        sesión de 15 min a 2 h 30, "Sí, fue carrera" para usar una ya
        guardada. Fechas del test en hora local (antes UTC).
+   v120: VISTA DE 5 O 7 ZONAS (pestaña Zonas, se recuerda). Con 7, la
+       Z5 se parte como Friel: pulso 5a 99–103 %, 5b 103–106 %, 5c 106 %+
+       del umbral; ritmo 5a 97–100 %, 5b 90–97 %, 5c <90 % del tiempo
+       umbral. Z1–Z4 iguales en las dos vistas (la Z4 pasa a llamarse
+       Subumbral). Solo visual: tablas, tiempo en zonas del informe,
+       zona y barra del HUD y cartel de la escena; la lógica interna
+       (pasadas, plan, colores de la animación) sigue con 5 zonas.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3318,7 +3333,42 @@ const HR_ZONAS = [
   { z: 4, label: 'Umbral',       min: 0.94, max: 0.99 },
   { z: 5, label: 'Anaeróbico',   min: 0.99, max: Infinity },
 ];
-const COLOR_ZONA = { 1: 'var(--z1)', 2: 'var(--z2)', 3: 'var(--z3)', 4: 'var(--z4)', 5: 'var(--z5)' };
+const COLOR_ZONA = { 1: 'var(--z1)', 2: 'var(--z2)', 3: 'var(--z3)', 4: 'var(--z4)', 5: 'var(--z5)', '5a': '#FF8A80', '5b': '#FF5A5F', '5c': '#C62828' };
+/* v120: vista de 7 zonas (Friel). Es SOLO de visualización: la lógica (pasadas, plan, animación,
+   colores de la escena) sigue usando las 5 zonas. Z1–Z4 tienen los mismos límites en las dos
+   vistas; la Z5 se parte en 5a (umbral), 5b (capacidad aeróbica / VO2máx) y 5c (anaeróbico).
+   Pulso como fracción del umbral; ritmo como fracción del ritmo umbral (más alto = más lento). */
+const HR_ZONAS_7 = [
+  { id: '1',  z: 1, label: 'Recuperación',       min: 0,    max: 0.85 },
+  { id: '2',  z: 2, label: 'Aeróbico',           min: 0.85, max: 0.89 },
+  { id: '3',  z: 3, label: 'Tempo',              min: 0.89, max: 0.94 },
+  { id: '4',  z: 4, label: 'Subumbral',          min: 0.94, max: 0.99 },
+  { id: '5a', z: 5, label: 'Umbral',             min: 0.99, max: 1.03 },
+  { id: '5b', z: 5, label: 'Capacidad aeróbica', min: 1.03, max: 1.06 },
+  { id: '5c', z: 5, label: 'Anaeróbico',         min: 1.06, max: Infinity },
+];
+const PACE_ZONAS_7 = [
+  { id: '1',  z: 1, label: 'Recuperación',       min: 1.29, max: Infinity },
+  { id: '2',  z: 2, label: 'Aeróbico',           min: 1.14, max: 1.29 },
+  { id: '3',  z: 3, label: 'Tempo',              min: 1.06, max: 1.14 },
+  { id: '4',  z: 4, label: 'Subumbral',          min: 1.00, max: 1.06 },
+  { id: '5a', z: 5, label: 'Umbral',             min: 0.97, max: 1.00 },
+  { id: '5b', z: 5, label: 'Capacidad aeróbica', min: 0.90, max: 0.97 },
+  { id: '5c', z: 5, label: 'Anaeróbico',         min: 0,    max: 0.90 },
+];
+const COLORES_HEX_ZONA7 = { '5a': '#FF8A80', '5b': '#FF5A5F', '5c': '#C62828' };
+let vistaZonas = 5; // se lee del almacenamiento junto con las zonas
+function zonasPulsoVista() { return vistaZonas === 7 ? HR_ZONAS_7 : HR_ZONAS.map(d => ({ ...d, id: String(d.z) })); }
+function zonasRitmoVista() { return vistaZonas === 7 ? PACE_ZONAS_7 : PACE_ZONAS.map(d => ({ ...d, id: String(d.z) })); }
+function zonaVistaPulso(pulso, umbral) {
+  if (!pulso || !umbral) return null;
+  const r = pulso / umbral; return zonasPulsoVista().find(d => r >= d.min && r < d.max) || null;
+}
+function zonaVistaRitmo(ritmo, umbral) {
+  if (!ritmo || !umbral) return null;
+  const r = ritmo / umbral; return zonasRitmoVista().find(d => r >= d.min && r < d.max) || null;
+}
+function colorZonaVista(d) { return COLOR_ZONA[d.id] || COLOR_ZONA[d.z]; }
 
 /* ---------------- UTILIDADES ---------------- */
 function lsGet(key, def) {
@@ -3815,6 +3865,18 @@ let vt = 0, replaySpeed = 2, replayPlaying = false, replayRAF = null, replayLast
 let repRoadCtx = null;
 
 let zonas = lsGet(K_ZONAS, { umbralRitmoSegKm: null, umbralPulso: null });
+const K_VISTA_ZONAS = LS_PREFIX + 'vistaZonas'; // v120: 5 o 7
+vistaZonas = lsGet(K_VISTA_ZONAS, 5) === 7 ? 7 : 5;
+function setVistaZonas(n) {
+  vistaZonas = n === 7 ? 7 : 5; lsSet(K_VISTA_ZONAS, vistaZonas);
+  renderZonas(); actualizarCintaZonas();
+}
+// barra de colores del HUD: 5 o 7 tramos según la vista
+function actualizarCintaZonas() {
+  const el = document.querySelector('.cinta-ritmo'); if (!el) return;
+  const lista = zonasPulsoVista(), n = lista.length;
+  el.style.background = 'linear-gradient(90deg, ' + lista.map((d, i) => colorZonaVista(d) + ' ' + (i * 100 / n) + '% ' + ((i + 1) * 100 / n) + '%').join(', ') + ')';
+}
 let perfil = lsGet(K_PERFIL, { pesoKg: null }); // v81
 // Fallback a entrenamiento_perfil (Plan de Ciclos) si Correr todavía no tiene peso propio —
 // mismo criterio que el fallback de umbrales (v73): no persiste a K_PERFIL, solo en memoria para
@@ -6380,8 +6442,15 @@ function dibujarHudEscena(ctx, w, h) {
   if (z) {
     ctx.shadowBlur = 0;
     ctx.font = '700 12px ' + sans;
-    const zt = 'Z' + z, zw = ctx.measureText(zt).width + 12;
-    ctx.fillStyle = COLORES_ZONA_HEX[z - 1];
+    // v120: con la vista de 7 zonas, el cartel dice Z5a/Z5b/Z5c
+    let id = String(z);
+    if (z === 5 && vistaZonas === 7) {
+      const zv = (zonas.umbralPulso && actual.pulso) ? zonaVistaPulso(actual.pulso, zonas.umbralPulso)
+        : (actual.velocidad > 0.3 ? zonaVistaRitmo(1000 / actual.velocidad, zonas.umbralRitmoSegKm) : null);
+      if (zv) id = zv.id;
+    }
+    const zt = 'Z' + id, zw = ctx.measureText(zt).width + 12;
+    ctx.fillStyle = COLORES_HEX_ZONA7[id] || COLORES_ZONA_HEX[z - 1];
     ctx.beginPath(); ctx.roundRect(w - 12 - zw, 51, zw, 17, 8.5); ctx.fill();
     ctx.fillStyle = '#0A0D10'; ctx.textAlign = 'center'; ctx.fillText(zt, w - 12 - zw / 2, 64);
     xp = w - 12 - zw - 6;
@@ -7764,8 +7833,11 @@ function tick() {
   if (zonas.umbralPulso && pulso) zonaActual = zonaPorPulso(pulso, zonas.umbralPulso);
   else if (zonas.umbralRitmoSegKm && ritmoSegKm) zonaActual = zonaPorRitmo(ritmoSegKm, zonas.umbralRitmoSegKm);
   if (zonaActual) {
-    document.getElementById('zonaActualTxt').textContent = 'Z' + zonaActual + ' — ' + PACE_ZONAS.find(p => p.z === zonaActual).label;
-    document.getElementById('cintaMarker').style.left = (zonaActual - 1) * 20 + 10 + '%';
+    // v120: el texto y la marca siguen la vista elegida (5 o 7 zonas); la lógica sigue con zonaActual 1–5
+    const zv = (zonas.umbralPulso && pulso) ? zonaVistaPulso(pulso, zonas.umbralPulso) : zonaVistaRitmo(ritmoSegKm, zonas.umbralRitmoSegKm);
+    const lista = zonasPulsoVista(), idx = zv ? lista.findIndex(d => d.id === zv.id) : zonaActual - 1;
+    document.getElementById('zonaActualTxt').textContent = zv ? ('Z' + zv.id + ' — ' + zv.label) : ('Z' + zonaActual + ' — ' + PACE_ZONAS.find(p => p.z === zonaActual).label);
+    document.getElementById('cintaMarker').style.left = (idx + 0.5) * 100 / lista.length + '%';
   } else {
     document.getElementById('zonaActualTxt').textContent = 'Cargá un umbral en "Zonas" para verla';
   }
@@ -8556,16 +8628,24 @@ function renderZonas() {
        (zonas.filtroRpeAplicado === false ? ' — usando TODOS los esfuerzos (no hay al menos 2 con RPE ' + RPE_MINIMO_MAXIMAL + '+), puede quedar subestimado' : ' — solo esfuerzos con RPE ' + RPE_MINIMO_MAXIMAL + '+'))
     : 'Todavía sin datos suficientes — cargá un umbral manual, hacé el test de 30 min, o importá un TCX.';
 
+  // v120: selector 5 / 7 zonas
+  document.getElementById('btnVistaZonas5').classList.toggle('sel', vistaZonas === 5);
+  document.getElementById('btnVistaZonas7').classList.toggle('sel', vistaZonas === 7);
+  document.getElementById('txtVistaZonas').textContent = vistaZonas === 7
+    ? 'La zona 5 se divide en 5a (umbral: donde cae una carrera de una hora), 5b (capacidad aeróbica, VO2máx) y 5c (anaeróbico). Se ve así en Zonas, en el informe de cada sesión y en la pantalla en vivo.'
+    : 'Z1 a Z5. Con 7 zonas, la Z5 se divide en 5a, 5b y 5c (umbral, VO2máx y anaeróbico).';
+  actualizarCintaZonas();
+
   const tRitmo = document.getElementById('tablaZonasRitmo');
   if (!zonas.umbralRitmoSegKm) {
     tRitmo.innerHTML = '<tr><td class="vacio">Sin umbral de ritmo todavía</td></tr>';
   } else {
     let html = '<tr><th>Zona</th><th>Ritmo /km</th></tr>';
-    PACE_ZONAS.forEach(zd => {
+    zonasRitmoVista().forEach(zd => { // v120: 5 o 7 zonas
       const rMax = zd.max === Infinity ? null : zonas.umbralRitmoSegKm * zd.max;
       const rMin = zonas.umbralRitmoSegKm * zd.min;
-      const txt = zd.max === Infinity ? ('más lento que ' + segAMMSS(rMin)) : (segAMMSS(rMax) + ' – ' + segAMMSS(rMin));
-      html += '<tr><td><span class="chip-z" style="background:' + COLOR_ZONA[zd.z] + '"></span>Z' + zd.z + ' ' + zd.label + '</td><td>' + txt + '</td></tr>';
+      const txt = zd.max === Infinity ? ('más lento que ' + segAMMSS(rMin)) : zd.min === 0 ? ('más rápido que ' + segAMMSS(rMax)) : (segAMMSS(rMax) + ' – ' + segAMMSS(rMin));
+      html += '<tr><td><span class="chip-z" style="background:' + colorZonaVista(zd) + '"></span>Z' + zd.id + ' ' + zd.label + '</td><td>' + txt + '</td></tr>';
     });
     tRitmo.innerHTML = html;
   }
@@ -8575,11 +8655,8 @@ function renderZonas() {
     tPulso.innerHTML = '<tr><td class="vacio">Sin umbral de pulso todavía</td></tr>';
   } else {
     let html = '<tr><th>Zona</th><th>bpm</th></tr>';
-    HR_ZONAS.forEach(zd => {
-      const hMin = Math.round(zonas.umbralPulso * zd.min);
-      const hMax = zd.max === Infinity ? null : Math.round(zonas.umbralPulso * zd.max);
-      const txt = zd.max === Infinity ? (hMin + '+') : (hMin + ' – ' + hMax);
-      html += '<tr><td><span class="chip-z" style="background:' + COLOR_ZONA[zd.z] + '"></span>Z' + zd.z + ' ' + zd.label + '</td><td>' + txt + '</td></tr>';
+    zonasPulsoVista().forEach(zd => { // v120: mismos rangos enteros que el informe de la sesión
+      html += '<tr><td><span class="chip-z" style="background:' + colorZonaVista(zd) + '"></span>Z' + zd.id + ' ' + zd.label + '</td><td>' + rangoZonaPulsoTexto(zd, zonas.umbralPulso).replace(' ppm', '') + '</td></tr>';
     });
     tPulso.innerHTML = html;
   }
@@ -8814,7 +8891,7 @@ function tiempoEnZonasPulso(s) {
   const umbral = s.umbralPulso || zonas.umbralPulso;
   if (!umbral) return { sinUmbral: true };
   const pts = puntosDeSesion(s);
-  const seg = [0, 0, 0, 0, 0, 0];
+  const seg = {}; // v120: por id de zona ('1'…'5' o '1'…'4','5a','5b','5c')
   let total = 0;
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i];
@@ -8822,15 +8899,15 @@ function tiempoEnZonasPulso(s) {
     // la app toma un dato por segundo: un hueco de más de 5 s es una pausa, y cuenta solo 1 s
     const hueco = i + 1 < pts.length ? pts[i + 1].t - p.t : 1;
     const dt = hueco > 0 && hueco <= 5 ? hueco : 1;
-    const z = zonaPorPulso(p.pulso, umbral);
-    if (z) { seg[z] += dt; total += dt; }
+    const zv = zonaVistaPulso(p.pulso, umbral);
+    if (zv) { seg[zv.id] = (seg[zv.id] || 0) + dt; total += dt; }
   }
   if (!total) return null;
   return { seg, total, umbral, umbralActual: !s.umbralPulso };
 }
 function rangoZonaPulsoTexto(zdef, umbral) {
   const desde = Math.ceil(zdef.min * umbral), hasta = Math.ceil(zdef.max * umbral) - 1;
-  if (zdef.z === 1) return '< ' + Math.ceil(zdef.max * umbral) + ' ppm';
+  if (zdef.min === 0) return '< ' + Math.ceil(zdef.max * umbral) + ' ppm';
   if (zdef.max === Infinity) return '≥ ' + desde + ' ppm';
   return desde + ' - ' + hasta + ' ppm';
 }
@@ -8838,15 +8915,15 @@ function htmlTiempoEnZonas(s) {
   const r = tiempoEnZonasPulso(s);
   if (!r) return '';
   if (r.sinUmbral) return '<div class="estado-conexion" style="margin-top:10px;">Para ver el tiempo en zonas de pulso, cargá tu umbral de pulso en la pestaña Zonas.</div>';
-  const filas = HR_ZONAS.slice().reverse().map(zdef => {
-    const t = r.seg[zdef.z], pct = Math.round(t / r.total * 100);
+  const filas = zonasPulsoVista().slice().reverse().map(zdef => {
+    const t = r.seg[zdef.id] || 0, pct = Math.round(t / r.total * 100);
     return '<div style="margin:12px 0;">' +
       '<div style="display:flex; justify-content:space-between; align-items:baseline; gap:8px;">' +
-        '<div><b>Zona ' + zdef.z + '</b><div style="color:var(--muted); font-size:.9rem;">' + rangoZonaPulsoTexto(zdef, r.umbral) + ' · ' + zdef.label + '</div></div>' +
+        '<div><b>Zona ' + zdef.id + '</b><div style="color:var(--muted); font-size:.9rem;">' + rangoZonaPulsoTexto(zdef, r.umbral) + ' · ' + zdef.label + '</div></div>' +
         '<div style="font-family:var(--mono); white-space:nowrap;">' + segAHMS(Math.round(t)) + ' <span style="color:var(--muted); display:inline-block; min-width:3.2em; text-align:right;">' + pct + '%</span></div>' +
       '</div>' +
       '<div style="height:8px; border-radius:4px; background:var(--borde); margin-top:6px; overflow:hidden;">' +
-        '<div style="height:100%; width:' + pct + '%; background:' + COLOR_ZONA[zdef.z] + '; border-radius:4px;"></div>' +
+        '<div style="height:100%; width:' + pct + '%; background:' + colorZonaVista(zdef) + '; border-radius:4px;"></div>' +
       '</div></div>';
   }).join('');
   return '<div style="margin-top:16px;">' +
