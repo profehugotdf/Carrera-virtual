@@ -39,6 +39,19 @@
   header .titulowrap{display:flex; align-items:baseline;}
 
   main{padding:14px 14px 24px;}
+  /* v116: pasadas */
+  .ps-bloque{display:grid; grid-template-columns:52px 1fr 1fr; gap:6px; align-items:center; padding:8px 0; border-top:1px solid var(--borde);}
+  .ps-bloque select, .ps-bloque input{padding:6px; margin:0;}
+  .ps-bloque .ps-x{justify-self:end; padding:6px 12px;}
+  #tilePasadas{border:2px solid var(--borde); border-radius:14px; padding:10px 12px; margin:10px 0; background:var(--panel2, #161b22);}
+  #tilePasadas .ps-cab{font-size:13px; letter-spacing:.5px; color:var(--muted); display:flex; justify-content:space-between; gap:8px;}
+  #tilePasadas .ps-grande{display:flex; justify-content:space-between; align-items:baseline; gap:10px; margin:4px 0;}
+  #tilePasadas .ps-num{font-family:var(--mono, monospace); font-size:44px; font-weight:700; line-height:1.05;}
+  #tilePasadas .ps-sub{font-size:13px; color:var(--muted);}
+  #tilePasadas.ok{border-color:#3fb950;} #tilePasadas.ok .ps-estado{color:#3fb950;}
+  #tilePasadas.lento{border-color:#f85149;} #tilePasadas.lento .ps-estado{color:#ff7b72;}
+  #tilePasadas.rapido{border-color:#d29922;} #tilePasadas.rapido .ps-estado{color:#e3b341;}
+  #tilePasadas.recup{border-color:#58a6ff;}
   /* v115: barra fija de sesión (largar sin scrollear) — solo en la pantalla en vivo */
   #barraSesion{position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--bg); border-top:1px solid var(--borde);
     padding:8px 12px calc(8px + env(safe-area-inset-bottom)); display:none; box-shadow:0 -6px 18px rgba(0,0,0,.35);}
@@ -213,7 +226,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v115</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v116</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -417,6 +430,27 @@
       <input type="file" id="inputPlanCarrera" accept=".json,application/json" style="display:none;" onchange="importarPlanJSON(event)">
     </div>
 
+    <!-- v116: sesión de pasadas -->
+    <div class="card" id="cardPasadas">
+      <h2>Pasadas</h2>
+      <div class="estado-conexion" style="margin-bottom:8px;">Series con el ritmo de un km de tu plan de carrera (o uno a mano) y recuperación hasta una zona de pulso o por tiempo. La app cambia sola de pasada a recuperación y te avisa con voz y pitidos.</div>
+      <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="chkPasadas" style="width:auto;" onchange="psDesdeForm()"> Hacer pasadas en la próxima sesión</label>
+      <div style="display:flex; gap:6px; flex-wrap:wrap; margin:8px 0;">
+        <button class="btn chico" onclick="psPlantilla(1)">1×km1 · 2×km5 · 3×km10 · recup Z2</button>
+        <button class="btn chico" onclick="psPlantilla(2)">5×km1 · recup Z1</button>
+      </div>
+      <div id="psBloques"></div>
+      <button class="btn chico" onclick="psAgregarBloque()" style="margin-top:6px;">+ Agregar bloque</button>
+      <div style="display:flex; gap:8px; margin-top:8px;">
+        <div style="flex:1;"><label>Entrada en calor (min)</label><input type="number" id="psCalent" min="0" step="1" value="0" oninput="psDesdeForm()"></div>
+        <div style="flex:1;"><label>Tolerancia (± s/km)</label><input type="number" id="psTol" min="2" step="1" value="8" oninput="psDesdeForm()"></div>
+        <div style="flex:1;"><label>Aviso dentro de la pasada</label><select id="psAviso" onchange="psDesdeForm()">
+          <option value="0">No</option><option value="100">cada 100 m</option><option value="200">cada 200 m</option><option value="400">cada 400 m</option><option value="500">cada 500 m</option>
+        </select></div>
+      </div>
+      <div class="estado-conexion" id="psResumen" style="margin-top:8px;"></div>
+    </div>
+
     <div class="card">
       <h2>Fantasma (opcional)</h2>
       <label>Corré contra una sesión anterior</label>
@@ -495,6 +529,17 @@
     <div class="card">
       <h2>Sesión en vivo</h2>
       <div class="cinta-ritmo"><div class="cinta-marker" id="cintaMarker" style="left:50%;"></div></div>
+      <!-- v116: pasadas en vivo -->
+      <div id="tilePasadas" style="display:none;">
+        <div class="ps-cab"><span id="psCab">PASADA</span><span id="psCab2"></span></div>
+        <div class="ps-grande"><span class="ps-num" id="psNumIzq">--</span><span class="ps-num ps-estado" id="psNumDer">--</span></div>
+        <div class="ps-grande" style="margin:0;"><span class="ps-sub" id="psSubIzq"></span><span class="ps-sub ps-estado" id="psSubDer"></span></div>
+        <div class="ps-sub" id="psLinea" style="margin-top:4px;"></div>
+        <div style="display:flex; gap:8px; margin-top:8px;">
+          <button class="btn chico" onclick="psSiguiente()" style="flex:1;">Siguiente ▸</button>
+        </div>
+        <div class="ps-sub" id="psResultados" style="margin-top:6px; font-family:var(--mono, monospace);"></div>
+      </div>
 
       <div class="hud-grid">
         <div class="hud-item grande ritmo ritmo-full" id="tileRitmo">
@@ -3148,6 +3193,22 @@
          en carrera) y la pantalla va a "Sesión en vivo".
        - En sesión al aire libre: si el GPS lleva 30 s sin señal,
          vibración + pitido + voz "Sin señal de GPS", repite cada 60 s.
+   v116: PASADAS (al aire libre, también sirve en cinta/sensor). Tarjeta
+       "Pasadas": bloques de N × 1000/500/400/200/100 m con el ritmo de un
+       km del plan de carrera (ritmo medio de ese km) o a mano, y su
+       recuperación hasta Z1 / hasta Z2 (zonas de Correr sobre el umbral
+       de pulso: Z2 ≤ ceil(0,89·U)−1) o por tiempo; entrada en calor,
+       tolerancia, aviso por voz dentro de la pasada cada 100-500 m, y
+       dos ejemplos de un toque. En la sesión, tile grande arriba de los
+       datos: en pasada, metros que faltan y ritmo medio de la pasada con
+       color (verde / rojo lento / ámbar rápido) y segundos adelante o
+       atrás; en recuperación, el pulso contra el límite. Cuenta 3-2-1
+       con pitidos, fin de pasada con tiempo interpolado al metro exacto
+       y resultado por voz; recuperación por zona: 5 s seguidos en zona,
+       mínimo 30 s (sin pulso o sin umbral: 90 s). "Siguiente ▸" adelanta
+       (corta la pasada en curso). Con pasadas, el plan de carrera no
+       corre. Resultados en la sesión (s.pasadas), en el informe y en el
+       punto de recuperación (v104).
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3952,6 +4013,7 @@ function planCarreraDesdeForm(rearmar, editado) {
   };
   lsSet(K_PLAN_CARRERA, planCarrera);
   renderPlanCarrera(rearmar);
+  if (typeof psRenderBloques === 'function' && document.getElementById('psBloques')) psRenderBloques(); // v116
 }
 function actualizarEtiquetasProgresiva(ritmo, prog, forma) {
   const c = ritmo ? Math.round(Math.abs(cambioProgresivo(ritmo, prog))) : null;
@@ -4230,6 +4292,249 @@ function exportarPlanFIT() {
   const P = agrupar ? planAgrupadoPorKm(planCarrera) : planCarrera, nombre = String(P.distKm).replace('.', ',') + 'k ' + segAHMS(Math.round(tiempoTotalPlan(P)));
   descargarBlob(new Blob([generarWorkoutFIT(P, nombre)], { type: 'application/octet-stream' }), nombreArchivoPlan('fit'));
   toast(agrupar ? 'Garmin admite hasta 50 pasos: el entrenamiento va por km' : 'Entrenamiento para Garmin descargado');
+}
+/* ============================================================
+   v116: PASADAS
+   Configuración: bloques de N pasadas de 1000/500/400/200/100 m, cada uno con el ritmo de un km del
+   plan de carrera (ritmo medio de ese km, aunque el plan esté en tramos más cortos) o a mano, y su
+   recuperación: hasta zona 1 o 2 de pulso (zonas de Correr sobre el umbral de pulso) o por tiempo.
+   En la sesión: entrada en calor opcional → cuenta regresiva → pasada (termina sola al cubrir la
+   distancia; el tiempo se interpola al metro exacto) → recuperación (termina con 5 s seguidos en la
+   zona, mínimo 30 s; sin pulso, 90 s) → … El tile de arriba de "Sesión en vivo" muestra, en grande,
+   lo que falta y el ritmo medio de la pasada con color (verde dentro de la tolerancia, rojo lento,
+   ámbar rápido), o el pulso durante la recuperación. "Siguiente ▸" adelanta la etapa.
+   ============================================================ */
+const K_PASADAS = LS_PREFIX + 'pasadas';
+let pasadasCfg = lsGet(K_PASADAS, null) || { usar: false, calentMin: 0, tolSeg: 8, avisoCadaM: 0, bloques: [] };
+let pasEstado = null;
+const PS_DISTANCIAS = [1000, 500, 400, 200, 100];
+function psRitmoKmPlan(km) {
+  if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) return null;
+  const pk = planAgrupadoPorKm(planCarrera).parciales;
+  return pk[Math.min(pk.length, Math.max(1, km)) - 1] || null;
+}
+function psKmsPlan() { return planCarrera && planCarrera.distKm ? Math.ceil(planCarrera.distKm) : 0; }
+function psObjetivo(b) { return b.fuente === 'manual' ? b.ritmoManual : psRitmoKmPlan(b.km); }
+// límite de pulso de una zona: el pulso está en la zona z o por debajo si pulso <= límite
+function psLimiteZona(z) {
+  const U = zonas.umbralPulso; if (!U) return null;
+  const zd = HR_ZONAS.find(x => x.z === z); return Math.ceil(U * zd.max) - 1;
+}
+function psTextoRecup(b) {
+  if (b.recup === 'tiempo') return segAMMSS(b.recupSeg || 90) + ' de recuperación';
+  const z = b.recup === 'z1' ? 1 : 2, lim = psLimiteZona(z);
+  return 'recuperar hasta Z' + z + (lim ? ' (≤ ' + lim + ' ppm)' : '');
+}
+function psGuardar() { lsSet(K_PASADAS, pasadasCfg); }
+function psDesdeForm() {
+  pasadasCfg.usar = document.getElementById('chkPasadas').checked;
+  pasadasCfg.calentMin = Math.max(0, parseInt(document.getElementById('psCalent').value, 10) || 0);
+  pasadasCfg.tolSeg = Math.max(2, parseInt(document.getElementById('psTol').value, 10) || 8);
+  pasadasCfg.avisoCadaM = parseInt(document.getElementById('psAviso').value, 10) || 0;
+  psGuardar(); psRenderResumen();
+}
+function psEdit(i, campo, valor) {
+  const b = pasadasCfg.bloques[i]; if (!b) return;
+  if (campo === 'n') b.n = Math.max(1, Math.min(40, parseInt(valor, 10) || 1));
+  else if (campo === 'dist') b.dist = parseInt(valor, 10);
+  else if (campo === 'fuente') { if (valor === 'manual') { b.fuente = 'manual'; if (!b.ritmoManual) b.ritmoManual = psRitmoKmPlan(b.km || 1) || 360; } else { b.fuente = 'km'; b.km = parseInt(valor.slice(3), 10); } }
+  else if (campo === 'ritmoManual') { const v = textoASeg(valor); if (v) b.ritmoManual = v; }
+  else if (campo === 'recup') b.recup = valor;
+  else if (campo === 'recupSeg') b.recupSeg = Math.max(10, parseInt(valor, 10) || 90);
+  psGuardar(); psRenderBloques();
+}
+function psAgregarBloque() {
+  pasadasCfg.bloques.push({ n: 3, dist: 1000, fuente: psKmsPlan() ? 'km' : 'manual', km: 1, ritmoManual: psRitmoKmPlan(1) || 360, recup: 'z2', recupSeg: 90 });
+  psGuardar(); psRenderBloques();
+}
+function psQuitarBloque(i) { pasadasCfg.bloques.splice(i, 1); psGuardar(); psRenderBloques(); }
+function psPlantilla(n) {
+  const k = Math.max(1, psKmsPlan()), km = x => Math.min(k, x);
+  const base = { dist: 1000, fuente: psKmsPlan() ? 'km' : 'manual', ritmoManual: 360, recupSeg: 90 };
+  pasadasCfg.bloques = n === 1
+    ? [Object.assign({}, base, { n: 1, km: km(1), recup: 'z2' }), Object.assign({}, base, { n: 2, km: km(5), recup: 'z2' }), Object.assign({}, base, { n: 3, km: km(10), recup: 'z2' })]
+    : [Object.assign({}, base, { n: 5, km: 1, recup: 'z1' })];
+  pasadasCfg.usar = true; document.getElementById('chkPasadas').checked = true;
+  psGuardar(); psRenderBloques();
+}
+function psRenderBloques() {
+  const kms = psKmsPlan(), cont = document.getElementById('psBloques');
+  cont.innerHTML = pasadasCfg.bloques.map((b, i) => {
+    let fuentes = '';
+    for (let k = 1; k <= kms; k++) fuentes += '<option value="km:' + k + '"' + (b.fuente === 'km' && b.km === k ? ' selected' : '') + '>km ' + k + ' · ' + segAMMSS(psRitmoKmPlan(k)) + '</option>';
+    fuentes += '<option value="manual"' + (b.fuente === 'manual' ? ' selected' : '') + '>ritmo a mano</option>';
+    return '<div class="ps-bloque">' +
+      '<input type="number" min="1" max="40" value="' + b.n + '" onchange="psEdit(' + i + ',\'n\',this.value)" title="Cantidad">' +
+      '<select onchange="psEdit(' + i + ',\'dist\',this.value)">' + PS_DISTANCIAS.map(d => '<option value="' + d + '"' + (b.dist === d ? ' selected' : '') + '>× ' + (d === 1000 ? '1 km' : d + ' m') + '</option>').join('') + '</select>' +
+      '<select onchange="psEdit(' + i + ',\'fuente\',this.value)">' + fuentes + '</select>' +
+      (b.fuente === 'manual' ? '<span class="ps-sub">ritmo /km</span><input type="text" inputmode="numeric" value="' + segAMMSS(b.ritmoManual) + '" onchange="psEdit(' + i + ',\'ritmoManual\',this.value)">' : '') +
+      '<span class="ps-sub">recuperación</span><select onchange="psEdit(' + i + ',\'recup\',this.value)"><option value="z2"' + (b.recup === 'z2' ? ' selected' : '') + '>recup hasta Z2</option><option value="z1"' + (b.recup === 'z1' ? ' selected' : '') + '>recup hasta Z1</option><option value="tiempo"' + (b.recup === 'tiempo' ? ' selected' : '') + '>recup por tiempo</option></select>' +
+      (b.recup === 'tiempo' ? '<input type="number" min="10" step="5" value="' + (b.recupSeg || 90) + '" onchange="psEdit(' + i + ',\'recupSeg\',this.value)" title="segundos">' : '') +
+      '<button class="btn chico ps-x" onclick="psQuitarBloque(' + i + ')">✕</button></div>';
+  }).join('') || '<div class="ps-sub">Sin bloques: usá un ejemplo de arriba o agregá uno.</div>';
+  psRenderResumen();
+}
+function psRenderResumen() {
+  const bl = pasadasCfg.bloques, n = bl.reduce((a, b) => a + b.n, 0), m = bl.reduce((a, b) => a + b.n * b.dist, 0);
+  let txt = n ? n + ' pasadas · ' + nombreDist(m) + ' en total' : 'Sin pasadas cargadas.';
+  if (bl.some(b => b.recup !== 'tiempo')) txt += zonas.umbralPulso ? ' · Z1 ≤ ' + psLimiteZona(1) + ' ppm, Z2 ≤ ' + psLimiteZona(2) + ' ppm (umbral ' + zonas.umbralPulso + ')'
+    : ' · ⚠️ sin umbral de pulso cargado en Zonas: la recuperación por zona va a ser de 90 s';
+  if (bl.some(b => b.fuente === 'km') && !psKmsPlan()) txt += ' · ⚠️ armá primero el plan de carrera para usar sus ritmos';
+  document.getElementById('psResumen').textContent = txt;
+}
+function cargarFormPasadas() {
+  document.getElementById('chkPasadas').checked = !!pasadasCfg.usar;
+  document.getElementById('psCalent').value = pasadasCfg.calentMin || 0;
+  document.getElementById('psTol').value = pasadasCfg.tolSeg || 8;
+  document.getElementById('psAviso').value = String(pasadasCfg.avisoCadaM || 0);
+  psRenderBloques();
+}
+// ---- motor ----
+function psExpandir(cfg) {
+  const fases = []; let total = 0;
+  cfg.bloques.forEach(b => { total += b.n; });
+  let k = 0;
+  cfg.bloques.forEach(b => {
+    const obj = psObjetivo(b);
+    for (let i = 0; i < b.n; i++) {
+      k++;
+      fases.push({ tipo: 'pasada', n: k, total, dist: b.dist, obj });
+      fases.push({ tipo: 'recup', recup: b.recup, seg: b.recupSeg || 90 });
+    }
+  });
+  fases.pop(); // sin recuperación después de la última
+  return fases;
+}
+function iniciarPasadasSesion(t0) {
+  pasEstado = null;
+  const tile = document.getElementById('tilePasadas');
+  if (!(pasadasCfg.usar && pasadasCfg.bloques.length) || modo === 'calibracion') { tile.style.display = 'none'; return false; }
+  const fases = psExpandir(pasadasCfg);
+  if (fases.some(f => f.tipo === 'pasada' && !f.obj)) { toast('Pasadas: falta el ritmo de algún bloque (armá el plan de carrera o poné el ritmo a mano)'); tile.style.display = 'none'; return false; }
+  pasEstado = { fases, i: -1, etapa: pasadasCfg.calentMin > 0 ? 'calent' : 'cuenta', t0: t0, d0: 0, cuentaHasta: t0 + 6, beepados: {},
+                resultados: [], tol: pasadasCfg.tolSeg || 8, avisoCadaM: pasadasCfg.avisoCadaM || 0, calentSeg: (pasadasCfg.calentMin || 0) * 60,
+                pSum: 0, pN: 0, pMax: 0, prevT: t0, prevD: 0, ultAviso: 0, bajoDesde: null };
+  tile.style.display = 'block';
+  desbloquearAudio();
+  if (pasEstado.etapa === 'cuenta') psAnunciarCuenta();
+  else hablar('Entrada en calor de ' + pasadasCfg.calentMin + ' minutos. Después arrancan las pasadas.');
+  return true;
+}
+function psProxPasada() { const E = pasEstado; for (let k = E.i + 1; k < E.fases.length; k++) if (E.fases[k].tipo === 'pasada') return E.fases[k]; return null; }
+function psAnunciarCuenta() {
+  const F = psProxPasada(); if (!F) return;
+  hablar('Pasada ' + F.n + ' de ' + F.total + '. ' + (F.dist === 1000 ? 'Mil metros' : F.dist + ' metros') + ' a ' + decirRitmo(F.obj) + '. Preparado.');
+}
+function psIrACuenta(t) { const E = pasEstado; E.etapa = 'cuenta'; E.cuentaHasta = t + 6; E.beepados = {}; psAnunciarCuenta(); }
+function psEmpezarPasada(t) {
+  const E = pasEstado;
+  E.i = E.fases.indexOf(psProxPasada());
+  E.etapa = 'pasada'; E.t0 = t; E.d0 = distanciaAcumM; E.prevT = t; E.prevD = 0; E.pSum = 0; E.pN = 0; E.pMax = 0; E.ultAviso = 0;
+  pitido(1, true); hablar('¡Ya!');
+}
+function psTerminarPasada(t, hecho, cortada) {
+  const E = pasEstado, F = E.fases[E.i];
+  // tiempo al metro exacto: interpolado entre la muestra anterior y esta
+  let tiempo = t - E.t0;
+  if (!cortada && hecho > E.prevD) tiempo = (E.prevT - E.t0) + (F.dist - E.prevD) / (hecho - E.prevD) * (t - E.prevT);
+  const dist = cortada ? Math.round(hecho) : F.dist, ritmo = dist > 0 ? tiempo / dist * 1000 : null;
+  const r = { n: F.n, dist, obj: F.obj, tiempo: Math.round(tiempo * 10) / 10, ritmo: ritmo ? Math.round(ritmo) : null,
+              pulsoMed: E.pN ? Math.round(E.pSum / E.pN) : null, pulsoMax: E.pMax || null, cortada: !!cortada };
+  E.resultados.push(r);
+  const dif = ritmo ? Math.round(ritmo - F.obj) : 0;
+  pitido(2, false);
+  if (ritmo) hablar('Pasada ' + F.n + '. ' + decirTiempo(tiempo) + '. Ritmo ' + decirRitmo(ritmo) + '. ' +
+    (Math.abs(dif) <= 2 ? 'Justo en el objetivo.' : Math.abs(dif) + ' segundos ' + (dif > 0 ? 'más lento' : 'más rápido') + ' que el objetivo.'));
+  logBLE('Pasada ' + F.n + ': ' + nombreDist(dist) + ' en ' + segAMMSS(tiempo) + (ritmo ? ' (' + segAMMSS(ritmo) + '/km, obj ' + segAMMSS(F.obj) + ')' : '') + (cortada ? ' — cortada' : ''), '#4FD8C4');
+  const sig = E.fases[E.i + 1];
+  if (!sig) { E.etapa = 'fin'; E.i = E.fases.length; setTimeout(() => hablar('Pasadas terminadas. Buen trabajo.'), 4500); return; }
+  E.i++; E.etapa = 'recup'; E.t0 = t; E.bajoDesde = null;
+  E.limite = sig.recup === 'tiempo' ? null : psLimiteZona(sig.recup === 'z1' ? 1 : 2);
+  setTimeout(() => { if (pasEstado && pasEstado.etapa === 'recup') hablar(sig.recup === 'tiempo' ? 'Recuperación de ' + decirTiempo(sig.seg) + '.' : 'Recuperá hasta zona ' + (sig.recup === 'z1' ? 1 : 2) + (E.limite ? ', ' + E.limite + ' pulsaciones.' : '.')); }, 4500);
+}
+function revisarPasadas(t, pulso) {
+  const E = pasEstado; if (!E) return;
+  const d = distanciaAcumM;
+  if (E.etapa === 'calent') { if (t - E.t0 >= E.calentSeg) psIrACuenta(t); }
+  else if (E.etapa === 'cuenta') {
+    const r = Math.ceil(E.cuentaHasta - t);
+    if (r <= 0) psEmpezarPasada(t);
+    else if (r <= 3 && !E.beepados[r]) { E.beepados[r] = true; pitido(1, false); }
+  } else if (E.etapa === 'pasada') {
+    const F = E.fases[E.i], hecho = d - E.d0;
+    if (pulso) { E.pSum += pulso; E.pN++; E.pMax = Math.max(E.pMax, pulso); }
+    if (hecho >= F.dist) psTerminarPasada(t, hecho, false);
+    else {
+      // aviso dentro de la pasada
+      if (E.avisoCadaM && hecho >= 60) {
+        const k = Math.floor(hecho / E.avisoCadaM);
+        if (k > E.ultAviso && F.dist - hecho > E.avisoCadaM / 3) {
+          E.ultAviso = k;
+          const rm = (t - E.t0) / hecho * 1000, dif = rm - F.obj;
+          hablar(k * E.avisoCadaM + '. Ritmo ' + decirRitmo(rm) + '. ' + (Math.abs(dif) <= E.tol ? 'Bien.' : dif > 0 ? 'Lento.' : 'Rápido.'));
+        }
+      }
+      E.prevT = t; E.prevD = hecho;
+    }
+  } else if (E.etapa === 'recup') {
+    const F = E.fases[E.i], trans = t - E.t0;
+    if (F.recup === 'tiempo') { if (trans >= F.seg) psIrACuenta(t); }
+    else if (!E.limite || !pulso) { if (trans >= 90) psIrACuenta(t); }        // sin umbral o sin pulso: 90 s
+    else if (trans >= 30 && pulso <= E.limite) { if (E.bajoDesde == null) E.bajoDesde = t; if (t - E.bajoDesde >= 5) psIrACuenta(t); }
+    else E.bajoDesde = null;
+  }
+  renderTilePasadas(t, pulso);
+}
+function psSiguiente() {
+  const E = pasEstado; if (!E || !sesionActiva) return;
+  const t = tiempoTranscurridoSeg();
+  if (E.etapa === 'calent' || E.etapa === 'recup') psIrACuenta(t);
+  else if (E.etapa === 'cuenta') psEmpezarPasada(t);
+  else if (E.etapa === 'pasada') psTerminarPasada(t, distanciaAcumM - E.d0, true);
+  renderTilePasadas(t, actual.pulso);
+}
+function psEstadoRitmo(rm, obj, tol) { return Math.abs(rm - obj) <= tol ? 'ok' : rm > obj ? 'lento' : 'rapido'; }
+function renderTilePasadas(t, pulso) {
+  const E = pasEstado, tile = document.getElementById('tilePasadas'); if (!E) return;
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+  let clase = '';
+  if (E.etapa === 'pasada') {
+    const F = E.fases[E.i], hecho = Math.max(0, distanciaAcumM - E.d0), trans = t - E.t0;
+    const rm = hecho > 30 ? trans / hecho * 1000 : null;
+    const difT = trans - hecho * F.obj / 1000; // + = atrás del objetivo a esta distancia
+    set('psCab', 'PASADA ' + F.n + '/' + F.total + ' · ' + nombreDist(F.dist)); set('psCab2', 'objetivo ' + segAMMSS(F.obj) + '/km');
+    set('psNumIzq', Math.max(0, Math.round(F.dist - hecho)) + ' m'); set('psNumDer', rm ? segAMMSS(rm) : '--:--');
+    set('psSubIzq', 'faltan · ⏱ ' + segAMMSS(trans)); set('psSubDer', rm ? (Math.abs(difT) < 1 ? 'en el objetivo' : Math.round(Math.abs(difT)) + ' s ' + (difT > 0 ? 'atrás' : 'adelante')) : 'ritmo de la pasada');
+    if (rm) clase = psEstadoRitmo(rm, F.obj, E.tol);
+    set('psLinea', 'Ritmo ahora ' + (actual.velocidad > 0.3 ? segAMMSS(1000 / actual.velocidad) : '--') + ' · pulso ' + (pulso || '--'));
+  } else if (E.etapa === 'recup') {
+    const F = E.fases[E.i], trans = t - E.t0, prox = psProxPasada();
+    set('psCab', 'RECUPERACIÓN'); set('psCab2', F.recup === 'tiempo' ? segAMMSS(F.seg) : 'hasta Z' + (F.recup === 'z1' ? 1 : 2) + (E.limite ? ' (≤ ' + E.limite + ')' : ''));
+    set('psNumIzq', F.recup === 'tiempo' ? segAMMSS(Math.max(0, F.seg - trans)) : segAMMSS(trans));
+    set('psNumDer', pulso ? pulso + '' : '--');
+    set('psSubIzq', F.recup === 'tiempo' ? 'falta' : 'recuperando');
+    set('psSubDer', !E.limite || F.recup === 'tiempo' ? 'ppm' : pulso && pulso <= E.limite ? 'en zona ✓' : 'ppm · bajá');
+    clase = 'recup';
+    if (E.limite && pulso && pulso <= E.limite) clase = 'ok';
+    set('psLinea', prox ? 'Próxima: pasada ' + prox.n + '/' + prox.total + ' · ' + nombreDist(prox.dist) + ' a ' + segAMMSS(prox.obj) : '');
+  } else if (E.etapa === 'cuenta') {
+    const prox = psProxPasada();
+    set('psCab', 'PREPARADO'); set('psCab2', prox ? 'pasada ' + prox.n + '/' + prox.total : '');
+    set('psNumIzq', Math.max(0, Math.ceil(E.cuentaHasta - t)) + ''); set('psNumDer', prox ? segAMMSS(prox.obj) : '');
+    set('psSubIzq', 'largás en'); set('psSubDer', prox ? nombreDist(prox.dist) + ' a este ritmo' : ''); set('psLinea', '');
+  } else if (E.etapa === 'calent') {
+    set('psCab', 'ENTRADA EN CALOR'); set('psCab2', '');
+    set('psNumIzq', segAMMSS(Math.max(0, E.calentSeg - (t - E.t0)))); set('psNumDer', pulso ? pulso + '' : '--');
+    set('psSubIzq', 'falta'); set('psSubDer', 'ppm'); set('psLinea', '');
+  } else {
+    set('psCab', 'PASADAS TERMINADAS'); set('psCab2', ''); set('psNumIzq', E.resultados.length + ''); set('psNumDer', ''); set('psSubIzq', 'pasadas'); set('psSubDer', ''); set('psLinea', 'Podés seguir trotando y finalizar cuando quieras.');
+  }
+  tile.className = clase;
+  set('psResultados', E.resultados.map(r => '#' + r.n + ' ' + segAMMSS(r.tiempo) + (r.ritmo ? ' (' + segAMMSS(r.ritmo) + (r.ritmo - r.obj >= 0 ? ' +' : ' ') + Math.round(r.ritmo - r.obj) + ')' : '') + (r.cortada ? '✂' : '')).join(' · '));
+}
+function resumenPasadas() {
+  if (!pasEstado) return null;
+  return { bloques: JSON.parse(JSON.stringify(pasadasCfg.bloques)), tolSeg: pasEstado.tol, resultados: pasEstado.resultados };
 }
 function renderSelectorFantasma() {
   const sel = document.getElementById('selectFantasma');
@@ -6995,6 +7300,11 @@ function iniciarSesion() {
   fantasmaSuperado = false;
   deltaFantasmaUltimo = null;
   iniciarPlanCarreraSesion(); // v108
+  // v116: con pasadas, el plan de carrera no corre (serían dos objetivos distintos a la vez)
+  if (iniciarPasadasSesion(0) && planCarreraActivo) {
+    planCarreraActivo = null; pcEstado = null; document.getElementById('tilePlanCarrera').style.display = 'none';
+    logBLE('Pasadas activas: el plan de carrera no corre en esta sesión', '#d29922');
+  }
   if (planCarreraActivo) {
     fantasmaId = 'plan_carrera';
     puntosFantasma = puntosFantasmaDePlan(planCarreraActivo);
@@ -7055,6 +7365,7 @@ function iniciarSesion() {
   marcarSesionEnCurso(true); // v104
   // v115: en carrera, el plan no se edita y la pantalla va directo a los datos en vivo
   document.getElementById('cardPlanCarrera').style.display = 'none';
+  document.getElementById('cardPasadas').style.display = 'none'; // v116
   setTimeout(() => document.getElementById('tileRitmo').closest('.card').scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
   toast('Sesión iniciada');
 }
@@ -7097,6 +7408,7 @@ function estadoSesionActual() {
     testVmaActivo, testVmaCfg, testVmaEscalonPrevio, testVmaAvisado, testUmbralActivo,
     muestrasCalibracionSesion, notas: document.getElementById('notasSesion').value,
     planCarreraActivo, pcEstado, // v108
+    pasEstado, // v116
     gpsAnclaSuave, // v112: punto suavizado desde donde se mide (sin Doppler); si no, se perdía el retraso del suavizado
   };
 }
@@ -7164,6 +7476,8 @@ function restaurarSesion(snap, continuar) {
   fantasmaId = snap.fantasmaId || null; puntosFantasma = null;
   fantasmaSuperado = !!snap.fantasmaSuperado; deltaFantasmaUltimo = snap.deltaFantasmaUltimo;
   planCarreraActivo = snap.planCarreraActivo || null; pcEstado = snap.pcEstado || null; // v108
+  pasEstado = snap.pasEstado || null; document.getElementById('tilePasadas').style.display = pasEstado ? 'block' : 'none'; // v116
+  if (pasEstado) { desbloquearAudio(); pasEstado.prevT = pasEstado.prevT || 0; }
   document.getElementById('tilePlanCarrera').style.display = planCarreraActivo ? 'block' : 'none';
   if (planCarreraActivo) { puntosFantasma = puntosFantasmaDePlan(planCarreraActivo); document.getElementById('tileFantasma').style.display = 'block'; desbloquearAudio(); }
   else if (fantasmaId) {
@@ -7209,6 +7523,7 @@ function restaurarSesion(snap, continuar) {
   document.getElementById('cardModo').style.display = 'none';
   document.getElementById('cardMeta').style.display = 'none';
   document.getElementById('cardPlanCarrera').style.display = 'none'; // v115
+  document.getElementById('cardPasadas').style.display = 'none'; // v116
   if (snap.modo === 'manual' || snap.modo === 'calibracion') mostrarBotonesVelocidadHud(true);
   if (!continuar) return; // solo para guardar: finalizarSesion se encarga del resto
   pedirWakeLock();
@@ -7344,6 +7659,7 @@ function tick() {
   }
 
   revisarPlanCarrera(t, pulso); // v108
+  revisarPasadas(t, pulso); // v116
 
   // zona actual (prioriza pulso si hay umbral, sino ritmo)
   let zonaActual = null;
@@ -7625,6 +7941,7 @@ function finalizarSesion(automatica) {
     umbralPulso: zonas.umbralPulso || null, // v99: umbral vigente al correr, para calcular el tiempo en zonas con el de ESE día
     tssMetodo: calcTss.metodo, ngpSegKm: calcTss.ngpSegKm, intensidadIF: calcTss.if, // v107
     planCarrera: resumenPlanCarrera(), // v108
+    pasadas: resumenPasadas(), // v116
     modo,
     duracionSeg: Math.round(duracionSeg),
     distanciaM: Math.round(distanciaAcumM),
@@ -7670,6 +7987,7 @@ function resetearHUD() {
   borrarCheckpoint();
   planCarreraActivo = null; pcEstado = null; // v108
   document.getElementById('cardPlanCarrera').style.display = ''; // v115
+  pasEstado = null; document.getElementById('tilePasadas').style.display = 'none'; document.getElementById('cardPasadas').style.display = ''; // v116
   document.getElementById('tilePlanCarrera').style.display = 'none';
   document.getElementById('btnIniciar').disabled = false;
   document.getElementById('btnPausar').disabled = true;
@@ -8380,6 +8698,12 @@ function renderResumenSesion(s, contenedorId) {
   if (s.desacoplePct != null) extra += 'Desacople ritmo:pulso: <b>' + s.desacoplePct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePct) + '<br>';
   if (s.desacoplePotenciaPct != null) extra += 'Desacople potencia:pulso: <b>' + s.desacoplePotenciaPct.toFixed(1) + '%</b> — ' + calificarDesacople(s.desacoplePotenciaPct) + '<br>';
   if (s.efAerobica) extra += 'Eficiencia aeróbica: ' + s.efAerobica.toFixed(2) + ' (m/min)/bpm<br>';
+  // v116: pasadas
+  if (s.pasadas && s.pasadas.resultados && s.pasadas.resultados.length) {
+    extra += '<b>Pasadas</b><br>' + s.pasadas.resultados.map(r => '#' + r.n + ' · ' + nombreDist(r.dist) + ' en ' + segAMMSS(r.tiempo) +
+      (r.ritmo ? ' · ' + segAMMSS(r.ritmo) + '/km (obj ' + segAMMSS(r.obj) + ', ' + (r.ritmo - r.obj >= 0 ? '+' : '') + Math.round(r.ritmo - r.obj) + ' s)' : '') +
+      (r.pulsoMed ? ' · ' + r.pulsoMed + ' ppm' : '') + (r.cortada ? ' · cortada' : '')).join('<br>') + '<br>';
+  }
   // v108: resultado contra el plan de carrera
   if (s.planCarrera) {
     const pc = s.planCarrera, dif = s.duracionSeg - pc.tiempoPlanSeg;
@@ -9790,6 +10114,7 @@ poblarOpcionesRutas(); // v101: recorridos GPX guardados en el selector de escen
 document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
 cargarFormPlanCarrera(); // v108
+cargarFormPasadas(); // v116
 initBigStore().then(ofrecerRecuperacion); // v103: base interna; v104: después, ofrece retomar una sesión interrumpida
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
