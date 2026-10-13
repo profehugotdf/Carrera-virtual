@@ -39,6 +39,20 @@
   header .titulowrap{display:flex; align-items:baseline;}
 
   main{padding:14px 14px 24px;}
+  /* v117: vista de carrera del plan (estilo PacePro): fondo claro, se lee al sol */
+  #tilePace{background:#f4f6f8; color:#0b0f14; border:4px solid #f4f6f8; border-radius:18px; margin:10px 0; overflow:hidden; text-align:center;}
+  #tilePace .pp-obj{display:inline-block; margin-top:10px; background:#0b0f14; color:#fff; font:700 30px var(--mono, monospace); padding:2px 18px; border-radius:10px;}
+  #tilePace .pp-ritmo{font:800 92px/1 var(--mono, monospace); margin:6px 0 0; letter-spacing:-2px;}
+  #tilePace .pp-lbl{font-size:14px; letter-spacing:1px; color:#4a5560; margin-bottom:8px;}
+  #tilePace .pp-fila{display:flex; align-items:center; gap:10px; padding:0 14px 10px;}
+  #tilePace .pp-barra{flex:1; height:22px; border:2px solid #0b0f14; border-radius:4px; overflow:hidden; background:#fff;}
+  #tilePace .pp-barra-in{height:100%; width:0; background:#0b0f14;}
+  #tilePace .pp-falta{font:700 22px var(--mono, monospace); min-width:62px; text-align:right;}
+  #tilePace .pp-total{background:#0b0f14; color:#fff; padding:6px 10px 10px;}
+  #tilePace .pp-total-lbl{font-size:15px; font-weight:800; letter-spacing:1px;}
+  #tilePace .pp-total-val{font:800 44px/1.05 var(--mono, monospace);}
+  #tilePace .ok{color:#127a2c;} #tilePace .lento{color:#c4161c;} #tilePace .rapido{color:#b06a00;}
+  #tilePace.alarma-pulso{border-color:#f85149;} #tilePace.alarma-ritmo{border-color:#d29922;}
   /* v116: pasadas */
   .ps-bloque{display:grid; grid-template-columns:52px 1fr 1fr; gap:6px; align-items:center; padding:8px 0; border-top:1px solid var(--borde);}
   .ps-bloque select, .ps-bloque input{padding:6px; margin:0;}
@@ -226,7 +240,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v116</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v117</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -529,6 +543,14 @@
     <div class="card">
       <h2>Sesión en vivo</h2>
       <div class="cinta-ritmo"><div class="cinta-marker" id="cintaMarker" style="left:50%;"></div></div>
+      <!-- v117: vista de carrera del plan -->
+      <div id="tilePace" style="display:none;">
+        <div class="pp-obj" id="ppObj">--:--</div>
+        <div class="pp-ritmo" id="ppRitmo">--:--</div>
+        <div class="pp-lbl" id="ppLbl">RITMO DEL TRAMO</div>
+        <div class="pp-fila"><div class="pp-barra"><div class="pp-barra-in" id="ppBarra"></div></div><div class="pp-falta" id="ppFalta">1.00</div></div>
+        <div class="pp-total"><div class="pp-total-lbl" id="ppTotLbl">TOTAL</div><div class="pp-total-val" id="ppTot">0:00</div></div>
+      </div>
       <!-- v116: pasadas en vivo -->
       <div id="tilePasadas" style="display:none;">
         <div class="ps-cab"><span id="psCab">PASADA</span><span id="psCab2"></span></div>
@@ -3209,6 +3231,17 @@
        (corta la pasada en curso). Con pasadas, el plan de carrera no
        corre. Resultados en la sesión (s.pasadas), en el informe y en el
        punto de recuperación (v104).
+   v117: VISTA DE CARRERA del plan, con la pantalla PacePro de la
+       Forerunner 955 de modelo (le sirvió en la 10K cuando falló la app).
+       Reemplaza al recuadro chico del plan, arriba de los datos: fondo
+       claro de alto contraste (se lee al sol), ritmo objetivo del tramo
+       arriba, RITMO DEL TRAMO en grande (desde el inicio del tramo, con el
+       cruce interpolado; verde/rojo/ámbar según la tolerancia), barra de
+       avance del tramo con los km que faltan, y abajo "TOTAL POR DETRÁS /
+       POR DELANTE" + tiempo, a la misma distancia. Borde rojo/ámbar con
+       las alarmas de pulso/ritmo. Al terminar: tiempo final y diferencia.
+       El recuadro del fantasma dice la diferencia en palabras ("0:38
+       atrás") y "vs Plan" cuando el fantasma es el plan.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4137,10 +4170,11 @@ function decirTiempo(seg) {
 function decirRitmo(seg) { seg = Math.round(seg); return Math.floor(seg / 60) + ' ' + String(seg % 60).padStart(2, '0'); }
 function iniciarPlanCarreraSesion() {
   planCarreraActivo = null; pcEstado = null;
-  const tile = document.getElementById('tilePlanCarrera');
+  const tile = document.getElementById('tilePace'); // v117: vista de carrera (antes tilePlanCarrera)
   if (!(planCarrera && planCarrera.usar && planCarrera.parciales && planCarrera.parciales.length)) { tile.style.display = 'none'; return; }
   planCarreraActivo = JSON.parse(JSON.stringify(planCarrera));
-  pcEstado = { hist: [], pulsoAltoDesde: null, ritmoFueraDesde: null, ultAvisoPulso: -1e9, ultAvisoRitmo: -1e9, kmAvisado: 0, alarmasPulso: 0, alarmasRitmo: 0 };
+  pcEstado = { hist: [], pulsoAltoDesde: null, ritmoFueraDesde: null, ultAvisoPulso: -1e9, ultAvisoRitmo: -1e9, kmAvisado: 0, alarmasPulso: 0, alarmasRitmo: 0,
+               tramoIdx: 0, tramoT0: 0, tramoD0: 0, prevT: 0, prevD: 0 }; // v117: el primer tramo arranca en la largada (t = 0, d = 0)
   tile.style.display = 'block';
   desbloquearAudio();
 }
@@ -4163,8 +4197,26 @@ function revisarPlanCarrera(t, pulso) {
   document.getElementById('hudPlanCarrera').textContent = terminado ? '🏁 ' + formatearDelta(t - tiempoTotalPlan(P))
     : (tr[idx] < L ? 'Últ. ' + tr[idx] + ' m' : L === 1000 ? 'Km ' + (idx + 1) : 'Hasta ' + nombreDist(acum + tr[idx])) + ' · ' + segAMMSS(objetivo) + (ritmoAct ? ' · vas ' + segAMMSS(ritmoAct) : '');
   document.getElementById('lblPlanCarrera').textContent = terminado ? 'Plan terminado (vs tiempo planeado)' : 'Plan · objetivo del km' + (delta != null ? ' · ' + formatearDelta(delta) : '');
-  const tile = document.getElementById('tilePlanCarrera');
-  if (terminado) { tile.style.borderColor = ''; return; }
+  // v117: vista de carrera — ritmo del tramo actual (desde que empezó, el cruce interpolado entre
+  // dos muestras), barra de avance del tramo y total adelante/atrás en palabras
+  if (E.tramoIdx !== idx) {
+    const cruce = (E.prevD != null && d > E.prevD && acum > E.prevD) ? E.prevT + (acum - E.prevD) / (d - E.prevD) * (t - E.prevT) : t;
+    E.tramoIdx = idx; E.tramoT0 = Math.min(t, cruce); E.tramoD0 = acum;
+  }
+  E.prevT = t; E.prevD = d;
+  const recorrido = d - E.tramoD0, ritmoTramo = recorrido >= 20 ? (t - E.tramoT0) / recorrido * 1000 : null;
+  const pp = id => document.getElementById(id);
+  pp('ppObj').textContent = terminado ? '🏁' : segAMMSS(objetivo);
+  pp('ppRitmo').textContent = terminado ? segAHMS(Math.round(t)) : ritmoTramo ? segAMMSS(ritmoTramo) : '--:--';
+  pp('ppRitmo').className = 'pp-ritmo' + (!terminado && ritmoTramo ? ' ' + psEstadoRitmo(ritmoTramo, objetivo, P.tolSeg) : '');
+  pp('ppLbl').textContent = terminado ? 'TIEMPO FINAL' : 'RITMO ' + (tr[idx] < L ? 'ÚLTIMOS ' + tr[idx] + ' M' : L === 1000 ? 'KM ' + (idx + 1) : 'HASTA ' + nombreDist(acum + tr[idx]).toUpperCase());
+  pp('ppBarra').style.width = (terminado ? 100 : Math.max(0, Math.min(100, (d - acum) / tr[idx] * 100))) + '%';
+  pp('ppFalta').textContent = terminado ? '0.00' : (Math.max(0, acum + tr[idx] - d) / 1000).toFixed(2);
+  const dTot = terminado ? t - tiempoTotalPlan(P) : delta;
+  pp('ppTotLbl').textContent = dTot == null || Math.abs(dTot) < 1 ? 'TOTAL · EN EL PLAN' : dTot > 0 ? 'TOTAL POR DETRÁS' : 'TOTAL POR DELANTE';
+  pp('ppTot').textContent = dTot == null ? '--' : Math.abs(dTot) < 3600 ? segAMMSS(Math.abs(dTot)) : segAHMS(Math.round(Math.abs(dTot)));
+  const tile = document.getElementById('tilePace');
+  if (terminado) { tile.className = ''; return; }
   // pulso
   const lim = limitePulsoPlan(P);
   let alarma = null;
@@ -4190,7 +4242,7 @@ function revisarPlanCarrera(t, pulso) {
       if (!alarma) alarma = 'ritmo';
     } else E.ritmoFueraDesde = null;
   }
-  tile.style.borderColor = alarma === 'pulso' ? '#f85149' : alarma === 'ritmo' ? '#d29922' : '';
+  tile.className = alarma === 'pulso' ? 'alarma-pulso' : alarma === 'ritmo' ? 'alarma-ritmo' : ''; // v117
   // cada km: la diferencia contra el plan
   // al pasar cada tramo (v111: del largo elegido): la diferencia con el plan y, si cambia, el ritmo que sigue
   const tramosHechos = Math.floor(d / L);
@@ -7302,7 +7354,7 @@ function iniciarSesion() {
   iniciarPlanCarreraSesion(); // v108
   // v116: con pasadas, el plan de carrera no corre (serían dos objetivos distintos a la vez)
   if (iniciarPasadasSesion(0) && planCarreraActivo) {
-    planCarreraActivo = null; pcEstado = null; document.getElementById('tilePlanCarrera').style.display = 'none';
+    planCarreraActivo = null; pcEstado = null; document.getElementById('tilePace').style.display = 'none';
     logBLE('Pasadas activas: el plan de carrera no corre en esta sesión', '#d29922');
   }
   if (planCarreraActivo) {
@@ -7478,7 +7530,7 @@ function restaurarSesion(snap, continuar) {
   planCarreraActivo = snap.planCarreraActivo || null; pcEstado = snap.pcEstado || null; // v108
   pasEstado = snap.pasEstado || null; document.getElementById('tilePasadas').style.display = pasEstado ? 'block' : 'none'; // v116
   if (pasEstado) { desbloquearAudio(); pasEstado.prevT = pasEstado.prevT || 0; }
-  document.getElementById('tilePlanCarrera').style.display = planCarreraActivo ? 'block' : 'none';
+  document.getElementById('tilePace').style.display = planCarreraActivo ? 'block' : 'none'; // v117
   if (planCarreraActivo) { puntosFantasma = puntosFantasmaDePlan(planCarreraActivo); document.getElementById('tileFantasma').style.display = 'block'; desbloquearAudio(); }
   else if (fantasmaId) {
     const sF = bigGet(K_SESIONES, []).find(x => x.id === fantasmaId);
@@ -7651,8 +7703,9 @@ function tick() {
       elLbl.textContent = 'Superaste la distancia del fantasma';
     } else {
       deltaFantasmaUltimo = delta;
-      elFant.textContent = formatearDelta(delta);
-      elLbl.textContent = 'vs Fantasma (a esta distancia)';
+      // v117: en palabras (antes "-0:12" = adelante, confuso) y "vs Plan" cuando el fantasma es el plan
+      elFant.textContent = Math.abs(delta) < 1 ? 'parejos' : segAMMSS(Math.abs(delta)) + (delta > 0 ? ' atrás' : ' adelante');
+      elLbl.textContent = (fantasmaId === 'plan_carrera' ? 'vs Plan' : 'vs Fantasma') + ' (a esta distancia)';
       elFant.classList.toggle('adelante', delta < 0);
       elFant.classList.toggle('atras', delta > 0);
     }
@@ -7988,7 +8041,7 @@ function resetearHUD() {
   planCarreraActivo = null; pcEstado = null; // v108
   document.getElementById('cardPlanCarrera').style.display = ''; // v115
   pasEstado = null; document.getElementById('tilePasadas').style.display = 'none'; document.getElementById('cardPasadas').style.display = ''; // v116
-  document.getElementById('tilePlanCarrera').style.display = 'none';
+  document.getElementById('tilePace').style.display = 'none'; // v117
   document.getElementById('btnIniciar').disabled = false;
   document.getElementById('btnPausar').disabled = true;
   document.getElementById('btnPausar').textContent = 'Pausar';
