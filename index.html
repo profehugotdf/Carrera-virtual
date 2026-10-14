@@ -235,7 +235,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v120</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v125</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -409,7 +409,7 @@
       </div>
       <div style="display:flex; gap:8px; align-items:flex-end;">
         <div style="flex:1;"><label>Tramos y avisos cada</label><select id="pcTramo" onchange="planCarreraDesdeForm(true)">
-          <option value="1000">1 km</option><option value="500">500 m</option><option value="400">400 m</option><option value="200">200 m</option>
+          <option value="1000">1 km</option><option value="500">500 m</option><option value="400">400 m</option><option value="200">200 m</option><option value="100">100 m</option>
         </select></div>
       </div>
       <!-- v110: forma de la curva de fatiga -->
@@ -429,7 +429,12 @@
       </div>
       <div class="estado-conexion" id="pcFcInfo" style="margin:6px 0;"></div>
       <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="chkPlanCarrera" style="width:auto;" onchange="planCarreraDesdeForm(false)"> Usar en la próxima sesión (reemplaza al fantasma)</label>
+      <div style="display:flex; gap:6px; align-items:center; margin:4px 0 0 26px; font-size:13px;"><span>Correr del</span><select id="pcSegDesde" style="flex:1;" onchange="planCarreraDesdeForm(false)"></select><span>al</span><select id="pcSegHasta" style="flex:1;" onchange="planCarreraDesdeForm(false)"></select></div>
+      <div class="estado-conexion" id="pcSegInfo" style="margin:2px 0 6px 26px;"></div>
       <label style="display:flex; gap:8px; align-items:center;"><input type="checkbox" id="chkPlanVoz" style="width:auto;" checked onchange="planCarreraDesdeForm(false)"> Avisos por voz (además de vibración y pitido)</label>
+      <div style="display:flex; gap:8px; align-items:center; margin:4px 0 0 26px; font-size:13px;"><span>Decir el parcial</span><select id="pcVozParcial" style="flex:1;" onchange="planCarreraDesdeForm(false)">
+        <option value="tramo">en cada tramo</option><option value="km">solo cada km</option><option value="no">nunca (solo las alarmas)</option>
+      </select></div>
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
         <button class="btn" onclick="exportarPlanFIT()">⌚ Exportar al Garmin (.fit)</button>
         <button class="btn" onclick="exportarPlanJSON()">📤 Exportar plan</button>
@@ -457,6 +462,12 @@
           <option value="0">No</option><option value="100">cada 100 m</option><option value="200">cada 200 m</option><option value="400">cada 400 m</option><option value="500">cada 500 m</option>
         </select></div>
       </div>
+      <div style="display:flex; gap:8px; margin-top:8px; align-items:flex-end;">
+        <div style="flex:1;"><label>En la cinta, en la recuperación</label><select id="psRecupCinta" onchange="psDesdeForm()">
+          <option value="bajar">bajar la velocidad</option><option value="costado">dejarla andando: me paro al costado</option></select></div>
+        <div style="flex:1;"><label id="lblPsVelRecup">Recuperación y entrada en calor a (km/h)</label><input type="text" inputmode="decimal" id="psVelRecup" value="6" oninput="psDesdeForm()"></div>
+      </div>
+      <div class="estado-conexion" id="psCintaInfo" style="margin-top:4px;"></div>
       <div class="estado-conexion" id="psResumen" style="margin-top:8px;"></div>
     </div>
 
@@ -3274,6 +3285,40 @@
        Subumbral). Solo visual: tablas, tiempo en zonas del informe,
        zona y barra del HUD y cartel de la escena; la lógica interna
        (pasadas, plan, colores de la animación) sigue con 5 zonas.
+   v121: PASADAS CON LOS TRAMOS DEL PLAN. Si el plan está en tramos de
+       menos de 1 km, el ritmo de cada bloque se puede tomar de un tramo
+       puntual ("1 km – 1,5 km · 5:47") o "cada pasada su tramo, en orden"
+       (pasada 1 = tramo 1, pasada 2 = tramo 2…; 20 × 500 m = la carrera
+       entera). Siguen las opciones por km y a mano. Bloque nuevo con plan
+       en tramos: arranca con esa distancia y el tramo 1.
+   v122: tramos de 100 m en el plan (además de 1 km/500/400/200) y hasta
+       100 pasadas por bloque, para hacer "tramos en orden" con 400 m
+       (25), 200 m (50) o 100 m (100) en un 10K.
+   v123: "Decir el parcial": en cada tramo / solo cada km / nunca. Las
+       alarmas de pulso y ritmo siguen hablando igual (las apaga solo
+       "Avisos por voz"). Al pasar a tramos de 200 o 100 m cambia solo a
+       "cada km"; planes viejos sin el dato: igual criterio.
+   v124: ENTRENAR EN LA CINTA.
+       - Segmento del plan de carrera ("Correr del km A al km B"): se
+         corre solo ese tramo, como si se llegara al km A justo en el
+         plan (tiempo y distancia "de carrera": avisos con el km real,
+         vista de carrera, alarmas, fantasma del segmento). El informe
+         compara contra el tiempo del segmento. No dispara el umbral
+         desde carrera (tampoco el plan corrido en la cinta).
+       - Modo Manual: el plan de carrera lleva la cinta a la velocidad de
+         cada tramo, y las pasadas la llevan al ritmo objetivo durante la
+         cuenta (que se estira lo que tarde el ESP32 en acelerar, o 10 s
+         si hay que tocarla a mano) y a "recuperación y entrada en calor"
+         (km/h) en la entrada en calor, las recuperaciones y al final.
+         Con ESP32 + velocidad de referencia la mueve sola; si no, la app
+         toma esa velocidad y avisa a cuánto ponerla (también por voz en
+         las pasadas). La referencia se pide también para estos dos casos.
+   v125: PASADAS "AL COSTADO" (recuperaciones cortas en la cinta): la
+       cinta no baja, sigue andando (o cambia a la velocidad de la
+       próxima pasada) y entre pasadas (recuperación + cuenta) la app no
+       suma distancia ni ritmo. La cuenta espera a que la cinta termine
+       de cambiar (mínimo 8 s para subirse) y dice "Subite a la cinta".
+       La entrada en calor y el final siguen a la velocidad elegida.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4122,9 +4167,12 @@ function planCarreraDesdeForm(rearmar, editado) {
     edad: edadParaPlan(),
     usar: document.getElementById('chkPlanCarrera').checked,
     voz: document.getElementById('chkPlanVoz').checked,
+    vozParcial: vozParcialForm(previo.tramoM, tramoM), // v123
+    ...segmentoDesdeForm(distKm, previo), // v124
   };
   lsSet(K_PLAN_CARRERA, planCarrera);
   renderPlanCarrera(rearmar);
+  pcRenderSegmento(); // v124
   if (typeof psRenderBloques === 'function' && document.getElementById('psBloques')) psRenderBloques(); // v116
 }
 function actualizarEtiquetasProgresiva(ritmo, prog, forma) {
@@ -4183,14 +4231,53 @@ function cargarFormPlanCarrera() {
     document.getElementById('pcPct').value = p.pctFc || 92;
     document.getElementById('chkPlanCarrera').checked = !!p.usar;
     document.getElementById('chkPlanVoz').checked = p.voz !== false;
+    document.getElementById('pcVozParcial').value = p.vozParcial || ((p.tramoM || 1000) <= 200 ? 'km' : 'tramo'); // v123
   }
   const e = (p && p.edad) || edadParaPlan();
   if (e) document.getElementById('pcEdad').value = e;
   if (p) { p.edad = e || p.edad; }
   renderPlanCarrera(true);
+  pcRenderSegmento(); // v124
+}
+/* v124: SEGMENTO DEL PLAN. Se corre solo un tramo de la carrera (ej. del km 3 al 6), con los
+   ritmos del plan en esos km. Puntos posibles: cada km entero y la llegada. "Del km 0 al final"
+   = la carrera completa. */
+function pcPuntosSegmento(distKm) {
+  const pts = []; for (let k = 0; k < distKm - 1e-9; k++) pts.push(k);
+  pts.push(distKm); return pts;
+}
+function segmentoDesdeForm(distKm, previo) {
+  const sd = document.getElementById('pcSegDesde'), sh = document.getElementById('pcSegHasta');
+  let desde = sd && sd.value !== '' ? parseFloat(sd.value) : (previo.segDesdeKm || 0);
+  let hasta = sh && sh.value !== '' ? parseFloat(sh.value) : (previo.segHastaKm || distKm);
+  if (!(distKm > 0)) return { segDesdeKm: 0, segHastaKm: null };
+  if (!(desde >= 0) || desde >= distKm) desde = 0;
+  if (!(hasta > 0) || hasta > distKm || previo.distKm !== distKm && hasta === previo.distKm) hasta = distKm;
+  if (hasta <= desde) hasta = Math.min(distKm, Math.floor(desde) + 1);
+  return { segDesdeKm: desde, segHastaKm: hasta >= distKm ? null : hasta }; // null = hasta la llegada
+}
+function pcRenderSegmento() {
+  const p = planCarrera, sd = document.getElementById('pcSegDesde'), sh = document.getElementById('pcSegHasta'), info = document.getElementById('pcSegInfo');
+  if (!sd) return;
+  if (!p || !(p.distKm > 0)) { sd.innerHTML = sh.innerHTML = ''; info.textContent = ''; return; }
+  const pts = pcPuntosSegmento(p.distKm), desde = p.segDesdeKm || 0, hasta = p.segHastaKm || p.distKm;
+  const nom = k => k === 0 ? 'km 0 (largada)' : k === p.distKm ? 'km ' + String(k).replace('.', ',') + ' (llegada)' : 'km ' + k;
+  sd.innerHTML = pts.filter(k => k < p.distKm).map(k => '<option value="' + k + '"' + (k === desde ? ' selected' : '') + '>' + nom(k) + '</option>').join('');
+  sh.innerHTML = pts.filter(k => k > desde).map(k => '<option value="' + k + '"' + (k === hasta ? ' selected' : '') + '>' + nom(k) + '</option>').join('');
+  if (!p.parciales || !p.parciales.length || (desde === 0 && hasta === p.distKm)) { info.textContent = desde === 0 && hasta === p.distKm ? 'Carrera completa.' : ''; return; }
+  const t = tiempoPlanEnDistancia(p, hasta * 1000) - tiempoPlanEnDistancia(p, desde * 1000), dist = hasta - desde;
+  info.textContent = 'Segmento: ' + nombreDist(dist * 1000) + ' en ' + segAHMS(Math.round(t)) + ' (' + segAMMSS(t / dist) + '/km de media). ' +
+    'Los avisos dicen la distancia de la carrera (km ' + String(desde).replace('.', ',') + ' en adelante). En la cinta (modo Manual) la velocidad sigue cada tramo.';
 }
 // el plan como fantasma: un punto cada 50 m con el tiempo planeado
 function puntosFantasmaDePlan(plan) {
+  // v124: con segmento, el fantasma corre solo esos km (arranca en 0 en el inicio del segmento)
+  if (plan.esSegmento) {
+    const off = plan.offM, fin = plan.finM, tOff = tiempoPlanEnDistancia(plan, off);
+    const todos = puntosFantasmaDePlan(Object.assign({}, plan, { esSegmento: false }));
+    return [{ t: 0, distAcum: 0, velocidad: todos.find(p => p.distAcum > off).velocidad }]
+      .concat(todos.filter(p => p.distAcum > off && p.distAcum <= fin).map(p => ({ t: p.t - tOff, distAcum: p.distAcum - off, velocidad: p.velocidad })));
+  }
   const tr = tramosPlan(plan.distKm, plan.tramoM), pts = [{ t: 0, distAcum: 0, velocidad: 1000 / plan.parciales[0] }];
   let d0 = 0, t0 = 0;
   tr.forEach((l, i) => {
@@ -4252,15 +4339,27 @@ function iniciarPlanCarreraSesion() {
   const tile = document.getElementById('tilePace'); // v117: vista de carrera (antes tilePlanCarrera)
   if (!(planCarrera && planCarrera.usar && planCarrera.parciales && planCarrera.parciales.length)) { tile.style.display = 'none'; return; }
   planCarreraActivo = JSON.parse(JSON.stringify(planCarrera));
-  pcEstado = { hist: [], pulsoAltoDesde: null, ritmoFueraDesde: null, ultAvisoPulso: -1e9, ultAvisoRitmo: -1e9, kmAvisado: 0, alarmasPulso: 0, alarmasRitmo: 0,
-               tramoIdx: 0, tramoT0: 0, tramoD0: 0, prevT: 0, prevD: 0 }; // v117: el primer tramo arranca en la largada (t = 0, d = 0)
+  // v124: segmento — offM/finM en metros de la carrera; tOff = tiempo del plan al llegar a offM
+  const P = planCarreraActivo, total = P.distKm * 1000, L = P.tramoM || 1000;
+  P.offM = Math.max(0, Math.min(total, Math.round((P.segDesdeKm || 0) * 1000)));
+  P.finM = P.segHastaKm ? Math.min(total, Math.round(P.segHastaKm * 1000)) : total;
+  if (P.finM <= P.offM) { P.offM = 0; P.finM = total; }
+  P.esSegmento = P.offM > 0 || P.finM < total;
+  const tOff = tiempoPlanEnDistancia(P, P.offM) || 0, tr0 = tramosPlan(P.distKm, L);
+  let idx0 = 0, acum0 = 0; while (idx0 < tr0.length - 1 && P.offM >= acum0 + tr0[idx0]) { acum0 += tr0[idx0]; idx0++; }
+  pcEstado = { hist: [], pulsoAltoDesde: null, ritmoFueraDesde: null, ultAvisoPulso: -1e9, ultAvisoRitmo: -1e9, kmAvisado: Math.floor(P.offM / L), alarmasPulso: 0, alarmasRitmo: 0,
+               tramoIdx: idx0, tramoT0: tOff, tramoD0: P.offM, prevT: tOff, prevD: P.offM, tOff, cintaIdx: null }; // v117: el primer tramo arranca en la largada; v124: o en el inicio del segmento
+  if (P.esSegmento) logBLE('Plan de carrera: segmento del km ' + (P.offM / 1000) + ' al ' + (P.finM / 1000), '#4FD8C4');
   tile.style.display = 'block';
   desbloquearAudio();
 }
-function revisarPlanCarrera(t, pulso) {
+function revisarPlanCarrera(tReal, pulso) {
   const P = planCarreraActivo, E = pcEstado;
   if (!P || !E) return;
-  const d = distanciaAcumM, L = P.tramoM || 1000, tr = tramosPlan(P.distKm, L);
+  // v124: con segmento, todo se mide en distancia y tiempo "de carrera": como si hubieras llegado al
+  // inicio del segmento justo en el plan (tOff). Sin segmento, offM = tOff = 0 y es lo mismo de siempre.
+  const t = tReal + (E.tOff || 0), finM = P.finM || P.distKm * 1000;
+  const d = distanciaAcumM + (P.offM || 0), L = P.tramoM || 1000, tr = tramosPlan(P.distKm, L);
   let idx = 0, acum = 0;
   while (idx < tr.length - 1 && d >= acum + tr[idx]) { acum += tr[idx]; idx++; }
   const objetivo = P.parciales[idx];
@@ -4269,11 +4368,15 @@ function revisarPlanCarrera(t, pulso) {
   while (E.hist.length > 2 && t - E.hist[1].t >= 30) E.hist.shift();
   const h0 = E.hist[0], dd = d - h0.d, dt = t - h0.t;
   const ritmoAct = (dt >= 25 && dd > 40) ? dt / dd * 1000 : null;
-  const tPlan = tiempoPlanEnDistancia(P, Math.min(d, P.distKm * 1000));
+  const tPlan = tiempoPlanEnDistancia(P, Math.min(d, finM)), tFinPlan = tiempoPlanEnDistancia(P, finM);
   const delta = tPlan != null ? t - tPlan : null; // + = atrás del plan
   // pantalla
-  const terminado = d >= P.distKm * 1000;
-  document.getElementById('hudPlanCarrera').textContent = terminado ? '🏁 ' + formatearDelta(t - tiempoTotalPlan(P))
+  const terminado = d >= finM;
+  // v124: en la cinta (modo Manual) la velocidad sigue al tramo del plan
+  if (!terminado && E.cintaIdx !== idx && modo === 'manual' && !planActivo && !testVmaActivo) {
+    E.cintaIdx = idx; llevarCintaA(kmhDeRitmo(objetivo), tReal < 3 ? 'Plan' : 'Tramo nuevo');
+  }
+  document.getElementById('hudPlanCarrera').textContent = terminado ? '🏁 ' + formatearDelta(t - tFinPlan)
     : (tr[idx] < L ? 'Últ. ' + tr[idx] + ' m' : L === 1000 ? 'Km ' + (idx + 1) : 'Hasta ' + nombreDist(acum + tr[idx])) + ' · ' + segAMMSS(objetivo) + (ritmoAct ? ' · vas ' + segAMMSS(ritmoAct) : '');
   document.getElementById('lblPlanCarrera').textContent = terminado ? 'Plan terminado (vs tiempo planeado)' : 'Plan · objetivo del km' + (delta != null ? ' · ' + formatearDelta(delta) : '');
   // v117: vista de carrera — ritmo del tramo actual (desde que empezó, el cruce interpolado entre
@@ -4286,12 +4389,12 @@ function revisarPlanCarrera(t, pulso) {
   const recorrido = d - E.tramoD0, ritmoTramo = recorrido >= 20 ? (t - E.tramoT0) / recorrido * 1000 : null;
   const pp = id => document.getElementById(id);
   pp('ppObj').textContent = terminado ? '🏁' : segAMMSS(objetivo);
-  pp('ppRitmo').textContent = terminado ? segAHMS(Math.round(t)) : ritmoTramo ? segAMMSS(ritmoTramo) : '--:--';
+  pp('ppRitmo').textContent = terminado ? segAHMS(Math.round(tReal)) : ritmoTramo ? segAMMSS(ritmoTramo) : '--:--';
   pp('ppRitmo').className = 'pp-ritmo' + (!terminado && ritmoTramo ? ' ' + psEstadoRitmo(ritmoTramo, objetivo, P.tolSeg) : '');
   pp('ppLbl').textContent = terminado ? 'TIEMPO FINAL' : 'RITMO ' + (tr[idx] < L ? 'ÚLTIMOS ' + tr[idx] + ' M' : L === 1000 ? 'KM ' + (idx + 1) : 'HASTA ' + nombreDist(acum + tr[idx]).toUpperCase());
   pp('ppBarra').style.width = (terminado ? 100 : Math.max(0, Math.min(100, (d - acum) / tr[idx] * 100))) + '%';
   pp('ppFalta').textContent = terminado ? '0.00' : (Math.max(0, acum + tr[idx] - d) / 1000).toFixed(2);
-  const dTot = terminado ? t - tiempoTotalPlan(P) : delta;
+  const dTot = terminado ? t - tFinPlan : delta;
   pp('ppTotLbl').textContent = dTot == null || Math.abs(dTot) < 1 ? 'TOTAL · EN EL PLAN' : dTot > 0 ? 'TOTAL POR DETRÁS' : 'TOTAL POR DELANTE';
   pp('ppTot').textContent = dTot == null ? '--' : Math.abs(dTot) < 3600 ? segAMMSS(Math.abs(dTot)) : segAHMS(Math.round(Math.abs(dTot)));
   const tile = document.getElementById('tilePace');
@@ -4327,16 +4430,29 @@ function revisarPlanCarrera(t, pulso) {
   const tramosHechos = Math.floor(d / L);
   if (tramosHechos > E.kmAvisado && tramosHechos <= tr.length && delta != null) {
     E.kmAvisado = tramosHechos;
-    if (P.voz && !(t - E.ultAvisoPulso < 3 || t - E.ultAvisoRitmo < 3)) {
+    // v123: "Decir el parcial" — en cada tramo, solo al completar cada km, o nunca (en la llegada nunca se dice: la pantalla pasa al tiempo final)
+    const vp = P.vozParcial || (L <= 200 ? 'km' : 'tramo'), dHecha = tramosHechos * L;
+    const tocaParcial = vp === 'tramo' || (vp === 'km' && dHecha % 1000 === 0);
+    if (P.voz && tocaParcial && !(t - E.ultAvisoPulso < 3 || t - E.ultAvisoRitmo < 3)) {
       const sig = P.parciales[tramosHechos], cambia = sig != null && sig !== P.parciales[tramosHechos - 1];
       hablar(decirDist(tramosHechos * L) + '. ' + (Math.abs(delta) < 3 ? 'Justo en el plan.' : decirTiempo(delta) + (delta < 0 ? ' adelante.' : ' atrás.')) +
         (cambia ? ' Ahora ' + decirRitmo(sig) + '.' : ''));
     }
   }
 }
+// v123: al pasar a tramos de 200 o 100 m, "en cada tramo" cambia solo a "cada km" (sería un aviso cada
+// 35-70 s); después se respeta lo que se elija a mano
+function vozParcialForm(tramoPrevio, tramoM) {
+  const sel = document.getElementById('pcVozParcial');
+  if (tramoPrevio && tramoPrevio !== tramoM && tramoM <= 200 && sel.value === 'tramo') sel.value = 'km';
+  return sel.value;
+}
 function resumenPlanCarrera() {
   const P = planCarreraActivo; if (!P) return null;
-  return { distKm: P.distKm, tramoM: P.tramoM || 1000, parciales: P.parciales, tiempoPlanSeg: Math.round(tiempoTotalPlan(P)), tolSeg: P.tolSeg, pctFc: P.pctFc, limitePulso: limitePulsoPlan(P),
+  const off = P.offM || 0, fin = P.finM || P.distKm * 1000; // v124: con segmento, tiempo y distancia del segmento
+  return { distKm: P.distKm, tramoM: P.tramoM || 1000, parciales: P.parciales,
+           tiempoPlanSeg: Math.round(tiempoPlanEnDistancia(P, fin) - tiempoPlanEnDistancia(P, off)),
+           segmento: P.esSegmento ? { desdeKm: off / 1000, hastaKm: fin / 1000 } : null, tolSeg: P.tolSeg, pctFc: P.pctFc, limitePulso: limitePulsoPlan(P),
            alarmasPulso: pcEstado ? pcEstado.alarmasPulso : 0, alarmasRitmo: pcEstado ? pcEstado.alarmasRitmo : 0 };
 }
 // ---- exportar / importar ----
@@ -4445,7 +4561,28 @@ function psRitmoKmPlan(km) {
   return pk[Math.min(pk.length, Math.max(1, km)) - 1] || null;
 }
 function psKmsPlan() { return planCarrera && planCarrera.distKm ? Math.ceil(planCarrera.distKm) : 0; }
-function psObjetivo(b) { return b.fuente === 'manual' ? b.ritmoManual : psRitmoKmPlan(b.km); }
+/* v121: los tramos del plan tal como están armados (500 m, 400 m…), cada uno con su ritmo.
+   Fuentes de ritmo de un bloque: 'km' (ritmo medio de un km), 'tramo' (un tramo puntual del plan),
+   'seq' (cada pasada toma el tramo siguiente, en orden desde el 1: 20 × 500 m = la carrera entera
+   en pasadas; si hay más pasadas que tramos, se repite el último) y 'manual'. */
+function psTramosPlan() {
+  if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) return [];
+  const tr = tramosPlan(planCarrera.distKm, planCarrera.tramoM || 1000);
+  let d = 0;
+  return tr.map((l, i) => { const o = { i: i + 1, desde: d, hasta: d + l, ritmo: planCarrera.parciales[i] }; d += l; return o; });
+}
+function psRitmoTramoPlan(k) {
+  const t = psTramosPlan(); if (!t.length) return null;
+  return t[Math.min(t.length, Math.max(1, k)) - 1].ritmo || null;
+}
+function psNombreTramo(t) { return (t.desde === 0 ? '0' : nombreDist(t.desde)) + ' – ' + nombreDist(t.hasta); }
+// j: número de pasada dentro del bloque (0, 1, 2…), solo importa en 'seq'
+function psObjetivo(b, j) {
+  if (b.fuente === 'manual') return b.ritmoManual;
+  if (b.fuente === 'tramo') return psRitmoTramoPlan(b.tramo || 1);
+  if (b.fuente === 'seq') return psRitmoTramoPlan(1 + (j || 0));
+  return psRitmoKmPlan(b.km);
+}
 // límite de pulso de una zona: el pulso está en la zona z o por debajo si pulso <= límite
 function psLimiteZona(z) {
   const U = zonas.umbralPulso; if (!U) return null;
@@ -4462,20 +4599,32 @@ function psDesdeForm() {
   pasadasCfg.calentMin = Math.max(0, parseInt(document.getElementById('psCalent').value, 10) || 0);
   pasadasCfg.tolSeg = Math.max(2, parseInt(document.getElementById('psTol').value, 10) || 8);
   pasadasCfg.avisoCadaM = parseInt(document.getElementById('psAviso').value, 10) || 0;
-  psGuardar(); psRenderResumen();
+  const vr = parseFloat(String(document.getElementById('psVelRecup').value).replace(',', '.')); // v124
+  pasadasCfg.velRecupKmh = vr >= 0 ? Math.round(vr * 10) / 10 : 6;
+  pasadasCfg.recupCinta = document.getElementById('psRecupCinta').value; // v125
+  psGuardar(); psRenderResumen(); psRenderInfoCinta();
 }
 function psEdit(i, campo, valor) {
   const b = pasadasCfg.bloques[i]; if (!b) return;
-  if (campo === 'n') b.n = Math.max(1, Math.min(40, parseInt(valor, 10) || 1));
+  if (campo === 'n') b.n = Math.max(1, Math.min(100, parseInt(valor, 10) || 1)); // v122: hasta 100 (10 km en tramos de 100 m)
   else if (campo === 'dist') b.dist = parseInt(valor, 10);
-  else if (campo === 'fuente') { if (valor === 'manual') { b.fuente = 'manual'; if (!b.ritmoManual) b.ritmoManual = psRitmoKmPlan(b.km || 1) || 360; } else { b.fuente = 'km'; b.km = parseInt(valor.slice(3), 10); } }
+  else if (campo === 'fuente') {
+    if (valor === 'manual') { b.fuente = 'manual'; if (!b.ritmoManual) b.ritmoManual = psObjetivo(b, 0) || 360; }
+    else if (valor === 'seq') { b.fuente = 'seq'; const nt = psTramosPlan().length; if (nt && b.n < nt) b.n = Math.min(100, nt); } // v121: propone una pasada por tramo
+    else if (valor.startsWith('tr:')) { b.fuente = 'tramo'; b.tramo = parseInt(valor.slice(3), 10); }
+    else { b.fuente = 'km'; b.km = parseInt(valor.slice(3), 10); }
+  }
   else if (campo === 'ritmoManual') { const v = textoASeg(valor); if (v) b.ritmoManual = v; }
   else if (campo === 'recup') b.recup = valor;
   else if (campo === 'recupSeg') b.recupSeg = Math.max(10, parseInt(valor, 10) || 90);
   psGuardar(); psRenderBloques();
 }
 function psAgregarBloque() {
-  pasadasCfg.bloques.push({ n: 3, dist: 1000, fuente: psKmsPlan() ? 'km' : 'manual', km: 1, ritmoManual: psRitmoKmPlan(1) || 360, recup: 'z2', recupSeg: 90 });
+  // v121: con el plan en tramos cortos (500/400/200/100 m), el bloque nuevo arranca con esa distancia y el tramo 1
+  const L = (planCarrera && planCarrera.tramoM) || 1000, enTramos = psTramosPlan().length && L < 1000 && PS_DISTANCIAS.includes(L);
+  pasadasCfg.bloques.push(enTramos
+    ? { n: 3, dist: L, fuente: 'tramo', tramo: 1, km: 1, ritmoManual: psRitmoTramoPlan(1) || 360, recup: 'z2', recupSeg: 90 }
+    : { n: 3, dist: 1000, fuente: psKmsPlan() ? 'km' : 'manual', km: 1, ritmoManual: psRitmoKmPlan(1) || 360, recup: 'z2', recupSeg: 90 });
   psGuardar(); psRenderBloques();
 }
 function psQuitarBloque(i) { pasadasCfg.bloques.splice(i, 1); psGuardar(); psRenderBloques(); }
@@ -4492,10 +4641,19 @@ function psRenderBloques() {
   const kms = psKmsPlan(), cont = document.getElementById('psBloques');
   cont.innerHTML = pasadasCfg.bloques.map((b, i) => {
     let fuentes = '';
+    // v121: con el plan en tramos de menos de 1 km, cada tramo es elegible (y "en orden")
+    const tramos = psTramosPlan(), L = (planCarrera && planCarrera.tramoM) || 1000;
+    if (tramos.length && (L < 1000 || b.fuente === 'tramo' || b.fuente === 'seq')) {
+      fuentes += '<option value="seq"' + (b.fuente === 'seq' ? ' selected' : '') + '>tramos en orden</option>';
+      fuentes += '<optgroup label="Tramos de ' + nombreDist(L) + ' del plan">' + tramos.map(t =>
+        '<option value="tr:' + t.i + '"' + (b.fuente === 'tramo' && b.tramo === t.i ? ' selected' : '') + '>' + psNombreTramo(t) + ' · ' + segAMMSS(t.ritmo) + '</option>').join('') + '</optgroup>';
+      fuentes += '<optgroup label="Ritmo medio por km">';
+    }
     for (let k = 1; k <= kms; k++) fuentes += '<option value="km:' + k + '"' + (b.fuente === 'km' && b.km === k ? ' selected' : '') + '>km ' + k + ' · ' + segAMMSS(psRitmoKmPlan(k)) + '</option>';
+    if (fuentes.includes('<optgroup label="Ritmo medio')) fuentes += '</optgroup>';
     fuentes += '<option value="manual"' + (b.fuente === 'manual' ? ' selected' : '') + '>ritmo a mano</option>';
     return '<div class="ps-bloque">' +
-      '<input type="number" min="1" max="40" value="' + b.n + '" onchange="psEdit(' + i + ',\'n\',this.value)" title="Cantidad">' +
+      '<input type="number" min="1" max="100" value="' + b.n + '" onchange="psEdit(' + i + ',\'n\',this.value)" title="Cantidad">' +
       '<select onchange="psEdit(' + i + ',\'dist\',this.value)">' + PS_DISTANCIAS.map(d => '<option value="' + d + '"' + (b.dist === d ? ' selected' : '') + '>× ' + (d === 1000 ? '1 km' : d + ' m') + '</option>').join('') + '</select>' +
       '<select onchange="psEdit(' + i + ',\'fuente\',this.value)">' + fuentes + '</select>' +
       (b.fuente === 'manual' ? '<span class="ps-sub">ritmo /km</span><input type="text" inputmode="numeric" value="' + segAMMSS(b.ritmoManual) + '" onchange="psEdit(' + i + ',\'ritmoManual\',this.value)">' : '') +
@@ -4510,7 +4668,15 @@ function psRenderResumen() {
   let txt = n ? n + ' pasadas · ' + nombreDist(m) + ' en total' : 'Sin pasadas cargadas.';
   if (bl.some(b => b.recup !== 'tiempo')) txt += zonas.umbralPulso ? ' · Z1 ≤ ' + psLimiteZona(1) + ' ppm, Z2 ≤ ' + psLimiteZona(2) + ' ppm (umbral ' + zonas.umbralPulso + ')'
     : ' · ⚠️ sin umbral de pulso cargado en Zonas: la recuperación por zona va a ser de 90 s';
-  if (bl.some(b => b.fuente === 'km') && !psKmsPlan()) txt += ' · ⚠️ armá primero el plan de carrera para usar sus ritmos';
+  if (bl.some(b => b.fuente !== 'manual') && !psKmsPlan()) txt += ' · ⚠️ armá primero el plan de carrera para usar sus ritmos';
+  // v121: bloques "en orden": qué tramos recorren
+  const nt = psTramosPlan().length;
+  bl.filter(b => b.fuente === 'seq').forEach(b => {
+    if (!nt) return;
+    txt += ' · en orden: ' + b.n + ' × ' + nombreDist(b.dist) + (b.n === nt ? ' = todos los tramos del plan' : b.n < nt ? ' = tramos 1 a ' + b.n + ' de ' + nt : ' (después del tramo ' + nt + ' se repite el último)');
+    const L = (planCarrera && planCarrera.tramoM) || 1000;
+    if (b.dist !== L) txt += ' ⚠️ las pasadas son de ' + nombreDist(b.dist) + ' y los tramos de ' + nombreDist(L);
+  });
   document.getElementById('psResumen').textContent = txt;
 }
 function cargarFormPasadas() {
@@ -4518,6 +4684,9 @@ function cargarFormPasadas() {
   document.getElementById('psCalent').value = pasadasCfg.calentMin || 0;
   document.getElementById('psTol').value = pasadasCfg.tolSeg || 8;
   document.getElementById('psAviso').value = String(pasadasCfg.avisoCadaM || 0);
+  document.getElementById('psVelRecup').value = String(pasadasCfg.velRecupKmh != null ? pasadasCfg.velRecupKmh : 6).replace('.', ','); // v124
+  document.getElementById('psRecupCinta').value = pasadasCfg.recupCinta === 'costado' ? 'costado' : 'bajar'; // v125
+  psRenderInfoCinta();
   psRenderBloques();
 }
 // ---- motor ----
@@ -4526,10 +4695,9 @@ function psExpandir(cfg) {
   cfg.bloques.forEach(b => { total += b.n; });
   let k = 0;
   cfg.bloques.forEach(b => {
-    const obj = psObjetivo(b);
     for (let i = 0; i < b.n; i++) {
       k++;
-      fases.push({ tipo: 'pasada', n: k, total, dist: b.dist, obj });
+      fases.push({ tipo: 'pasada', n: k, total, dist: b.dist, obj: psObjetivo(b, i) }); // v121: por pasada (para 'seq')
       fases.push({ tipo: 'recup', recup: b.recup, seg: b.recupSeg || 90 });
     }
   });
@@ -4542,21 +4710,61 @@ function iniciarPasadasSesion(t0) {
   if (!(pasadasCfg.usar && pasadasCfg.bloques.length) || modo === 'calibracion') { tile.style.display = 'none'; return false; }
   const fases = psExpandir(pasadasCfg);
   if (fases.some(f => f.tipo === 'pasada' && !f.obj)) { toast('Pasadas: falta el ritmo de algún bloque (armá el plan de carrera o poné el ritmo a mano)'); tile.style.display = 'none'; return false; }
-  pasEstado = { fases, i: -1, etapa: pasadasCfg.calentMin > 0 ? 'calent' : 'cuenta', t0: t0, d0: 0, cuentaHasta: t0 + 6, beepados: {},
+  // v124: sin entrada en calor arranca en 'inicio' y el primer tick pasa a la cuenta (así la cinta se
+  // mueve cuando la sesión ya está armada: modo, velocidad y plan por bloques ya definidos)
+  pasEstado = { fases, i: -1, etapa: pasadasCfg.calentMin > 0 ? 'calent' : 'inicio', t0: t0, d0: 0, cuentaHasta: t0 + 6, beepados: {},
                 resultados: [], tol: pasadasCfg.tolSeg || 8, avisoCadaM: pasadasCfg.avisoCadaM || 0, calentSeg: (pasadasCfg.calentMin || 0) * 60,
                 pSum: 0, pN: 0, pMax: 0, prevT: t0, prevD: 0, ultAviso: 0, bajoDesde: null };
   tile.style.display = 'block';
   desbloquearAudio();
-  if (pasEstado.etapa === 'cuenta') psAnunciarCuenta();
-  else hablar('Entrada en calor de ' + pasadasCfg.calentMin + ' minutos. Después arrancan las pasadas.');
+  if (pasEstado.etapa === 'calent') hablar('Entrada en calor de ' + pasadasCfg.calentMin + ' minutos. Después arrancan las pasadas.');
   return true;
+}
+// v124: ¿la app maneja la velocidad de la cinta? Solo en modo Manual y si no hay otra cosa imponiéndola
+function psCintaActiva() { return modo === 'manual' && !planActivo && !testVmaActivo; }
+function psVelRecup() { return pasadasCfg.velRecupKmh > 0 ? pasadasCfg.velRecupKmh : 0; }
+/* v125: recuperación "al costado" (pedido de Hugo, para recuperaciones cortas): la cinta sigue
+   andando y él se para con los pies en los costados. Entre una pasada y la siguiente (recuperación y
+   cuenta) la app NO suma distancia, y si la próxima pasada es a otro ritmo la cinta cambia mientras
+   tanto. La primera cuenta (antes de la pasada 1) y el final se corren arriba de la cinta. */
+function psCostado() { return pasadasCfg.recupCinta === 'costado' && psCintaActiva(); }
+function psAlCostadoAhora() {
+  const E = pasEstado;
+  return !!E && psCostado() && E.resultados.length > 0 && (E.etapa === 'recup' || E.etapa === 'cuenta');
+}
+function psRenderInfoCinta() {
+  const el = document.getElementById('psCintaInfo'); if (!el) return;
+  const costado = pasadasCfg.recupCinta === 'costado';
+  document.getElementById('lblPsVelRecup').textContent = costado ? 'Entrada en calor y final a (km/h)' : 'Recuperación y entrada en calor a (km/h)';
+  el.textContent = 'Solo en modo Manual. Antes de cada pasada la cinta va al ritmo objetivo' +
+    (costado ? '; en la recuperación sigue andando (a la velocidad de la próxima pasada) y la distancia no cuenta hasta el "¡Ya!". Agarrate de las barandas para subir.'
+             : ' y en la recuperación baja a esta velocidad.') +
+    ' Con el ESP32 lo hace sola; si no, te dice a cuánto ponerla. 0 = no tocar la velocidad.';
 }
 function psProxPasada() { const E = pasEstado; for (let k = E.i + 1; k < E.fases.length; k++) if (E.fases[k].tipo === 'pasada') return E.fases[k]; return null; }
 function psAnunciarCuenta() {
   const F = psProxPasada(); if (!F) return;
-  hablar('Pasada ' + F.n + ' de ' + F.total + '. ' + (F.dist === 1000 ? 'Mil metros' : F.dist + ' metros') + ' a ' + decirRitmo(F.obj) + '. Preparado.');
+  const E = pasEstado, cinta = E.cintaCuenta === 'mano' ? ' Poné la cinta a ' + decirKmh(kmhDeRitmo(F.obj)) + '.' : '';
+  const subite = psAlCostadoAhora() ? ' Subite a la cinta.' : ''; // v125
+  hablar('Pasada ' + F.n + ' de ' + F.total + '. ' + (F.dist === 1000 ? 'Mil metros' : F.dist + ' metros') + ' a ' + decirRitmo(F.obj) + '.' + cinta + subite + ' Preparado.');
 }
-function psIrACuenta(t) { const E = pasEstado; E.etapa = 'cuenta'; E.cuentaHasta = t + 6; E.beepados = {}; psAnunciarCuenta(); }
+function psIrACuenta(t) {
+  const E = pasEstado; E.etapa = 'cuenta'; E.beepados = {}; E.cintaCuenta = null;
+  let cuenta = 6;
+  // v124: en la cinta, la velocidad de la pasada se pone durante la cuenta; si el ESP32 tarda más
+  // en acelerar que los 6 s de la cuenta, la cuenta se estira (la pasada arranca con la cinta ya a ritmo)
+  const F = psProxPasada();
+  if (F && psCintaActiva()) {
+    const kmh = kmhDeRitmo(F.obj), rampa = segundosRampaCinta(kmh);
+    E.cintaCuenta = llevarCintaA(kmh, 'Pasada ' + F.n);
+    if (E.cintaCuenta === 'esp32') cuenta = Math.max(6, Math.ceil(rampa) + 3);
+    else if (E.cintaCuenta === 'mano') cuenta = 10; // tiempo para tocar los botones de la cinta
+    // v125: si la cinta todavía está cambiando (empezó en la recuperación), la cuenta espera a que termine
+    if (cintaCaracteristica && colaCinta.length) cuenta = Math.max(cuenta, Math.ceil(colaCinta.length * INTERVALO_COLA_CINTA_MS / 1000) + 3);
+    if (psAlCostadoAhora()) cuenta = Math.max(cuenta, 8); // tiempo para subirse
+  }
+  E.cuentaHasta = t + cuenta; psAnunciarCuenta();
+}
 function psEmpezarPasada(t) {
   const E = pasEstado;
   E.i = E.fases.indexOf(psProxPasada());
@@ -4579,14 +4787,22 @@ function psTerminarPasada(t, hecho, cortada) {
     (Math.abs(dif) <= 2 ? 'Justo en el objetivo.' : Math.abs(dif) + ' segundos ' + (dif > 0 ? 'más lento' : 'más rápido') + ' que el objetivo.'));
   logBLE('Pasada ' + F.n + ': ' + nombreDist(dist) + ' en ' + segAMMSS(tiempo) + (ritmo ? ' (' + segAMMSS(ritmo) + '/km, obj ' + segAMMSS(F.obj) + ')' : '') + (cortada ? ' — cortada' : ''), '#4FD8C4');
   const sig = E.fases[E.i + 1];
-  if (!sig) { E.etapa = 'fin'; E.i = E.fases.length; setTimeout(() => hablar('Pasadas terminadas. Buen trabajo.'), 4500); return; }
+  // v124: en la cinta, al terminar la pasada baja a la velocidad de recuperación (y al final, para soltar)
+  // v125: al costado, la cinta no baja: va directo a la velocidad de la próxima pasada (si cambia)
+  const proxP = sig ? E.fases.slice(E.i + 1).find(f => f.tipo === 'pasada') : null;
+  const vr = !psCintaActiva() ? 0 : (psCostado() && proxP) ? kmhDeRitmo(proxP.obj) : psVelRecup();
+  const cintaRec = vr ? llevarCintaA(vr, !sig ? 'Fin de las pasadas' : psCostado() ? 'Próxima pasada' : 'Recuperación') : null;
+  const txtCinta = (psCostado() && sig ? ' Al costado.' : '') + (cintaRec === 'mano' ? ' Cinta a ' + decirKmh(vr) + '.' : '');
+  if (!sig) { E.etapa = 'fin'; E.i = E.fases.length; setTimeout(() => hablar('Pasadas terminadas. Buen trabajo.' + txtCinta), 4500); return; }
   E.i++; E.etapa = 'recup'; E.t0 = t; E.bajoDesde = null; E.pulsoIniRecup = pulsoFin; // v118: la barra mide cuánto bajó desde acá
   E.limite = sig.recup === 'tiempo' ? null : psLimiteZona(sig.recup === 'z1' ? 1 : 2);
-  setTimeout(() => { if (pasEstado && pasEstado.etapa === 'recup') hablar(sig.recup === 'tiempo' ? 'Recuperación de ' + decirTiempo(sig.seg) + '.' : 'Recuperá hasta zona ' + (sig.recup === 'z1' ? 1 : 2) + (E.limite ? ', ' + E.limite + ' pulsaciones.' : '.')); }, 4500);
+  setTimeout(() => { if (pasEstado && pasEstado.etapa === 'recup') hablar((sig.recup === 'tiempo' ? 'Recuperación de ' + decirTiempo(sig.seg) + '.' : 'Recuperá hasta zona ' + (sig.recup === 'z1' ? 1 : 2) + (E.limite ? ', ' + E.limite + ' pulsaciones.' : '.')) + txtCinta); }, 4500);
 }
 function revisarPasadas(t, pulso) {
   const E = pasEstado; if (!E) return;
   const d = distanciaAcumM;
+  if (E.etapa === 'inicio') psIrACuenta(t); // v124
+  if (E.etapa === 'calent' && !E.cintaCalent) { E.cintaCalent = true; if (psCintaActiva() && psVelRecup()) llevarCintaA(psVelRecup(), 'Entrada en calor'); } // v124
   if (E.etapa === 'calent') { if (t - E.t0 >= E.calentSeg) psIrACuenta(t); }
   else if (E.etapa === 'cuenta') {
     const r = Math.ceil(E.cuentaHasta - t);
@@ -4620,7 +4836,7 @@ function revisarPasadas(t, pulso) {
 function psSiguiente() {
   const E = pasEstado; if (!E || !sesionActiva) return;
   const t = tiempoTranscurridoSeg();
-  if (E.etapa === 'calent' || E.etapa === 'recup') psIrACuenta(t);
+  if (E.etapa === 'calent' || E.etapa === 'recup' || E.etapa === 'inicio') psIrACuenta(t);
   else if (E.etapa === 'cuenta') psEmpezarPasada(t);
   else if (E.etapa === 'pasada') psTerminarPasada(t, distanciaAcumM - E.d0, true);
   renderTilePasadas(t, actual.pulso);
@@ -5127,8 +5343,8 @@ async function conectarCintaBLE() {
 // toques de "−") sin que el cooldown de 300ms del firmware se coma la mayoría. 400ms deja margen
 // sobre ese cooldown y sobre el pulso de 150ms.
 const INTERVALO_COLA_CINTA_MS = 400;
-// Cuánto cambia la cinta REAL por cada toque de botón. PENDIENTE de confirmar con la cinta de
-// Hugo — si cada toque sube/baja otra cantidad, se corrige solo acá.
+// Cuánto cambia la cinta REAL por cada toque de botón. Confirmado por Hugo (14/10/2026): 0,1 km/h
+// por toque. Si algún día cambia de cinta y es otra cantidad, se corrige solo acá.
 const PASO_CINTA_KMH = 0.1;
 let colaCinta = [];
 let colaCintaTimer = null;
@@ -5182,6 +5398,32 @@ function moverCintaA(objetivoKmh) {
   velCintaEstimadaKmh = Math.round((velCintaEstimadaKmh + pasos * PASO_CINTA_KMH) * 10) / 10;
   logBLE('Cinta: ' + Math.abs(pasos) + ' toque(s) de ' + (pasos > 0 ? '+' : '−') + ' → ' + velCintaEstimadaKmh.toFixed(1) + ' km/h', '#4FD8C4');
   return true;
+}
+
+/* v124: llevar la cinta a una velocidad desde el plan de carrera o las pasadas (modo Manual).
+   Con el ESP32 y velocidad de referencia: toques de +/− (la velocidad de la app sube de a 0,1 junto
+   con la cinta). Sin eso: la app pasa a esa velocidad y avisa en pantalla a cuánto ponerla.
+   Devuelve 'esp32' si la mueve sola, 'mano' si hay que ponerla a mano, null si ya estaba ahí. */
+function kmhDeRitmo(r) { return r > 0 ? Math.round(36000 / r) / 10 : null; }
+function decirKmh(k) { const r = Math.round(k * 10) / 10; return String(Math.floor(r)) + (r % 1 ? ' coma ' + Math.round((r % 1) * 10) : ''); }
+function llevarCintaA(kmh, txt) {
+  kmh = Math.round(kmh * 10) / 10;
+  if (!(kmh > 0)) return null;
+  if (cintaCaracteristica && velCintaEstimadaKmh != null) {
+    if (!moverCintaA(kmh)) return null;
+    toast((txt ? txt + ': ' : '') + 'cinta → ' + kmh.toFixed(1) + ' km/h');
+    return 'esp32';
+  }
+  if (Math.abs(velocidadManualKmh - kmh) < 0.05) return null;
+  aplicarVelocidadCinta(kmh);
+  toast((txt ? txt + ': ' : '') + 'poné la cinta a ' + kmh.toFixed(1) + ' km/h');
+  logBLE('Cinta a mano: ' + kmh.toFixed(1) + ' km/h' + (txt ? ' (' + txt + ')' : ''), '#d29922');
+  return 'mano';
+}
+// segundos que tarda la cinta en llegar a kmh tocando de a 0,1 (cola de 400 ms por toque)
+function segundosRampaCinta(kmh) {
+  if (!(cintaCaracteristica && velCintaEstimadaKmh != null)) return 0;
+  return Math.abs(kmh - velCintaEstimadaKmh) / PASO_CINTA_KMH * INTERVALO_COLA_CINTA_MS / 1000;
 }
 
 function handleHR(event) {
@@ -7434,7 +7676,10 @@ function iniciarSesion() {
   // VMA), hace falta saber qué marca la cinta AHORA para calcular cuántos toques mandar en cada
   // cambio. Cancelar deja la referencia en null: la sesión arranca igual, pero la cinta se
   // maneja a mano como antes (el plan solo avisa).
-  if (cintaCaracteristica && (usaPlan || haceTestVma)) {
+  // v124: también el plan de carrera y las pasadas mueven la cinta en modo Manual
+  const usaPlanCarreraCinta = modo === 'manual' && planCarrera && planCarrera.usar && planCarrera.parciales && planCarrera.parciales.length;
+  const usaPasadasCinta = modo === 'manual' && pasadasCfg.usar && pasadasCfg.bloques.length;
+  if (cintaCaracteristica && (usaPlan || haceTestVma || usaPlanCarreraCinta || usaPasadasCinta)) {
     vaciarColaCinta();
     const resp = prompt('¿Qué velocidad marca la cinta AHORA? (km/h)\nArrancala antes con su botón Start.', '');
     const v = resp == null ? NaN : parseFloat(String(resp).replace(',', '.'));
@@ -7725,7 +7970,8 @@ function tick() {
     const zonaParaPlan = (zonas.umbralPulso && actual.pulso) ? zonaPorPulso(actual.pulso, zonas.umbralPulso) : null;
     actualizarPlan(t, zonaParaPlan);
   }
-  const velocidad = actual.velocidad || 0; // m/s
+  // v125: parado al costado de la cinta entre pasadas → no se mueve (la cinta sí, él no)
+  const velocidad = (modo === 'manual' && psAlCostadoAhora()) ? 0 : (actual.velocidad || 0); // m/s
   const ritmoSegKm = velocidad > 0.1 ? (1000 / velocidad) : null;
   const pulso = actual.pulso || 0;
   const cadencia = actual.cadencia || 0;
@@ -8147,7 +8393,7 @@ function finalizarSesion(automatica) {
   // Se llama DESPUÉS de guardar la sesión para que recalcularZonasDesdeMejores() pueda encontrarla al buscar el pulso.
   // v119: con plan de carrera activo (y no siendo test ni pasadas) es una carrera: el umbral se
   // estima antes que los mejores esfuerzos, así queda protegido y el TSS sale con el umbral nuevo.
-  if (sesion.planCarrera && !datosTestUmbral && !sesion.pasadas && sesion.distanciaM >= 3000) {
+  if (sesion.planCarrera && !sesion.planCarrera.segmento && modo !== 'manual' && !datosTestUmbral && !sesion.pasadas && sesion.distanciaM >= 3000) { // v124: un segmento o la cinta son entrenamiento
     const rc = aplicarUmbralCarrera(sesion.id, puntosSesion, false);
     if (rc.sesion) Object.assign(sesion, rc.sesion, { puntos: sesion.puntos });
   }
@@ -9062,7 +9308,9 @@ function renderResumenSesion(s, contenedorId) {
   // v108: resultado contra el plan de carrera
   if (s.planCarrera) {
     const pc = s.planCarrera, dif = s.duracionSeg - pc.tiempoPlanSeg;
-    extra += 'Plan de carrera ' + pc.distKm + ' km en ' + segAHMS(pc.tiempoPlanSeg) + (s.distanciaM >= pc.distKm * 1000 - 20 ? ' → <b>' + formatearDelta(dif) + '</b>' : '') +
+    const distObj = pc.segmento ? pc.segmento.hastaKm - pc.segmento.desdeKm : pc.distKm; // v124
+    extra += (pc.segmento ? 'Segmento del plan de ' + pc.distKm + ' km (km ' + String(pc.segmento.desdeKm).replace('.', ',') + ' a ' + String(pc.segmento.hastaKm).replace('.', ',') + ')' : 'Plan de carrera ' + pc.distKm + ' km') +
+      ' en ' + segAHMS(pc.tiempoPlanSeg) + (s.distanciaM >= distObj * 1000 - 20 ? ' → <b>' + formatearDelta(dif) + '</b>' : '') +
       ' · alarmas: ' + pc.alarmasPulso + ' de pulso, ' + pc.alarmasRitmo + ' de ritmo<br>';
   }
   // v107: cómo se calculó el TSS
