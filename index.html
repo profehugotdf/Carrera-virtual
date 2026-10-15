@@ -235,7 +235,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v126</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v128</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -252,6 +252,7 @@
         <button id="btnModoAireLibre" onclick="seleccionarModo('aire_libre')">Aire libre</button>
         <button id="btnModoCalibracion" onclick="seleccionarModo('calibracion')">Calibración</button>
       </div>
+      <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin:0 0 8px;"><input type="checkbox" id="chkBandaAuto" style="width:auto; margin-top:3px;" checked onchange="setBandaAuto(this.checked)"> Banda automática: se conecta sola a la de siempre; si no puede, al tocar Iniciar te muestra la lista para elegirla</label>
 
       <div id="panelBLE" style="display:none;">
         <button class="btn" id="btnConectarReloj" onclick="conectarRelojBLE()">Conectar sensor de ritmo/cadencia (BLE RSC)</button>
@@ -468,6 +469,7 @@
         <div style="flex:1;"><label id="lblPsVelRecup">Recuperación y entrada en calor a (km/h)</label><input type="text" inputmode="decimal" id="psVelRecup" value="6" oninput="psDesdeForm()"></div>
       </div>
       <div class="estado-conexion" id="psCintaInfo" style="margin-top:4px;"></div>
+      <label style="display:flex; gap:8px; align-items:flex-start; font-size:13px; margin-top:8px;"><input type="checkbox" id="psLanzada" style="width:auto; margin-top:3px;" checked onchange="psDesdeForm()"> Arranque lanzado: después del "¡Ya!", la pasada empieza a contar cuando llegás al 85 % del ritmo objetivo (no cuentan la reacción ni la aceleración)</label>
       <div class="estado-conexion" id="psResumen" style="margin-top:8px;"></div>
     </div>
 
@@ -656,7 +658,7 @@
         <div class="chip" id="chipBanda" onclick="conectarBandaSegunModo()">Banda</div>
       </div>
       <div class="fila">
-        <button class="btn primario" id="btnIniciar" onclick="iniciarSesion()" style="flex:2;">Iniciar</button>
+        <button class="btn primario" id="btnIniciar" onclick="iniciarConBanda()" style="flex:2;">Iniciar</button>
         <button class="btn" id="btnPausar" onclick="pausarSesion()" disabled>Pausar</button>
         <button class="btn peligro" id="btnFinalizar" onclick="finalizarSesion()" disabled>Finalizar</button>
       </div>
@@ -3324,6 +3326,16 @@
        pasada j cubre del metro j·dist al (j+1)·dist del plan, al ritmo
        medio del plan en ese trecho (igual que antes si la pasada mide lo
        mismo que el tramo); propone las pasadas que cubren la carrera.
+   v127: BANDA AUTOMÁTICA (casilla en Fuente de datos, activada por
+       defecto): reconexión sola a la banda recordada (al abrir, cada
+       30 s y al iniciar); si el navegador no la recuerda, Iniciar abre
+       la lista; si se corta en la sesión, reintenta cada 15 s.
+   v128: PASADAS CON ARRANQUE LANZADO (opción, activada por defecto):
+       tras el "¡Ya!" (etapa 'arranque') la pasada cuenta recién al
+       llegar al 85 % de la velocidad objetivo (GPS: Doppler crudo); si
+       no llega en 15 s, cuenta desde el "¡Ya!". En los primeros 50 m la
+       pantalla muestra el ritmo de ahora en vez del promedio (que antes
+       quedaba en --:-- y después marcaba la aceleración).
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4617,6 +4629,7 @@ function psDesdeForm() {
   const vr = parseFloat(String(document.getElementById('psVelRecup').value).replace(',', '.')); // v124
   pasadasCfg.velRecupKmh = vr >= 0 ? Math.round(vr * 10) / 10 : 6;
   pasadasCfg.recupCinta = document.getElementById('psRecupCinta').value; // v125
+  pasadasCfg.lanzada = document.getElementById('psLanzada').checked; // v128
   psGuardar(); psRenderResumen(); psRenderInfoCinta();
 }
 function psEdit(i, campo, valor) {
@@ -4701,6 +4714,7 @@ function cargarFormPasadas() {
   document.getElementById('psAviso').value = String(pasadasCfg.avisoCadaM || 0);
   document.getElementById('psVelRecup').value = String(pasadasCfg.velRecupKmh != null ? pasadasCfg.velRecupKmh : 6).replace('.', ','); // v124
   document.getElementById('psRecupCinta').value = pasadasCfg.recupCinta === 'costado' ? 'costado' : 'bajar'; // v125
+  document.getElementById('psLanzada').checked = pasadasCfg.lanzada !== false; // v128
   psRenderInfoCinta();
   psRenderBloques();
 }
@@ -4780,11 +4794,35 @@ function psIrACuenta(t) {
   }
   E.cuentaHasta = t + cuenta; psAnunciarCuenta();
 }
+/* v128: ARRANQUE LANZADO (pedido de Hugo: al largar la pasada la pantalla quedaba en --:-- y después
+   marcaba 7:00 yendo a 5:00, y el promedio final quedaba más lento). Con "arranque lanzado" (por
+   defecto), después del "¡Ya!" la pasada recién empieza a contar tiempo y metros cuando la velocidad
+   llega al 85 % de la del objetivo (GPS: velocidad Doppler sin suavizar; cinta: la de la cinta) — no
+   entran la reacción ni la aceleración, como apretar la vuelta del reloj ya corriendo. Si en 15 s no
+   llega, cuenta desde el "¡Ya!" igual. Sin la opción, cuenta desde el "¡Ya!" como antes. */
+const PS_UMBRAL_LANZADA = 0.85, PS_ESPERA_LANZADA_SEG = 15;
+function psLanzada() { return pasadasCfg.lanzada !== false; }
+function psVelInst() {
+  if (modo === 'aire_libre' && gpsVelCrudaAt && Date.now() - gpsVelCrudaAt < 3000) return gpsVelCruda || 0;
+  return (modo === 'manual' && psAlCostadoAhora()) ? 0 : (actual.velocidad || 0);
+}
 function psEmpezarPasada(t) {
   const E = pasEstado;
   E.i = E.fases.indexOf(psProxPasada());
-  E.etapa = 'pasada'; E.t0 = t; E.d0 = distanciaAcumM; E.prevT = t; E.prevD = 0; E.pSum = 0; E.pN = 0; E.pMax = 0; E.ultAviso = 0;
+  E.yaT = t; E.yaD = distanciaAcumM;
   pitido(1, true); hablar('¡Ya!');
+  if (psLanzada()) { E.etapa = 'arranque'; psRevisarArranque(t); }
+  else psArrancarPasada(t, t, distanciaAcumM);
+}
+function psArrancarPasada(tAhora, t0, d0) {
+  const E = pasEstado;
+  E.etapa = 'pasada'; E.t0 = t0; E.d0 = d0; E.prevT = tAhora; E.prevD = Math.max(0, distanciaAcumM - d0); E.pSum = 0; E.pN = 0; E.pMax = 0; E.ultAviso = 0;
+  E.lanzadaSeg = Math.round(t0 - E.yaT);
+}
+function psRevisarArranque(t) {
+  const E = pasEstado, F = E.fases[E.i];
+  if (psVelInst() >= PS_UMBRAL_LANZADA * 1000 / F.obj) psArrancarPasada(t, t, distanciaAcumM);
+  else if (t - E.yaT >= PS_ESPERA_LANZADA_SEG) { psArrancarPasada(t, E.yaT, E.yaD); logBLE('Pasada ' + F.n + ': no llegó al 85 % del ritmo en 15 s, cuenta desde el "¡Ya!"', '#d29922'); }
 }
 function psTerminarPasada(t, hecho, cortada) {
   const E = pasEstado, F = E.fases[E.i];
@@ -4794,7 +4832,8 @@ function psTerminarPasada(t, hecho, cortada) {
   if (!cortada && hecho > E.prevD) tiempo = (E.prevT - E.t0) + (F.dist - E.prevD) / (hecho - E.prevD) * (t - E.prevT);
   const dist = cortada ? Math.round(hecho) : F.dist, ritmo = dist > 0 ? tiempo / dist * 1000 : null;
   const r = { n: F.n, dist, obj: F.obj, tiempo: Math.round(tiempo * 10) / 10, ritmo: ritmo ? Math.round(ritmo) : null,
-              pulsoMed: E.pN ? Math.round(E.pSum / E.pN) : null, pulsoMax: E.pMax || null, cortada: !!cortada };
+              pulsoMed: E.pN ? Math.round(E.pSum / E.pN) : null, pulsoMax: E.pMax || null, cortada: !!cortada,
+              lanzadaSeg: psLanzada() ? E.lanzadaSeg : null }; // v128: segundos entre el "¡Ya!" y que empezó a contar
   E.resultados.push(r);
   const dif = ritmo ? Math.round(ritmo - F.obj) : 0;
   pitido(2, false);
@@ -4823,7 +4862,8 @@ function revisarPasadas(t, pulso) {
     const r = Math.ceil(E.cuentaHasta - t);
     if (r <= 0) psEmpezarPasada(t);
     else if (r <= 3 && !E.beepados[r]) { E.beepados[r] = true; pitido(1, false); }
-  } else if (E.etapa === 'pasada') {
+  } else if (E.etapa === 'arranque') psRevisarArranque(t); // v128
+  if (E.etapa === 'pasada') {
     const F = E.fases[E.i], hecho = d - E.d0;
     if (pulso) { E.pSum += pulso; E.pN++; E.pMax = Math.max(E.pMax, pulso); }
     if (hecho >= F.dist) psTerminarPasada(t, hecho, false);
@@ -4853,6 +4893,7 @@ function psSiguiente() {
   const t = tiempoTranscurridoSeg();
   if (E.etapa === 'calent' || E.etapa === 'recup' || E.etapa === 'inicio') psIrACuenta(t);
   else if (E.etapa === 'cuenta') psEmpezarPasada(t);
+  else if (E.etapa === 'arranque') psArrancarPasada(t, t, distanciaAcumM); // v128: arrancar ya
   else if (E.etapa === 'pasada') psTerminarPasada(t, distanciaAcumM - E.d0, true);
   renderTilePasadas(t, actual.pulso);
 }
@@ -4867,10 +4908,12 @@ function renderTilePasadas(t, pulso) {
     const F = E.fases[E.i], hecho = Math.max(0, distanciaAcumM - E.d0), trans = t - E.t0;
     const rm = hecho >= 20 ? trans / hecho * 1000 : null;
     const difT = trans - hecho * F.obj / 1000; // + = atrás del objetivo a esta distancia
+    // v128: en los primeros 50 m el promedio todavía no dice nada: se muestra el ritmo de ahora
+    const vi = psVelInst(), ahora = hecho < 50 && vi > 0.5 ? 1000 / vi : null, mostrar = ahora || rm;
     set('psObj', segAMMSS(F.obj));
-    set('psGrande', rm ? segAMMSS(rm) : '--:--');
-    if (rm) { clase = psEstadoRitmo(rm, F.obj, E.tol); claseNum = clase; }
-    set('psLbl', 'PASADA ' + F.n + '/' + F.total + ' · ' + nombreDist(F.dist).toUpperCase() + ' · ⏱ ' + segAMMSS(trans));
+    set('psGrande', mostrar ? segAMMSS(mostrar) : '--:--');
+    if (mostrar) { clase = psEstadoRitmo(mostrar, F.obj, E.tol); claseNum = clase; }
+    set('psLbl', 'PASADA ' + F.n + '/' + F.total + ' · ' + nombreDist(F.dist).toUpperCase() + (ahora ? ' · RITMO AHORA' : '') + ' · ⏱ ' + segAMMSS(trans));
     pct = hecho / F.dist * 100;
     set('psFalta', Math.max(0, Math.round(F.dist - hecho)) + ' m');
     set('psTotLbl', !rm || Math.abs(difT) < 1 ? 'EN EL OBJETIVO' : difT > 0 ? 'POR DETRÁS' : 'POR DELANTE');
@@ -4895,6 +4938,13 @@ function renderTilePasadas(t, pulso) {
     }
     set('psTotLbl', prox ? 'PRÓXIMA · PASADA ' + prox.n + '/' + prox.total : 'ÚLTIMA RECUPERACIÓN');
     set('psTot', prox ? nombreDist(prox.dist) + ' a ' + segAMMSS(prox.obj) : ''); totChico = true;
+  } else if (E.etapa === 'arranque') { // v128
+    const F = E.fases[E.i], vi = psVelInst();
+    set('psObj', segAMMSS(F.obj));
+    set('psGrande', vi > 0.5 ? segAMMSS(1000 / vi) : '--:--');
+    set('psLbl', '¡YA! · PASADA ' + F.n + '/' + F.total + ' · ACELERÁ');
+    set('psFalta', F.dist + ' m'); pct = 0;
+    set('psTotLbl', 'EMPIEZA A CONTAR A'); set('psTot', segAMMSS(F.obj / PS_UMBRAL_LANZADA) + '/km'); totChico = true;
   } else if (E.etapa === 'cuenta') {
     const prox = psProxPasada();
     set('psObj', prox ? segAMMSS(prox.obj) : '--:--');
@@ -5068,6 +5118,9 @@ function manejarDesconexionReloj(motivo) {
     estadoEl.className = 'estado-conexion err';
   }
   if (sesionActiva) toast('Se cortó el dato del sensor de ritmo/cadencia');
+  // v127: si el pulso venía por esta misma conexión (HRM-Pro+), también se cortó
+  if (motivo !== 'watchdog' && hrDesdeReloj && !bandaColgada) { bandaColgada = true; logBLE('Pulso: venía por la misma banda, también cortado', '#f85149'); }
+  if (motivo !== 'watchdog') programarReconexionBanda('rsc'); // v127
 }
 function manejarDesconexionBandaHR(motivo) {
   if (bandaColgada) return;
@@ -5081,6 +5134,7 @@ function manejarDesconexionBandaHR(motivo) {
     estadoEl.className = 'estado-conexion err';
   }
   if (sesionActiva) toast('Se cortó el dato de pulso');
+  if (motivo !== 'watchdog') programarReconexionBanda('hr'); // v127
 }
 setInterval(() => {
   const ahora = Date.now();
@@ -5125,25 +5179,27 @@ async function leerBateria(server) {
     return null; // el dispositivo no expone este servicio, o no lo permite leer — no es un error real
   }
 }
-async function conectarRelojBLE() {
-  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+// v127: deviceDado = reconectar sin abrir la lista (dispositivo ya permitido); silencioso = sin
+// marcar error en pantalla si no responde (reintentos automáticos). Devuelve true si conectó.
+async function conectarRelojBLE(deviceDado, silencioso) {
+  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return false; }
   const estadoEl = estadoElReloj();
   try {
-    logBLE('— Conectar banda (RSC + pulso): abriendo selector…');
+    logBLE(deviceDado ? '— Banda: reconectando sola a ' + (deviceDado.name || 'la banda') + '…' : '— Conectar banda (RSC + pulso): abriendo selector…');
     primerDatoRscLogueado = false; primerDatoHrLogueado = false; // así un reintento vuelve a loguear el primer dato
-    estadoEl.textContent = 'Buscando sensor (reloj en modo carrera virtual/tapiz, o banda de pecho compatible)...';
+    estadoEl.textContent = deviceDado ? 'Reconectando la banda…' : 'Buscando sensor (reloj en modo carrera virtual/tapiz, o banda de pecho compatible)...';
     estadoEl.className = 'estado-conexion';
-    const device = await navigator.bluetooth.requestDevice({
+    const device = deviceDado || await navigator.bluetooth.requestDevice({
       filters: [{ services: ['running_speed_and_cadence'] }],
       optionalServices: ['heart_rate', 'battery_service']
     });
-    logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
+    if (!deviceDado) logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
     dispositivoReloj = device;
     ultimoDatoRelojAt = Date.now(); relojColgado = false; relojConectado = false; // reseteo AL EMPEZAR el intento (no al
     // terminar) — si no, dispositivoReloj queda "verdadero" desde acá pero el timestamp se queda
     // viejo durante todo el handshake (hasta 10s con el timeout de v53), y el watchdog puede
     // dispararse sobre una conexión que todavía está en curso, no realmente colgada.
-    device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita'));
+    if (!device._correrDesc) { device._correrDesc = true; device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita')); }
     let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
     let server;
     try {
@@ -5172,7 +5228,7 @@ async function conectarRelojBLE() {
       await conTimeout(hrChar.startNotifications(), 8000, 'timeout HR');
       ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = true;
       logBLE('Notificaciones de pulso activadas — esperando latidos', '#3fb950');
-      hrOk = true;
+      hrOk = true; hrDesdeReloj = true; // v127
     } catch (e) {
       logBLE('Sin canal de pulso en este dispositivo (' + e.message + ') — usá "Conectar solo pulso"', '#d29922');
       // el reloj no expone HR por este canal (ej. tenés "broadcast HR" apagado), o tardó
@@ -5183,10 +5239,16 @@ async function conectarRelojBLE() {
       + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
     logBLE('Sensor conectado' + (bateria != null ? ' — batería ' + bateria + '%' : ''), '#3fb950');
+    recordarBanda('rsc', device); // v127
+    return true;
   } catch (e) {
-    estadoEl.textContent = 'No se pudo conectar: ' + e.message;
-    estadoEl.className = 'estado-conexion err';
-    logBLE('ERROR: ' + e.message, '#f85149');
+    if (silencioso) { estadoEl.textContent = 'Banda sin conectar: la app la sigue buscando sola.'; estadoEl.className = 'estado-conexion'; logBLE('Banda: todavía no responde (' + e.message.slice(0, 60) + ')', '#d29922'); }
+    else {
+      estadoEl.textContent = 'No se pudo conectar: ' + e.message;
+      estadoEl.className = 'estado-conexion err';
+      logBLE('ERROR: ' + e.message, '#f85149');
+    }
+    return false;
   }
 }
 // v97: diagnóstico de cadencia en el Registro de sensores. Antes solo se avisaba del PRIMER dato,
@@ -5246,22 +5308,22 @@ function handleRSC(event) {
     actual.cadencia = cadence;
   }
 }
-async function conectarBandaHR() {
-  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
+async function conectarBandaHR(deviceDado, silencioso) { // v127: mismos parámetros que conectarRelojBLE
+  if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return false; }
   const estadoEl = estadoElBanda();
   try {
-    logBLE('— Conectar solo pulso: abriendo selector…');
+    logBLE(deviceDado ? '— Pulso: reconectando sola a ' + (deviceDado.name || 'la banda') + '…' : '— Conectar solo pulso: abriendo selector…');
     primerDatoHrLogueado = false;
-    estadoEl.textContent = 'Buscando banda de pulso...';
+    estadoEl.textContent = deviceDado ? 'Reconectando la banda…' : 'Buscando banda de pulso...';
     estadoEl.className = 'estado-conexion';
-    const device = await navigator.bluetooth.requestDevice({
+    const device = deviceDado || await navigator.bluetooth.requestDevice({
       filters: [{ services: ['heart_rate'] }],
       optionalServices: ['battery_service']
     });
-    logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
-    dispositivoBanda = device;
+    if (!deviceDado) logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
+    dispositivoBanda = device; hrDesdeReloj = false; // v127
     ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = false; // mismo criterio que en conectarRelojBLE — reseteo al empezar, no al terminar
-    device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita'));
+    if (!device._correrDesc) { device._correrDesc = true; device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita')); }
     let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
     let server;
     try {
@@ -5282,12 +5344,85 @@ async function conectarBandaHR() {
     estadoEl.textContent = 'Banda conectada (' + device.name + ')' + (bateria != null ? ' — batería ' + bateria + '%' : '');
     estadoEl.className = 'estado-conexion ok';
     logBLE('Banda conectada' + (bateria != null ? ' — batería ' + bateria + '%' : ''), '#3fb950');
+    recordarBanda('hr', device); // v127
+    return true;
   } catch (e) {
-    estadoEl.textContent = 'No se pudo conectar: ' + e.message;
-    estadoEl.className = 'estado-conexion err';
-    logBLE('ERROR: ' + e.message, '#f85149');
+    if (silencioso) { estadoEl.textContent = 'Banda sin conectar: la app la sigue buscando sola.'; estadoEl.className = 'estado-conexion'; logBLE('Pulso: todavía no responde (' + e.message.slice(0, 60) + ')', '#d29922'); }
+    else {
+      estadoEl.textContent = 'No se pudo conectar: ' + e.message;
+      estadoEl.className = 'estado-conexion err';
+      logBLE('ERROR: ' + e.message, '#f85149');
+    }
+    return false;
   }
 }
+/* ============================================================
+   v127: BANDA AUTOMÁTICA (pedido de Hugo: una sesión de pasadas quedó sin pulso por olvidarse de
+   conectarla). El navegador solo deja abrir la lista de dispositivos con un toque, así que:
+   1) Si Chrome ya tiene permiso para la banda (getDevices, o el dispositivo elegido antes en esta
+      misma apertura de la app), se reconecta sola: al abrir la app, cada 30 s hasta que responda
+      (sin sesión en marcha) y al tocar Iniciar.
+   2) Si no, el toque de Iniciar abre la lista: se elige la banda y la sesión arranca (Cancelar = largar
+      sin pulso).
+   3) Si se corta en plena sesión, reintenta sola cada 15 s (hasta 20 veces) y avisa al volver.
+   ============================================================ */
+const K_BANDA_AUTO = LS_PREFIX + 'banda_auto';
+let bandaAutoCfg = Object.assign({ activo: true, tipo: null, id: null, nombre: null }, lsGet(K_BANDA_AUTO, {}));
+let autoBandaEnCurso = false, reconBandaTimer = null, hrDesdeReloj = false;
+function bandaOk() { return (relojConectado && !relojColgado) || (bandaConectada && !bandaColgada); }
+function recordarBanda(tipo, device) {
+  Object.assign(bandaAutoCfg, { tipo, id: device.id || null, nombre: device.name || null });
+  lsSet(K_BANDA_AUTO, bandaAutoCfg);
+}
+function setBandaAuto(on) { bandaAutoCfg.activo = !!on; lsSet(K_BANDA_AUTO, bandaAutoCfg); if (on) autoconectarBanda('al activarlo'); }
+async function buscarBandaRecordada() {
+  if (!bandaAutoCfg.tipo) return null;
+  const enMemoria = bandaAutoCfg.tipo === 'hr' ? dispositivoBanda : dispositivoReloj;
+  if (enMemoria) return enMemoria;
+  if (!navigator.bluetooth || !navigator.bluetooth.getDevices) return null;
+  try {
+    const devs = await navigator.bluetooth.getDevices();
+    return devs.find(d => bandaAutoCfg.id && d.id === bandaAutoCfg.id) || devs.find(d => bandaAutoCfg.nombre && d.name === bandaAutoCfg.nombre) || null;
+  } catch (e) { return null; }
+}
+async function autoconectarBanda(origen) {
+  if (!bandaAutoCfg.activo || bandaOk() || autoBandaEnCurso || !navigator.bluetooth) return false;
+  const d = await buscarBandaRecordada(); if (!d) return false;
+  autoBandaEnCurso = true;
+  try { return await (bandaAutoCfg.tipo === 'hr' ? conectarBandaHR(d, true) : conectarRelojBLE(d, true)); }
+  finally { autoBandaEnCurso = false; }
+}
+// al tocar Iniciar: primero sin preguntar; si Chrome no recuerda la banda, la lista (dentro del toque)
+async function iniciarConBanda() {
+  if (sesionActiva) return;
+  if (bandaAutoCfg.activo && modo && modo !== 'calibracion' && navigator.bluetooth && !bandaOk() && !autoBandaEnCurso) {
+    const d = await buscarBandaRecordada();
+    if (d) autoconectarBanda('al iniciar'); // en segundo plano: la sesión arranca ya y el pulso entra en cuanto conecte
+    else {
+      toast('Elegí tu banda en la lista (Cancelar = largar sin pulso)');
+      await (bandaAutoCfg.tipo === 'hr' ? conectarBandaHR() : conectarRelojBLE());
+    }
+  }
+  iniciarSesion();
+}
+function programarReconexionBanda(tipo) {
+  if (reconBandaTimer || !bandaAutoCfg.activo) return;
+  const dev = tipo === 'hr' ? dispositivoBanda : dispositivoReloj; if (!dev) return;
+  let intentos = 0;
+  const intentar = async () => {
+    reconBandaTimer = null;
+    if (tipo === 'hr' ? (bandaConectada && !bandaColgada) : (relojConectado && !relojColgado)) return;
+    if (++intentos > 20) { logBLE('Banda: dejé de reintentar (20 intentos). Tocá el chip "Banda" para conectarla.', '#f85149'); return; }
+    const ok = await (tipo === 'hr' ? conectarBandaHR(dev, true) : conectarRelojBLE(dev, true));
+    if (ok) { toast('Banda reconectada'); if (sesionActiva) hablar('Banda reconectada.'); }
+    else reconBandaTimer = setTimeout(intentar, 15000);
+  };
+  reconBandaTimer = setTimeout(intentar, 3000);
+}
+// al abrir la app, y cada 30 s mientras no haya sesión ni banda
+setTimeout(() => { const c = document.getElementById('chkBandaAuto'); if (c) c.checked = bandaAutoCfg.activo; }, 0);
+setTimeout(() => autoconectarBanda('al abrir'), 1500);
+setInterval(() => { if (!sesionActiva) autoconectarBanda('reintento'); }, 30000);
 
 /* ============================================================
    CONTROL DE LA CINTA POR BLUETOOTH (ESP32 + optoacopladores)
@@ -5591,6 +5726,7 @@ function procesarPosicionGPS(pos) {
   while (gpsVentana.length > 2 && t - gpsVentana[0].t > 15) gpsVentana.shift();
   const w0 = gpsVentana[0], dtw = t - w0.t;
   const velPosiciones = dtw >= 5 ? (distanciaAcumM - w0.d) / dtw : null;
+  if (dop) { gpsVelCruda = speed; gpsVelCrudaAt = Date.now(); } // v128: sin suavizar, para el arranque de las pasadas
   if (dop) {
     velDopplerSuave = velDopplerSuave == null ? speed : velDopplerSuave + 0.25 * (speed - velDopplerSuave);
     actual.velocidad = velDopplerSuave < 0.3 ? 0 : velDopplerSuave;
@@ -5603,6 +5739,7 @@ function procesarPosicionGPS(pos) {
       ' · últimos 15 s ' + (velPosiciones != null ? r(velPosiciones) : '--') + ' · en pantalla ' + r(actual.velocidad) + ' · ' + (distanciaAcumM / 1000).toFixed(2) + ' km');
   }
 }
+let gpsVelCruda = null, gpsVelCrudaAt = 0; // v128
 let gpsVentana = [], velDopplerSuave = null, gpsLogAt = 0, gpsSuave = null, gpsAnclaSuave = null, gpsElevRef = null, gpsAltSuave = null; // v112
 
 // v107: pendiente al aire libre con la altura del GPS. La del teléfono es ruidosa (±5-10 m): se usa
