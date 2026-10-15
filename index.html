@@ -235,7 +235,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v128</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v129</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -453,6 +453,11 @@
       <div style="display:flex; gap:6px; flex-wrap:wrap; margin:8px 0;">
         <button class="btn chico" onclick="psPlantilla(1)">1×km1 · 2×km5 · 3×km10 · recup Z2</button>
         <button class="btn chico" onclick="psPlantilla(2)">5×km1 · recup Z1</button>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center; margin:0 0 8px;">
+        <select id="psSelPlantilla" style="flex:1;" onchange="psCargarPlantilla()"><option value="">— Mis plantillas —</option></select>
+        <button class="btn chico" style="width:auto; padding:8px 10px;" onclick="psGuardarPlantilla()" title="Guardar como plantilla">💾 Guardar</button>
+        <button class="btn chico" style="width:auto; padding:8px 10px;" onclick="psBorrarPlantilla()" title="Borrar la plantilla elegida">🗑</button>
       </div>
       <div id="psBloques"></div>
       <button class="btn chico" onclick="psAgregarBloque()" style="margin-top:6px;">+ Agregar bloque</button>
@@ -3336,6 +3341,10 @@
        no llega en 15 s, cuenta desde el "¡Ya!". En los primeros 50 m la
        pantalla muestra el ritmo de ahora en vez del promedio (que antes
        quedaba en --:-- y después marcaba la aceleración).
+   v129: PLANTILLAS DE PASADAS: "Mis plantillas" + Guardar / borrar en
+       la tarjeta de Pasadas. Guarda toda la configuración (no "usar");
+       cargar reemplaza lo armado (con confirmación) y tilda "Hacer
+       pasadas". Ritmos del plan: del plan vigente al cargar.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4655,6 +4664,53 @@ function psAgregarBloque() {
     : { n: 3, dist: 1000, fuente: psKmsPlan() ? 'km' : 'manual', km: 1, ritmoManual: psRitmoKmPlan(1) || 360, recup: 'z2', recupSeg: 90 });
   psGuardar(); psRenderBloques();
 }
+/* v129: PLANTILLAS DE PASADAS (como las del plan por bloques). Se guarda toda la configuración
+   (bloques, entrada en calor, tolerancia, avisos, cinta, arranque lanzado), no "usar". Los bloques que
+   toman el ritmo del plan de carrera (km, tramo, en orden) lo siguen tomando del plan VIGENTE al
+   cargarla; los de ritmo a mano quedan fijos. Mismo nombre = reemplaza (con confirmación). */
+const K_PASADAS_PLANTILLAS = LS_PREFIX + 'pasadas_plantillas';
+function psNombreSugerido() {
+  const bl = pasadasCfg.bloques;
+  return bl.map(b => b.n + '×' + nombreDist(b.dist).replace(' ', '')).join(' + ') + (bl.length ? '' : 'Pasadas');
+}
+function psRenderPlantillas(selId) {
+  const sel = document.getElementById('psSelPlantilla'); if (!sel) return;
+  const pl = lsGet(K_PASADAS_PLANTILLAS, []);
+  sel.innerHTML = '<option value="">— Mis plantillas' + (pl.length ? ' (' + pl.length + ')' : ': todavía ninguna') + ' —</option>' +
+    pl.map(p => '<option value="' + p.id + '">' + p.nombre.replace(/</g, '&lt;') + '</option>').join('');
+  sel.value = selId || '';
+}
+function psGuardarPlantilla() {
+  if (!pasadasCfg.bloques.length) { toast('Agregá al menos un bloque antes de guardar'); return; }
+  const nombre = prompt('¿Con qué nombre guardo estas pasadas?', psNombreSugerido());
+  if (!nombre || !nombre.trim()) return;
+  const pl = lsGet(K_PASADAS_PLANTILLAS, []);
+  const cfg = JSON.parse(JSON.stringify(pasadasCfg)); delete cfg.usar;
+  const igual = pl.find(p => p.nombre.toLowerCase() === nombre.trim().toLowerCase());
+  if (igual && !confirm('Ya hay una plantilla "' + igual.nombre + '". ¿Reemplazarla por esta?')) return;
+  const item = { id: igual ? igual.id : 'ps_' + Date.now(), nombre: nombre.trim(), fecha: new Date().toISOString(), cfg };
+  if (igual) pl[pl.indexOf(igual)] = item; else pl.push(item);
+  lsSet(K_PASADAS_PLANTILLAS, pl);
+  psRenderPlantillas(item.id);
+  toast('Plantilla "' + item.nombre + '" guardada');
+}
+function psCargarPlantilla() {
+  const sel = document.getElementById('psSelPlantilla'), id = sel.value; if (!id) return;
+  const p = lsGet(K_PASADAS_PLANTILLAS, []).find(x => x.id === id); if (!p) return;
+  if (pasadasCfg.bloques.length && !confirm('Esto reemplaza las pasadas que tenés armadas por "' + p.nombre + '". ¿Seguro?')) { sel.value = ''; return; }
+  const usar = pasadasCfg.usar;
+  pasadasCfg = Object.assign(JSON.parse(JSON.stringify(p.cfg)), { usar: true });
+  psGuardar(); cargarFormPasadas(); psRenderPlantillas(id);
+  toast('Plantilla "' + p.nombre + '" cargada: ajustala si querés' + (usar ? '' : ' (quedó tildado "Hacer pasadas")'));
+}
+function psBorrarPlantilla() {
+  const sel = document.getElementById('psSelPlantilla'), id = sel.value;
+  if (!id) { toast('Elegí en la lista la plantilla a borrar'); return; }
+  const pl = lsGet(K_PASADAS_PLANTILLAS, []), p = pl.find(x => x.id === id); if (!p) return;
+  if (!confirm('¿Borrar la plantilla "' + p.nombre + '"? No se puede deshacer.')) return;
+  lsSet(K_PASADAS_PLANTILLAS, pl.filter(x => x.id !== id));
+  psRenderPlantillas(); toast('Plantilla borrada');
+}
 function psQuitarBloque(i) { pasadasCfg.bloques.splice(i, 1); psGuardar(); psRenderBloques(); }
 function psPlantilla(n) {
   const k = Math.max(1, psKmsPlan()), km = x => Math.min(k, x);
@@ -4715,6 +4771,7 @@ function cargarFormPasadas() {
   document.getElementById('psVelRecup').value = String(pasadasCfg.velRecupKmh != null ? pasadasCfg.velRecupKmh : 6).replace('.', ','); // v124
   document.getElementById('psRecupCinta').value = pasadasCfg.recupCinta === 'costado' ? 'costado' : 'bajar'; // v125
   document.getElementById('psLanzada').checked = pasadasCfg.lanzada !== false; // v128
+  if (!document.getElementById('psSelPlantilla').value) psRenderPlantillas(); // v129
   psRenderInfoCinta();
   psRenderBloques();
 }
@@ -9647,6 +9704,8 @@ function exportarBackupJSON() {
     editorKeyframes: lsGet('correr_editor_keyframes_v3', null),
     rutas: bigGet(K_RUTAS, []), // v103: recorridos GPX
     formaCompartida: lsGet(K_FORMA_COMPARTIDA, []).filter(r => r.deporte === 'correr'),
+    plantillasPlan: lsGet(K_PLANES, []), // v129: plantillas del plan por bloques
+    plantillasPasadas: lsGet(K_PASADAS_PLANTILLAS, []), // v129
   };
   const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
@@ -9696,6 +9755,13 @@ function procesarBackupJSON(texto) {
     _rutaCache = null; poblarOpcionesRutas();
   }
   if (paquete.zonas && !lsGet(K_ZONAS, null)) lsSet(K_ZONAS, paquete.zonas); // solo si no tenías zonas cargadas ya
+  // v129: plantillas (plan por bloques y pasadas), sin duplicar por id
+  [[K_PLANES, paquete.plantillasPlan], [K_PASADAS_PLANTILLAS, paquete.plantillasPasadas]].forEach(([k, lista]) => {
+    if (!Array.isArray(lista) || !lista.length) return;
+    const locales = lsGet(k, []), ids = new Set(locales.map(x => x.id));
+    lsSet(k, [...locales, ...lista.filter(x => !ids.has(x.id))]);
+  });
+  renderSelectorPlantillas(); psRenderPlantillas();
   let editorRestaurado = false;
   if (paquete.editorKeyframes) {
     const editorLocal = lsGet('correr_editor_keyframes_v3', null);
