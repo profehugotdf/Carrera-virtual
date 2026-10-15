@@ -235,7 +235,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v125</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v126</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -459,7 +459,7 @@
         <div style="flex:1;"><label>Entrada en calor (min)</label><input type="number" id="psCalent" min="0" step="1" value="0" oninput="psDesdeForm()"></div>
         <div style="flex:1;"><label>Tolerancia (± s/km)</label><input type="number" id="psTol" min="2" step="1" value="8" oninput="psDesdeForm()"></div>
         <div style="flex:1;"><label>Aviso dentro de la pasada</label><select id="psAviso" onchange="psDesdeForm()">
-          <option value="0">No</option><option value="100">cada 100 m</option><option value="200">cada 200 m</option><option value="400">cada 400 m</option><option value="500">cada 500 m</option>
+          <option value="0">No</option><option value="100">cada 100 m</option><option value="200">cada 200 m</option><option value="400">cada 400 m</option><option value="500">cada 500 m</option><option value="1000">cada 1 km</option>
         </select></div>
       </div>
       <div style="display:flex; gap:8px; margin-top:8px; align-items:flex-end;">
@@ -3319,6 +3319,11 @@
        suma distancia ni ritmo. La cuenta espera a que la cinta termine
        de cambiar (mínimo 8 s para subirse) y dice "Subite a la cinta".
        La entrada en calor y el final siguen a la velocidad elegida.
+   v126: pasadas de 1,5 / 2 / 3 km (y aviso "cada 1 km" dentro de la
+       pasada). "Tramos en orden" pasa a ir por distancia de carrera: la
+       pasada j cubre del metro j·dist al (j+1)·dist del plan, al ritmo
+       medio del plan en ese trecho (igual que antes si la pasada mide lo
+       mismo que el tramo); propone las pasadas que cubren la carrera.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4554,7 +4559,7 @@ function exportarPlanFIT() {
 const K_PASADAS = LS_PREFIX + 'pasadas';
 let pasadasCfg = lsGet(K_PASADAS, null) || { usar: false, calentMin: 0, tolSeg: 8, avisoCadaM: 0, bloques: [] };
 let pasEstado = null;
-const PS_DISTANCIAS = [1000, 500, 400, 200, 100];
+const PS_DISTANCIAS = [3000, 2000, 1500, 1000, 500, 400, 200, 100]; // v126: + 1,5 / 2 / 3 km
 function psRitmoKmPlan(km) {
   if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) return null;
   const pk = planAgrupadoPorKm(planCarrera).parciales;
@@ -4575,12 +4580,22 @@ function psRitmoTramoPlan(k) {
   const t = psTramosPlan(); if (!t.length) return null;
   return t[Math.min(t.length, Math.max(1, k)) - 1].ritmo || null;
 }
+/* v126: "en orden" por distancia de carrera: la pasada j cubre del metro j·dist al (j+1)·dist del plan
+   y su objetivo es el ritmo medio del plan en ese trecho (con pasadas del largo del tramo es lo mismo
+   que antes: tramo j+1). Pasado el final del plan se repite el último tramo. */
+function psPasadasParaPlan(dist) { return planCarrera && planCarrera.distKm ? Math.min(100, Math.max(1, Math.round(planCarrera.distKm * 1000 / dist))) : 0; }
+function psRitmoSeq(dist, j) {
+  if (!planCarrera || !planCarrera.parciales || !planCarrera.parciales.length) return null;
+  const total = planCarrera.distKm * 1000, a = j * dist, bfin = Math.min(total, a + dist);
+  if (a >= total - 1) return planCarrera.parciales[planCarrera.parciales.length - 1];
+  return Math.round((tiempoPlanEnDistancia(planCarrera, bfin) - tiempoPlanEnDistancia(planCarrera, a)) / (bfin - a) * 1000);
+}
 function psNombreTramo(t) { return (t.desde === 0 ? '0' : nombreDist(t.desde)) + ' – ' + nombreDist(t.hasta); }
 // j: número de pasada dentro del bloque (0, 1, 2…), solo importa en 'seq'
 function psObjetivo(b, j) {
   if (b.fuente === 'manual') return b.ritmoManual;
   if (b.fuente === 'tramo') return psRitmoTramoPlan(b.tramo || 1);
-  if (b.fuente === 'seq') return psRitmoTramoPlan(1 + (j || 0));
+  if (b.fuente === 'seq') return psRitmoSeq(b.dist, j || 0);
   return psRitmoKmPlan(b.km);
 }
 // límite de pulso de una zona: el pulso está en la zona z o por debajo si pulso <= límite
@@ -4610,7 +4625,7 @@ function psEdit(i, campo, valor) {
   else if (campo === 'dist') b.dist = parseInt(valor, 10);
   else if (campo === 'fuente') {
     if (valor === 'manual') { b.fuente = 'manual'; if (!b.ritmoManual) b.ritmoManual = psObjetivo(b, 0) || 360; }
-    else if (valor === 'seq') { b.fuente = 'seq'; const nt = psTramosPlan().length; if (nt && b.n < nt) b.n = Math.min(100, nt); } // v121: propone una pasada por tramo
+    else if (valor === 'seq') { b.fuente = 'seq'; const np = psPasadasParaPlan(b.dist); if (np && b.n < np) b.n = np; } // v121/v126: propone cubrir todo el plan
     else if (valor.startsWith('tr:')) { b.fuente = 'tramo'; b.tramo = parseInt(valor.slice(3), 10); }
     else { b.fuente = 'km'; b.km = parseInt(valor.slice(3), 10); }
   }
@@ -4654,7 +4669,7 @@ function psRenderBloques() {
     fuentes += '<option value="manual"' + (b.fuente === 'manual' ? ' selected' : '') + '>ritmo a mano</option>';
     return '<div class="ps-bloque">' +
       '<input type="number" min="1" max="100" value="' + b.n + '" onchange="psEdit(' + i + ',\'n\',this.value)" title="Cantidad">' +
-      '<select onchange="psEdit(' + i + ',\'dist\',this.value)">' + PS_DISTANCIAS.map(d => '<option value="' + d + '"' + (b.dist === d ? ' selected' : '') + '>× ' + (d === 1000 ? '1 km' : d + ' m') + '</option>').join('') + '</select>' +
+      '<select onchange="psEdit(' + i + ',\'dist\',this.value)">' + PS_DISTANCIAS.map(d => '<option value="' + d + '"' + (b.dist === d ? ' selected' : '') + '>× ' + nombreDist(d) + '</option>').join('') + '</select>' +
       '<select onchange="psEdit(' + i + ',\'fuente\',this.value)">' + fuentes + '</select>' +
       (b.fuente === 'manual' ? '<span class="ps-sub">ritmo /km</span><input type="text" inputmode="numeric" value="' + segAMMSS(b.ritmoManual) + '" onchange="psEdit(' + i + ',\'ritmoManual\',this.value)">' : '') +
       '<span class="ps-sub">recuperación</span><select onchange="psEdit(' + i + ',\'recup\',this.value)"><option value="z2"' + (b.recup === 'z2' ? ' selected' : '') + '>recup hasta Z2</option><option value="z1"' + (b.recup === 'z1' ? ' selected' : '') + '>recup hasta Z1</option><option value="tiempo"' + (b.recup === 'tiempo' ? ' selected' : '') + '>recup por tiempo</option></select>' +
@@ -4669,13 +4684,13 @@ function psRenderResumen() {
   if (bl.some(b => b.recup !== 'tiempo')) txt += zonas.umbralPulso ? ' · Z1 ≤ ' + psLimiteZona(1) + ' ppm, Z2 ≤ ' + psLimiteZona(2) + ' ppm (umbral ' + zonas.umbralPulso + ')'
     : ' · ⚠️ sin umbral de pulso cargado en Zonas: la recuperación por zona va a ser de 90 s';
   if (bl.some(b => b.fuente !== 'manual') && !psKmsPlan()) txt += ' · ⚠️ armá primero el plan de carrera para usar sus ritmos';
-  // v121: bloques "en orden": qué tramos recorren
-  const nt = psTramosPlan().length;
+  // v121/v126: bloques "en orden": qué parte de la carrera recorren
   bl.filter(b => b.fuente === 'seq').forEach(b => {
-    if (!nt) return;
-    txt += ' · en orden: ' + b.n + ' × ' + nombreDist(b.dist) + (b.n === nt ? ' = todos los tramos del plan' : b.n < nt ? ' = tramos 1 a ' + b.n + ' de ' + nt : ' (después del tramo ' + nt + ' se repite el último)');
-    const L = (planCarrera && planCarrera.tramoM) || 1000;
-    if (b.dist !== L) txt += ' ⚠️ las pasadas son de ' + nombreDist(b.dist) + ' y los tramos de ' + nombreDist(L);
+    if (!planCarrera || !planCarrera.distKm) return;
+    const total = planCarrera.distKm * 1000, cubre = Math.min(total, b.n * b.dist);
+    txt += ' · en orden: ' + b.n + ' × ' + nombreDist(b.dist) + ' = ' + (cubre >= total - 1 ? 'toda la carrera' : 'los primeros ' + nombreDist(cubre)) +
+      (b.n * b.dist > total + 1 ? ' (lo que pasa del final, al ritmo del último tramo)' : '') +
+      (b.dist > ((planCarrera.tramoM) || 1000) ? ' · cada pasada al ritmo medio de sus tramos' : '');
   });
   document.getElementById('psResumen').textContent = txt;
 }
@@ -4746,7 +4761,7 @@ function psAnunciarCuenta() {
   const F = psProxPasada(); if (!F) return;
   const E = pasEstado, cinta = E.cintaCuenta === 'mano' ? ' Poné la cinta a ' + decirKmh(kmhDeRitmo(F.obj)) + '.' : '';
   const subite = psAlCostadoAhora() ? ' Subite a la cinta.' : ''; // v125
-  hablar('Pasada ' + F.n + ' de ' + F.total + '. ' + (F.dist === 1000 ? 'Mil metros' : F.dist + ' metros') + ' a ' + decirRitmo(F.obj) + '.' + cinta + subite + ' Preparado.');
+  hablar('Pasada ' + F.n + ' de ' + F.total + '. ' + (F.dist === 1000 ? 'Mil metros' : F.dist % 1000 === 0 ? (F.dist / 1000) + ' kilómetros' : F.dist + ' metros') + ' a ' + decirRitmo(F.obj) + '.' + cinta + subite + ' Preparado.');
 }
 function psIrACuenta(t) {
   const E = pasEstado; E.etapa = 'cuenta'; E.beepados = {}; E.cintaCuenta = null;
