@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v130</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v131</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3362,10 +3362,25 @@
        ("✓ SE USA"; ámbar si el plan está tildado pero corren pasadas).
        Se recuerda abierta/cerrada. El gráfico del plan se redibuja al
        abrir (plegado mide 0 de ancho).
+   v131: IPHONE. Voz: frase muda dentro del toque de Iniciar (Safari
+       exige que la primera salga de un toque), sin cancel()+speak()
+       pegados (Safari perdía la frase) y voz en español elegida de las
+       disponibles. Pitidos: sonido vacío dentro del toque. Pantalla: si
+       no se puede mantener encendida, aviso con los pasos del iPhone; si
+       la app estuvo congelada (>5 s sin segundos de sesión) se avisa en
+       el momento y queda en el informe. roundRect para Safari < 16.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
 const LS_PREFIX = 'correr_';
+// v131: ctx.roundRect no existe en Safari < 16 (iPhone viejos): reemplazo con arcos
+if (window.CanvasRenderingContext2D && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.max(0, Math.min(typeof r === 'number' ? r : (r && r[0]) || 0, w / 2, h / 2));
+    this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath(); return this;
+  };
+}
 const K_SESIONES = LS_PREFIX + 'sesiones';
 const K_ZONAS = LS_PREFIX + 'zonas';
 const K_PERFIL = LS_PREFIX + 'perfil'; // { pesoKg } — v81, para estimar potencia y calorías
@@ -3891,13 +3906,20 @@ let inicioSesionMs = 0;
 // estar visible, si la sesión sigue activa (si no, quedaría sin efecto después del primer bloqueo
 // de pantalla, que es justo el caso más común mientras corrés en la cinta con el teléfono al lado).
 let wakeLockSentinel = null;
+const ES_IOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); // v131
 async function pedirWakeLock() {
-  if (!('wakeLock' in navigator)) return;
+  // v131: si no se puede, se avisa claro — con la pantalla apagada el teléfono congela la app (en iPhone, todo)
+  const avisar = motivo => {
+    const txt = 'Este teléfono no deja que la app mantenga la pantalla encendida' + (motivo ? ' (' + motivo + ')' : '') + '. ' +
+      (ES_IOS ? 'En el iPhone: Ajustes → Pantalla y brillo → Bloqueo automático → Nunca, y modo de bajo consumo apagado.' : 'Desactivá el apagado automático de la pantalla mientras entrenás.');
+    logBLE(txt, '#f85149'); toast(txt);
+  };
+  if (!('wakeLock' in navigator)) { avisar(''); return; }
   try {
     wakeLockSentinel = await navigator.wakeLock.request('screen');
     wakeLockSentinel.addEventListener('release', () => { wakeLockSentinel = null; });
   } catch (e) {
-    logBLE('No se pudo mantener la pantalla encendida: ' + e.message, '#d29922');
+    avisar(e.message);
   }
 }
 function soltarWakeLock() {
@@ -4341,9 +4363,36 @@ function tiempoPlanEnDistancia(plan, d) {
 }
 // ---- avisos ----
 let _audioCtx = null;
+/* v131: iPhone (Safari) — pedido de Hugo: en el iPhone de su primo las pasadas no hablaban.
+   1) Safari solo deja hablar si la PRIMERA frase sale de un toque: acá (se llama desde el toque de
+      Iniciar) se dice una frase vacía, muda, que habilita las siguientes. Lo mismo con el audio de los
+      pitidos: se reproduce un sonido vacío dentro del toque.
+   2) Safari pierde la frase si se llama a speak() justo después de cancel(): ahora solo se cancela si
+      hay algo hablando, y la frase nueva sale 80 ms después.
+   3) Se elige una voz en español disponible (es-AR, si no otra variante de español). */
+let _vozDesbloqueada = false, _vozEs = null, _hablarTimer = null;
 function desbloquearAudio() {
-  try { if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)(); if (_audioCtx.state === 'suspended') _audioCtx.resume(); } catch (e) {}
+  try {
+    if (!_audioCtx) _audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (_audioCtx.state === 'suspended') _audioCtx.resume();
+    const b = _audioCtx.createBuffer(1, 1, 22050), src = _audioCtx.createBufferSource();
+    src.buffer = b; src.connect(_audioCtx.destination); src.start(0);
+  } catch (e) {}
+  try {
+    if (!_vozDesbloqueada && window.speechSynthesis) {
+      const u = new SpeechSynthesisUtterance(' '); u.volume = 0; u.lang = 'es-AR';
+      speechSynthesis.speak(u); _vozDesbloqueada = true;
+    }
+  } catch (e) {}
 }
+function vozEspanol() {
+  if (_vozEs || !window.speechSynthesis) return _vozEs;
+  const vs = speechSynthesis.getVoices(); if (!vs || !vs.length) return null;
+  const norm = l => String(l || '').replace('_', '-').toLowerCase();
+  for (const l of ['es-ar', 'es-419', 'es-us', 'es-mx', 'es-es']) { const v = vs.find(x => norm(x.lang) === l); if (v) return (_vozEs = v); }
+  return (_vozEs = vs.find(x => norm(x.lang).startsWith('es')) || null);
+}
+if (window.speechSynthesis && 'onvoiceschanged' in speechSynthesis) speechSynthesis.onvoiceschanged = () => { _vozEs = null; vozEspanol(); };
 function pitido(veces, agudo) {
   if (!_audioCtx) return;
   try {
@@ -4359,7 +4408,14 @@ function hablar(txt) {
   try {
     if (!window.speechSynthesis) return;
     const u = new SpeechSynthesisUtterance(txt); u.lang = 'es-AR'; u.rate = 1.05;
-    speechSynthesis.cancel(); speechSynthesis.speak(u);
+    const v = vozEspanol(); if (v) { u.voice = v; u.lang = v.lang; } // v131
+    // la frase nueva reemplaza a la que suena o espera (como antes); si hubo un cancel, sale 80 ms después
+    let tarde = _hablarTimer != null;
+    if (_hablarTimer) { clearTimeout(_hablarTimer); _hablarTimer = null; }
+    if (speechSynthesis.speaking || speechSynthesis.pending) { speechSynthesis.cancel(); tarde = true; }
+    if (tarde) _hablarTimer = setTimeout(() => { _hablarTimer = null; try { speechSynthesis.speak(u); } catch (e) {} }, 80);
+    else speechSynthesis.speak(u);
+    if (speechSynthesis.paused) speechSynthesis.resume();
   } catch (e) {}
 }
 function avisoPlan(tipo, texto, voz) {
@@ -5550,6 +5606,7 @@ async function autoconectarBanda(origen) {
 // al tocar Iniciar: primero sin preguntar; si Chrome no recuerda la banda, la lista (dentro del toque)
 async function iniciarConBanda() {
   if (sesionActiva) return;
+  desbloquearAudio(); // v131: dentro del toque (iPhone: si no, después no deja hablar ni pitar)
   if (bandaAutoCfg.activo && modo && modo !== 'calibracion' && navigator.bluetooth && !bandaOk() && !autoBandaEnCurso) {
     const d = await buscarBandaRecordada();
     if (d) autoconectarBanda('al iniciar'); // en segundo plano: la sesión arranca ya y el pulso entra en cuanto conecte
@@ -8004,6 +8061,7 @@ function iniciarSesion() {
   cronometro.inicio = Date.now();
   cronometro.acumulado = 0;
   inicioSesionMs = cronometro.inicio; // fijo una sola vez acá — pausarSesion() no lo toca (v83)
+  ultimoTickMs = 0; pantallaDormida = { veces: 0, seg: 0 }; // v131
   pedirWakeLock();
   distanciaAcumM = 0;
   vamAcumWh = 0;
@@ -8265,8 +8323,21 @@ function tiempoTranscurridoSeg() {
   const extra = sesionPausada ? 0 : (Date.now() - cronometro.inicio);
   return (cronometro.acumulado + extra) / 1000;
 }
+/* v131: si entre dos segundos de sesión pasaron más de 5 s, la app estuvo congelada (pantalla apagada o
+   en segundo plano: en iPhone se frena todo, voz, pasadas y GPS). Se avisa en el momento y queda en la sesión. */
+let ultimoTickMs = 0, pantallaDormida = { veces: 0, seg: 0 };
+function registrarDormida(seg) {
+  pantallaDormida.veces++; pantallaDormida.seg += seg;
+  const txt = 'La app estuvo detenida ' + Math.round(seg) + ' s (se apagó la pantalla o pasó a segundo plano): en ese rato no hubo voz, ni pasadas, ni GPS.';
+  logBLE(txt, '#f85149'); toast(txt);
+  if (pantallaDormida.veces === 1) hablar('Ojo: la pantalla se apagó y la app se detuvo. Dejá la pantalla encendida.');
+}
 function tick() {
-  if (!sesionActiva || sesionPausada) return;
+  if (!sesionActiva) return;
+  const ahoraMs = Date.now(), hueco = ultimoTickMs ? ahoraMs - ultimoTickMs : 0;
+  ultimoTickMs = ahoraMs;
+  if (sesionPausada) return;
+  if (hueco > 5000) registrarDormida(hueco / 1000);
   if (++ticksDesdeCheckpoint >= 10) { ticksDesdeCheckpoint = 0; guardarCheckpoint(); } // v104
   const t = tiempoTranscurridoSeg();
   // antes de leer la velocidad: si hay test de VMA en curso, puede que este tick cambie de escalón
@@ -8688,6 +8759,7 @@ function finalizarSesion(automatica) {
     puntos: compactarPuntos(reducirResolucion(puntosSesion, INTERVALO_GUARDADO_SEG)),
     testVma: datosTestVma, // null en una sesión normal; con datos si fue un test incremental (v61)
     testUmbral: datosTestUmbral, // null en una sesión normal; con datos si fue un test de umbral de 30' (v74)
+    pantallaDormida: pantallaDormida.veces ? { veces: pantallaDormida.veces, seg: Math.round(pantallaDormida.seg) } : null, // v131
     plan: planActivo ? { totalSeg: planActivo.totalSeg, bloques: planActivo.bloques } : null, // v64: qué plan se siguió
     notas: document.getElementById('notasSesion').value || ''
   };
@@ -9624,6 +9696,7 @@ function renderResumenSesion(s, contenedorId) {
   if (s.tssMetodo === 'ritmo_pendiente') extra += 'TSS por ritmo normalizado ajustado por pendiente: <b>' + segAMMSS(s.ngpSegKm) + '/km</b> · IF ' + s.intensidadIF.toFixed(2) + '<br>';
   else if (s.tssMetodo === 'ritmo_promedio') extra += 'TSS por ritmo promedio (sin muestras suficientes para normalizar)<br>';
   else if (s.tssMetodo === 'pulso') extra += 'TSS por pulso (no hay ritmo umbral cargado) · IF ' + s.intensidadIF.toFixed(2) + '<br>';
+  if (s.pantallaDormida) extra += '<span style="color:#f85149;">⚠ La app estuvo detenida ' + s.pantallaDormida.veces + (s.pantallaDormida.veces === 1 ? ' vez' : ' veces') + ' (' + segAMMSS(s.pantallaDormida.seg) + ' en total) porque se apagó la pantalla o pasó a segundo plano: en ese rato no hubo voz, pasadas ni GPS.</span><br>'; // v131
   if (s.fantasmaId) extra += 'vs Fantasma (final): ' + (s.fantasmaDeltaFinalSeg != null ? formatearDelta(s.fantasmaDeltaFinalSeg) : '--') + '<br>';
 
   document.getElementById(contenedorId).innerHTML =
