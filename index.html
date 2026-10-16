@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v131</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v132</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -276,7 +276,7 @@
         <div class="fila">
           <div>
             <label>Ritmo (min:seg / km)</label>
-            <input type="text" id="manualRitmo" placeholder="5:30" inputmode="numeric" onchange="actualizarManual()">
+            <input type="text" id="manualRitmo" placeholder="5:30" inputmode="decimal" onchange="actualizarManual()" onblur="normalizarRitmo(this)">
           </div>
           <div>
             <label>Cadencia (pasos/min)</label>
@@ -395,8 +395,8 @@
       <div class="estado-conexion" style="margin-bottom:8px;">Ritmo por kilómetro para competir contra él (corre como fantasma), con alarmas si te pasás de pulso o te desviás del ritmo. Se exporta a la Forerunner o a otro teléfono.</div>
       <div style="display:flex; gap:8px;">
         <div style="flex:1;"><label>Distancia (km)</label><input type="number" id="pcDist" value="10" step="0.1" min="0.5" oninput="planCarreraDesdeForm(true)"></div>
-        <div style="flex:1;"><label>Tiempo final</label><input type="text" id="pcTiempo" placeholder="1:00:00" inputmode="numeric" oninput="planCarreraDesdeForm(true, 'tiempo')"></div>
-        <div style="flex:1;"><label>o ritmo /km</label><input type="text" id="pcRitmo" placeholder="6:00" inputmode="numeric" oninput="planCarreraDesdeForm(true, 'ritmo')"></div>
+        <div style="flex:1;"><label>Tiempo final</label><input type="text" id="pcTiempo" placeholder="1:00:00" inputmode="decimal" oninput="planCarreraDesdeForm(true, 'tiempo')" onblur="normalizarTiempo(this)"></div>
+        <div style="flex:1;"><label>o ritmo /km</label><input type="text" id="pcRitmo" placeholder="6:00" inputmode="decimal" oninput="planCarreraDesdeForm(true, 'ritmo')" onblur="normalizarRitmo(this)"></div>
       </div>
       <div style="display:flex; gap:8px;">
         <div style="flex:2;"><label>Estrategia</label><select id="pcEstrategia" onchange="planCarreraDesdeForm(true)">
@@ -762,7 +762,7 @@
       <div class="fila">
         <div>
           <label>Ritmo umbral (min:seg/km)</label>
-          <input type="text" id="umbralRitmoInput" placeholder="5:00">
+          <input type="text" id="umbralRitmoInput" placeholder="5:00" inputmode="decimal" onblur="normalizarRitmo(this)">
         </div>
         <div>
           <label>Pulso umbral (bpm)</label>
@@ -3369,6 +3369,9 @@
        no se puede mantener encendida, aviso con los pasos del iPhone; si
        la app estuvo congelada (>5 s sin segundos de sesión) se avisa en
        el momento y queda en el informe. roundRect para Safari < 16.
+   v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
+       "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
+       y al salir del campo queda con dos puntos.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -3642,9 +3645,21 @@ function formatearDelta(seg) {
 }
 function parseMMSS(txt) {
   if (!txt) return null;
-  const m = txt.trim().match(/^(\d+):(\d{1,2})$/);
+  const m = txt.trim().match(/^(\d+)[:.,' ](\d{1,2})$/); // v132: también "5,30" / "5.30" (teclado del iPhone)
   if (!m) return null;
   return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+}
+/* v132: TECLADO EN EL IPHONE. Los campos de tiempo y ritmo usaban inputmode="numeric", que en el
+   iPhone abre un teclado de solo dígitos, sin ningún separador (pedido de Hugo, con foto). Ahora usan
+   inputmode="decimal" (dígitos + coma) y se puede escribir 1,00,00 o 5,30: al salir del campo se
+   reescribe con dos puntos (1:00:00, 5:30). Los lectores ya aceptaban : . , y espacio. */
+function normalizarTiempo(el) {
+  const v = textoATiempo(el.value);
+  if (v) el.value = v >= 3600 ? segAHMS(v) : segAMMSS(v);
+}
+function normalizarRitmo(el) {
+  const v = textoASeg(el.value);
+  if (v) el.value = segAMMSS(v);
 }
 function toast(msg) {
   const t = document.getElementById('toast');
@@ -4255,7 +4270,7 @@ function renderPlanCarrera(rehacerTabla) {
       let fin = 0;
       tabla.innerHTML = tr.map((l, i) => { fin += l;
         return '<div><div style="color:var(--muted); font-size:.75rem;">' + (l < L ? 'Últ. ' + l + ' m' : L === 1000 ? 'Km ' + (i + 1) : 'hasta ' + nombreDist(fin)) + '</div>' +
-        '<input type="text" inputmode="numeric" value="' + segAMMSS(p.parciales[i]) + '" onchange="editarParcialPlan(' + i + ', this)" style="padding:6px;"></div>'; }).join('');
+        '<input type="text" inputmode="decimal" value="' + segAMMSS(p.parciales[i]) + '" onchange="editarParcialPlan(' + i + ', this)" style="padding:6px;"></div>'; }).join('');
     }
     const T = tiempoTotalPlan(p), ult = p.parciales[p.parciales.length - 1];
     document.getElementById('pcTotal').innerHTML = 'Tiempo final del plan: <b>' + segAHMS(Math.round(T)) + '</b> · ritmo medio ' + segAMMSS(T / p.distKm) + '/km' +
@@ -4894,7 +4909,7 @@ function psRenderBloques() {
       '<input type="number" min="1" max="100" value="' + b.n + '" onchange="psEdit(' + i + ',\'n\',this.value)" title="Cantidad">' +
       '<select onchange="psEdit(' + i + ',\'dist\',this.value)">' + PS_DISTANCIAS.map(d => '<option value="' + d + '"' + (b.dist === d ? ' selected' : '') + '>× ' + nombreDist(d) + '</option>').join('') + '</select>' +
       '<select onchange="psEdit(' + i + ',\'fuente\',this.value)">' + fuentes + '</select>' +
-      (b.fuente === 'manual' ? '<span class="ps-sub">ritmo /km</span><input type="text" inputmode="numeric" value="' + segAMMSS(b.ritmoManual) + '" onchange="psEdit(' + i + ',\'ritmoManual\',this.value)">' : '') +
+      (b.fuente === 'manual' ? '<span class="ps-sub">ritmo /km</span><input type="text" inputmode="decimal" value="' + segAMMSS(b.ritmoManual) + '" onchange="psEdit(' + i + ',\'ritmoManual\',this.value)">' : '') +
       '<span class="ps-sub">recuperación</span><select onchange="psEdit(' + i + ',\'recup\',this.value)"><option value="z2"' + (b.recup === 'z2' ? ' selected' : '') + '>recup hasta Z2</option><option value="z1"' + (b.recup === 'z1' ? ' selected' : '') + '>recup hasta Z1</option><option value="tiempo"' + (b.recup === 'tiempo' ? ' selected' : '') + '>recup por tiempo</option></select>' +
       (b.recup === 'tiempo' ? '<input type="number" min="10" step="5" value="' + (b.recupSeg || 90) + '" onchange="psEdit(' + i + ',\'recupSeg\',this.value)" title="segundos">' : '') +
       '<button class="btn chico ps-x" onclick="psQuitarBloque(' + i + ')">✕</button></div>';
