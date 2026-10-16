@@ -80,6 +80,15 @@
 
   .card{background:var(--panel); border:1px solid var(--borde); border-radius:14px; padding:14px; margin-bottom:12px;}
   .card h2{font-size:13px; text-transform:uppercase; letter-spacing:1px; color:var(--muted); margin:0 0 10px;}
+  /* v130: tarjetas plegables con resumen (plan, pasadas, fantasma, registro) */
+  .card h2.plegable{cursor:pointer; display:flex; align-items:center; gap:8px; user-select:none; -webkit-tap-highlight-color:transparent;}
+  .card h2.plegable.plegada{margin-bottom:0;}
+  .card h2.plegable .pl-tit{flex:none;}
+  .card h2.plegable .pl-res{flex:1; min-width:0; text-align:right; text-transform:none; letter-spacing:0; font-size:12px; font-weight:500; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .card h2.plegable .pl-res.activo{color:var(--ritmo); font-weight:700;}
+  .card h2.plegable .pl-res.warn{color:#d29922; font-weight:700;}
+  .card h2.plegable .pl-flecha{flex:none; font-size:14px; transition:transform .2s;}
+  .card h2.plegable.plegada .pl-flecha{transform:rotate(-90deg);}
   .fila{display:flex; gap:10px;}
   .fila > *{flex:1;}
 
@@ -235,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v129</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v130</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -478,8 +487,9 @@
       <div class="estado-conexion" id="psResumen" style="margin-top:8px;"></div>
     </div>
 
-    <div class="card">
-      <h2>Fantasma (opcional)</h2>
+    <div class="card" id="cardFantasma">
+      <h2>Fantasma</h2>
+      <div id="fantasmaCuerpo">
       <label>Corré contra una sesión anterior</label>
       <select id="selectFantasma">
         <option value="">Sin fantasma</option>
@@ -493,6 +503,7 @@
         <option value="sendero">Sendero / vereda</option>
         <!-- v101: recorridos GPX guardados, se agregan acá como value="ruta:<id>" (ver poblarOpcionesRutas) -->
       </select>
+      </div><!-- /fantasmaCuerpo (v130) -->
 
       <div class="hud-item grande ritmo" id="tileMeta" style="display:none; margin-top:12px;">
         <div class="val" id="hudMeta">--</div>
@@ -3345,6 +3356,12 @@
        la tarjeta de Pasadas. Guarda toda la configuración (no "usar");
        cargar reemplaza lo armado (con confirmación) y tilda "Hacer
        pasadas". Ritmos del plan: del plan vigente al cargar.
+   v130: TARJETAS PLEGABLES CON RESUMEN: Plan de carrera, Pasadas,
+       Fantasma (solo su configuración) y Registro de sensores arrancan
+       plegadas, con una línea en el título: qué tienen y si se usan
+       ("✓ SE USA"; ámbar si el plan está tildado pero corren pasadas).
+       Se recuerda abierta/cerrada. El gráfico del plan se redibuja al
+       abrir (plegado mide 0 de ancho).
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -4663,6 +4680,87 @@ function psAgregarBloque() {
     ? { n: 3, dist: L, fuente: 'tramo', tramo: 1, km: 1, ritmoManual: psRitmoTramoPlan(1) || 360, recup: 'z2', recupSeg: 90 }
     : { n: 3, dist: 1000, fuente: psKmsPlan() ? 'km' : 'manual', km: 1, ritmoManual: psRitmoKmPlan(1) || 360, recup: 'z2', recupSeg: 90 });
   psGuardar(); psRenderBloques();
+}
+/* ============================================================
+   v130: TARJETAS PLEGABLES CON RESUMEN (pedido de Hugo, a partir de una propuesta de "modo rápido"):
+   Plan de carrera, Pasadas, Fantasma y Registro de sensores arrancan plegadas y muestran en el título
+   una línea con lo que tienen y si se van a usar ("✓ SE USA" en verde; en ámbar si hay algo que no va
+   a correr, ej. plan tildado con pasadas también tildadas). Tocar el título abre/cierra; se recuerda.
+   Del Fantasma se pliega solo la configuración: los recuadros de la sesión en vivo quedan afuera.
+   ============================================================ */
+const K_PLEGADAS = LS_PREFIX + 'plegadas';
+const PLEGABLES = [
+  { card: 'cardPlanCarrera', clave: 'plan', resumen: () => resumenPlegPlan(), alAbrir: () => { if (planCarrera) dibujarGraficoPlan(planCarrera); } },
+  { card: 'cardPasadas', clave: 'pasadas', resumen: () => resumenPlegPasadas() },
+  { card: 'cardFantasma', clave: 'fantasma', cuerpo: 'fantasmaCuerpo', resumen: () => resumenPlegFantasma() },
+  { card: 'cardLogBLE', clave: 'log', resumen: () => resumenPlegLog() },
+];
+function hayPasadasActivas() { return !!(pasadasCfg && pasadasCfg.usar && pasadasCfg.bloques && pasadasCfg.bloques.length); }
+function resumenPlegPlan() {
+  const p = planCarrera;
+  if (!p || !p.parciales || !p.parciales.length) return ['sin armar', ''];
+  const seg = (p.segDesdeKm || p.segHastaKm) ? ' · km ' + String(p.segDesdeKm || 0).replace('.', ',') + '–' + String(p.segHastaKm || p.distKm).replace('.', ',') : '';
+  const txt = String(p.distKm).replace('.', ',') + ' km en ' + segAHMS(Math.round(tiempoTotalPlan(p))) + seg;
+  if (!p.usar) return [txt + ' · no se usa', ''];
+  if (hayPasadasActivas()) return ['⚠ no corre: hay pasadas · ' + txt, 'warn'];
+  return [txt + ' · ✓ SE USA', 'activo'];
+}
+function resumenPlegPasadas() {
+  const c = pasadasCfg;
+  if (!c || !c.bloques || !c.bloques.length) return ['sin bloques', ''];
+  const sel = document.getElementById('psSelPlantilla');
+  const nom = sel && sel.value ? sel.options[sel.selectedIndex].textContent : psNombreSugerido();
+  return [nom + (c.usar ? ' · ✓ SE USA' : ' · no se usa'), c.usar ? 'activo' : ''];
+}
+function resumenPlegFantasma() {
+  const f = document.getElementById('selectFantasma'), e = document.getElementById('selectEscenario');
+  const et = !e || e.value === 'ninguno' ? 'sin escenario' : e.options[e.selectedIndex].textContent;
+  if (planCarrera && planCarrera.usar && planCarrera.parciales && planCarrera.parciales.length && !hayPasadasActivas()) return ['el plan hace de fantasma · ' + et, ''];
+  const ft = f && f.value ? 'vs ' + f.options[f.selectedIndex].textContent : 'sin fantasma';
+  return [ft + ' · ' + et, f && f.value ? 'activo' : ''];
+}
+function resumenPlegLog() {
+  const el = document.getElementById('logBLE'), u = el && el.lastElementChild;
+  if (!u) return ['', ''];
+  return [u.textContent.slice(10), /f85149/i.test(u.getAttribute('style') || '') || u.style.color === 'rgb(248, 81, 73)' ? 'warn' : ''];
+}
+function aplicarPlegable(P, plegada) {
+  P._cuerpo.style.display = plegada ? 'none' : '';
+  P._h2.classList.toggle('plegada', plegada);
+  if (!plegada && P.alAbrir) requestAnimationFrame(P.alAbrir);
+}
+function togglePlegable(clave) {
+  const P = PLEGABLES.find(x => x.clave === clave); if (!P || !P._h2) return;
+  const plegada = !P._h2.classList.contains('plegada');
+  aplicarPlegable(P, plegada);
+  const est = lsGet(K_PLEGADAS, {}); est[clave] = plegada; lsSet(K_PLEGADAS, est);
+}
+function initPlegables() {
+  const est = lsGet(K_PLEGADAS, {});
+  PLEGABLES.forEach(P => {
+    const card = document.getElementById(P.card); if (!card) return;
+    const h2 = card.querySelector('h2'); if (!h2 || h2.classList.contains('plegable')) return;
+    let cuerpo = P.cuerpo ? document.getElementById(P.cuerpo) : null;
+    if (!cuerpo) { cuerpo = document.createElement('div'); cuerpo.className = 'pl-cuerpo'; while (h2.nextSibling) cuerpo.appendChild(h2.nextSibling); card.appendChild(cuerpo); }
+    const titulo = h2.textContent;
+    h2.classList.add('plegable');
+    h2.innerHTML = '<span class="pl-tit"></span><span class="pl-res" id="plRes_' + P.clave + '"></span><span class="pl-flecha">▾</span>';
+    h2.firstChild.textContent = titulo;
+    h2.onclick = () => togglePlegable(P.clave);
+    P._h2 = h2; P._cuerpo = cuerpo;
+    aplicarPlegable(P, est[P.clave] !== undefined ? !!est[P.clave] : true); // por defecto plegadas
+  });
+  actualizarResumenesPlegables();
+  setInterval(actualizarResumenesPlegables, 1000);
+}
+function actualizarResumenesPlegables() {
+  PLEGABLES.forEach(P => {
+    const el = document.getElementById('plRes_' + P.clave); if (!el) return;
+    let r; try { r = P.resumen(); } catch (e) { r = ['', '']; }
+    if (el.textContent !== r[0]) el.textContent = r[0];
+    const cls = 'pl-res' + (r[1] ? ' ' + r[1] : '');
+    if (el.className !== cls) el.className = cls;
+  });
 }
 /* v129: PLANTILLAS DE PASADAS (como las del plan por bloques). Se guarda toda la configuración
    (bloques, entrada en calor, tolerancia, avisos, cinta, arranque lanzado), no "usar". Los bloques que
@@ -10947,6 +11045,7 @@ document.getElementById('hudPendiente').textContent = '0.0%';
 renderSelectorFantasma();
 cargarFormPlanCarrera(); // v108
 cargarFormPasadas(); // v116
+initPlegables(); // v130
 initBigStore().then(ofrecerRecuperacion); // v103: base interna; v104: después, ofrece retomar una sesión interrumpida
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
