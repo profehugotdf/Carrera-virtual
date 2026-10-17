@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v132</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v133</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3372,6 +3372,13 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v133: RITMO AL AIRE LIBRE MÁS RÁPIDO (pedido de Hugo: retraso en las
+       pasadas). Velocidad Doppler: mediana de los últimos 3 datos (un
+       salto suelto no entra) seguida con suavizado adaptable (0,25 si la
+       diferencia es chica, hasta 0,95 si es grande): de 7:35 a 5:00 la
+       pantalla pasa a 5:05 en 2 s (antes 6:43, 6:11, 5:50…). GPS con
+       maximumAge 0 (antes podía dar una posición de hasta 1 s). Con
+       pasadas, arranque y recuadro se revisan al llegar cada dato GPS.
    ============================================================ */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -5834,7 +5841,7 @@ function iniciarGPS() {
   estadoEl.className = 'estado-conexion';
   gpsUltimo = null;
   watchIdGPS = navigator.geolocation.watchPosition(procesarPosicionGPS, errorGPS, {
-    enableHighAccuracy: true, maximumAge: 1000, timeout: 10000
+    enableHighAccuracy: true, maximumAge: 0, timeout: 10000 // v133: 0 = nunca una posición guardada (antes hasta 1 s vieja)
   });
 }
 /* v115: estado de la largada y vigilancia del GPS durante la sesión */
@@ -5903,7 +5910,7 @@ function procesarPosicionGPS(pos) {
 
   // sin sesión corriendo, todo sigue al último punto (al reanudar se arranca de ahí)
   if (!sesionActiva || sesionPausada) {
-    gpsUltimo = punto; gpsVentana = []; velDopplerSuave = null; gpsSuave = null; gpsElevRef = null; gpsAltSuave = null;
+    gpsUltimo = punto; gpsVentana = []; velDopplerSuave = null; gpsHistVel = []; gpsSuave = null; gpsElevRef = null; gpsAltSuave = null;
     if (!sesionActiva) actual.velocidad = 0;
     return;
   }
@@ -5955,7 +5962,17 @@ function procesarPosicionGPS(pos) {
   const velPosiciones = dtw >= 5 ? (distanciaAcumM - w0.d) / dtw : null;
   if (dop) { gpsVelCruda = speed; gpsVelCrudaAt = Date.now(); } // v128: sin suavizar, para el arranque de las pasadas
   if (dop) {
-    velDopplerSuave = velDopplerSuave == null ? speed : velDopplerSuave + 0.25 * (speed - velDopplerSuave);
+    // v133: MEDIANA DE 3 + SUAVIZADO ADAPTABLE (pedido de Hugo: en las pasadas el ritmo tardaba en
+    // reflejar el cambio). Antes: promedio fijo 0,25 por dato → de 7:35 a 5:00 mostraba 6:43, 6:11, 5:50,
+    // 5:36… Ahora se sigue la mediana de los últimos 3 datos Doppler (un salto suelto del GPS no entra) y,
+    // si la diferencia es grande, se la sigue casi entera: 7:35 → 5:05 → 5:04. Con diferencias chicas
+    // (< 0,15 m/s, el ruido de ritmo parejo) sigue el 0,25 de antes. Probado: ruido ±0,2 m/s con un salto
+    // falso → peor desvío 9 s/km (antes 28).
+    gpsHistVel.push(speed); if (gpsHistVel.length > 3) gpsHistVel.shift();
+    const med = gpsHistVel.length < 3 ? speed : gpsHistVel.slice().sort((x, y) => x - y)[1];
+    const dif = velDopplerSuave == null ? 0 : med - velDopplerSuave;
+    const alfa = Math.abs(dif) < 0.15 ? 0.25 : Math.min(0.95, 0.25 + 1.2 * (Math.abs(dif) - 0.15));
+    velDopplerSuave = velDopplerSuave == null ? speed : velDopplerSuave + alfa * dif;
     actual.velocidad = velDopplerSuave < 0.3 ? 0 : velDopplerSuave;
   } else if (velPosiciones != null) actual.velocidad = velPosiciones;
   // diagnóstico en el Registro de sensores cada 15 s
@@ -5965,8 +5982,15 @@ function procesarPosicionGPS(pos) {
     logBLE('GPS ±' + Math.round(accuracy) + ' m · Doppler ' + (dop ? r(speed) : 'no disponible') +
       ' · últimos 15 s ' + (velPosiciones != null ? r(velPosiciones) : '--') + ' · en pantalla ' + r(actual.velocidad) + ' · ' + (distanciaAcumM / 1000).toFixed(2) + ' km');
   }
+  // v133: con pasadas, el arranque lanzado y el recuadro se revisan en cuanto llega el dato del GPS
+  // (antes recién en el próximo segundo de sesión: hasta 1 s más de demora)
+  if (pasEstado && (pasEstado.etapa === 'arranque' || pasEstado.etapa === 'pasada')) {
+    const tS = tiempoTranscurridoSeg();
+    if (pasEstado.etapa === 'arranque') psRevisarArranque(tS);
+    renderTilePasadas(tS, actual.pulso);
+  }
 }
-let gpsVelCruda = null, gpsVelCrudaAt = 0; // v128
+let gpsVelCruda = null, gpsVelCrudaAt = 0, gpsHistVel = []; // v128, v133
 let gpsVentana = [], velDopplerSuave = null, gpsLogAt = 0, gpsSuave = null, gpsAnclaSuave = null, gpsElevRef = null, gpsAltSuave = null; // v112
 
 // v107: pendiente al aire libre con la altura del GPS. La del teléfono es ruidosa (±5-10 m): se usa
