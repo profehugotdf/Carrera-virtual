@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v136</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v137</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -923,6 +923,7 @@
         <option value="ninguno">Carril (simple)</option>
         <option value="pista">Pista 400m (3D)</option>
         <option value="sendero">Sendero (3D)</option>
+        <optgroup label="Recorridos" id="repOptRutas"></optgroup>
       </select>
       <button class="btn primario" onclick="iniciarReplay()" style="margin-top:12px;">Iniciar carrera</button>
     </div>
@@ -3378,6 +3379,13 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v137: CARRERA VIRTUAL (REPLAY) EN UN RECORRIDO (Hugo: "¿puedo elegir uno de
+         los recorridos generados con Rumbo para hacer la carrera virtual de los
+         fantasmas?"). En "Vista", además de Carril, Pista y Sendero, aparece cada
+         recorrido guardado (🧭 los de Rumbo, con su paisaje real, casas y
+         costados). Los corredores van por el recorrido con sus curvas y su
+         relieve; si la carrera es más larga que el recorrido, se dan vueltas
+         (en un circuito sigue de corrido; si es de A a B, vuelve a empezar).
    v136: COSTADOS REALES DEL CAMINO (Hugo: "haz los escenarios más realistas,
          de acuerdo a la info del mapa, zona urbana, zona rural etc"). Rumbo ahora
          manda "land": cada 25 m, el uso del suelo a cada lado (barrio, comercios,
@@ -7873,7 +7881,17 @@ function abrirReplay() {
   document.getElementById('repSetupCard').style.display = 'block';
   document.getElementById('repViewCard').style.display = 'none';
   poblarReplayPick();
+  poblarRepRutas(); // v137
 }
+// v137: los recorridos guardados (los de Rumbo con su paisaje) como vista de la carrera virtual
+function poblarRepRutas() {
+  const g = document.getElementById('repOptRutas'), sel = document.getElementById('selectRepEscenario'); if (!g || !sel) return;
+  const prev = sel.value, rutas = bigGet(K_RUTAS, []);
+  g.innerHTML = rutas.map(r => '<option value="ruta:' + r.id + '">' + (r.origen === 'rumbo' ? '🧭 ' : '🗺️ ') + String(r.nombre || 'Recorrido').replace(/[<>&"]/g, '') + ' · ' + (r.longitudM / 1000).toFixed(1).replace('.', ',') + ' km</option>').join('');
+  g.hidden = !rutas.length;
+  if ([...sel.options].some(o => o.value === prev)) sel.value = prev;
+}
+let repRuta = null;
 function cerrarReplay() {
   replayPlaying = false;
   pararReplayLoop();
@@ -7898,6 +7916,8 @@ function iniciarReplay() {
     puntos: puntosDeSesion(repList[idx]).map(p => ({ t: p.t, distAcum: p.distAcum, cadencia: p.cadencia, pulso: p.pulso, ritmo: p.ritmo, velocidad: p.velocidad }))
   }));
   repEscenario = document.getElementById('selectRepEscenario').value;
+  repRuta = repEscenario.startsWith('ruta:') ? (bigGet(K_RUTAS, []).find(r => 'ruta:' + r.id === repEscenario) || null) : null;
+  if (repEscenario.startsWith('ruta:') && !repRuta) repEscenario = 'sendero';
   replayTotal = Math.max(...repRacers.map(r => r.sesion.duracionSeg));
   vt = 0; replaySpeed = 2; replayPlaying = false; repSetSpeed(2);
   repCam = 0; actualizarBotonCamara();
@@ -7984,6 +8004,35 @@ function renderReplay() {
   dibujarRepLane(st);
   if (repEscenario === 'pista') dibujarRepPista(st);
   else if (repEscenario === 'sendero') dibujarRepSendero(st);
+  else if (repRuta) dibujarRepRuta(st);
+}
+// v137: la carrera virtual sobre un recorrido. Si la carrera es más larga, se dan vueltas: la cámara va en la
+// vuelta de su corredor y los demás, a su distancia de él (como en la pista).
+function dibujarRepRuta(st) {
+  if (!repRoadCtx || repRoadCtx.w < 10) fitRepRoad();
+  if (!repRoadCtx || repRoadCtx.w < 10) return;
+  const { ctx, w, h } = repRoadCtx, ruta = repRuta, L = Math.max(1, ruta.longitudM);
+  const camRacer = repRacers[repCam] || repRacers[0];
+  const cam = st.find(x => x.r === camRacer) || st[0];
+  const camD0 = ((cam.d % L) + L) % L, vuelta = Math.floor(cam.d / L);
+  const bFn = d => valorRuta(ruta.b, ruta.paso, d);
+  const eFn = ruta.e ? (d => valorRuta(ruta.e, ruta.paso, d)) : (() => 0);
+  const S = roadBands(ctx, w, h, camD0, bFn, eFn, ruta.paisaje ? ruta : null, ruta.paisaje ? escenaRumboEn(ruta, camD0) : SCENES.fueguino, null);
+  dibujarMojones(ctx, S);
+  dibujarLineaMeta(ctx, S, L);
+  const youS = Math.max(20, h * 0.135);
+  const otros = st.filter(x => x.r !== camRacer).sort((a, b) => b.d - a.d);
+  for (const x of otros) {
+    const p = roadPointAt(S, camD0 + (x.d - cam.d)); if (!p) continue;
+    const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
+    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, x.velocidad);
+    const gap = Math.round(x.d - cam.d);
+    dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m', x.r.color);
+  }
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad);
+  // dónde va la cámara en el recorrido
+  ctx.font = '600 11px system-ui'; ctx.textAlign = 'left'; const tx = (ruta.nombre || 'Recorrido').slice(0, 28) + ' · km ' + (camD0 / 1000).toFixed(2).replace('.', ',') + (vuelta ? ' · vuelta ' + (vuelta + 1) : '');
+  const tw = ctx.measureText(tx).width; ctx.fillStyle = 'rgba(4,7,10,.6)'; ctx.fillRect(8, 8, tw + 10, 18); ctx.fillStyle = '#e6edf3'; ctx.fillText(tx, 13, 21);
 }
 function dibujarRepLane(st) {
   const cv = document.getElementById('repLane');
