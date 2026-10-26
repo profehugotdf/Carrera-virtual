@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v134</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v135</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -544,6 +544,12 @@
         </div>
         <!-- v102: vista panorámica del recorrido GPX (solo con escenario "Recorrido") -->
         <canvas id="canvasPanorama" style="display:none; width:100%; height:300px; margin-top:8px; border-radius:12px; background:#0d1a12;"></canvas>
+        <!-- v135: mirar el recorrido sin correr (solo sin sesión) -->
+        <div id="previaRuta" style="display:none; margin-top:8px;">
+          <label>Mirar el recorrido sin correr</label>
+          <input type="range" id="sliderPreviaRuta" min="0" max="1000" step="5" value="0" oninput="moverPreviaRuta(this.value)" style="width:100%; touch-action:pan-y;">
+          <button class="btn" id="btnPreviaRuta" onclick="togglePreviaRuta()">▶ Recorrer sin correr</button>
+        </div>
       </div>
     </div>
 
@@ -3372,6 +3378,11 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v135: VISTA PREVIA DEL RECORRIDO (Hugo: "¿cómo veo el escenario creado
+         para correr sin realizar la sesión?"). Con el escenario "Recorrido" y
+         sin sesión, debajo de la vista panorámica: deslizador para ir a
+         cualquier punto y ▶ Recorrer sin correr (a ~54 km/h). Mueve
+         distanciaAcumM, que la sesión pone en 0 al arrancar.
    v134: RECORRIDOS DESDE RUMBO CON PAISAJE REAL (pedido de Hugo: "generar
          desde Rumbo los escenarios para carrera, como en bici y kayak"). Rumbo
          abre Correr con #rumbo=… (mismo paquete que Bici Indoor): el recorrido
@@ -7006,6 +7017,7 @@ function cambiarEscenario() {
   if (valor.startsWith('ruta:')) { escenarioActual = 'ruta'; rutaActivaId = valor.slice(5); lsSet(K_RUTA_ACTIVA, rutaActivaId); }
   else escenarioActual = valor;
   dibujarPanorama(); // v102: muestra u oculta la vista panorámica según el escenario
+  actualizarPreviaRuta(); // v135
   document.getElementById('wrapEscena').style.display = escenarioActual === 'ninguno' ? 'none' : 'block';
   if (escenarioActual === 'ninguno') pararBucleEscena();
   else iniciarBucleEscena();
@@ -7336,7 +7348,36 @@ function dibujarPanorama() {
     ctx.textAlign = 'right'; ctx.fillStyle = '#E8B84B'; ctx.fillText((pr >= 0 ? '+' : '') + pr.toFixed(1) + ' %', w - 10, y0 + 14);
   }
 }
+/* v135: VISTA PREVIA DEL RECORRIDO — sin sesión, el deslizador o ▶ mueven la cámara por el recorrido
+   (distanciaAcumM, que se pone en 0 al iniciar la sesión), para ver el paisaje antes de correrlo. */
+let previaRAF = null, previaLast = 0;
+function actualizarPreviaRuta() {
+  const el = document.getElementById('previaRuta'); if (!el) return;
+  const ruta = escenarioActual === 'ruta' ? rutaActiva() : null, ver = !!ruta && !sesionActiva;
+  if ((el.style.display !== 'none') !== ver) el.style.display = ver ? 'block' : 'none';
+  if (!ver) { pararPreviaRuta(); return; }
+  const sl = document.getElementById('sliderPreviaRuta');
+  if (+sl.max !== ruta.longitudM) sl.max = ruta.longitudM;
+  if (document.activeElement !== sl) sl.value = Math.round(Math.min(ruta.longitudM, distanciaAcumM || 0));
+}
+function moverPreviaRuta(v) { if (sesionActiva) return; distanciaAcumM = +v; }
+function pararPreviaRuta() { if (previaRAF) cancelAnimationFrame(previaRAF); previaRAF = null; const b = document.getElementById('btnPreviaRuta'); if (b) b.textContent = '▶ Recorrer sin correr'; }
+function togglePreviaRuta() {
+  if (previaRAF) { pararPreviaRuta(); return; }
+  const ruta = rutaActiva(); if (!ruta || sesionActiva) return;
+  if ((distanciaAcumM || 0) >= ruta.longitudM - 5) distanciaAcumM = 0;
+  document.getElementById('btnPreviaRuta').textContent = '⏸ Pausa'; previaLast = 0;
+  const paso = ts => {
+    const r = rutaActiva(); if (!r || sesionActiva || escenarioActual !== 'ruta') { pararPreviaRuta(); return; }
+    const dt = previaLast ? Math.min(0.1, (ts - previaLast) / 1000) : 0; previaLast = ts;
+    distanciaAcumM = Math.min(r.longitudM, (distanciaAcumM || 0) + dt * 15); // ~54 km/h: se ve la ruta en pocos minutos
+    if (distanciaAcumM >= r.longitudM) { pararPreviaRuta(); return; }
+    previaRAF = requestAnimationFrame(paso);
+  };
+  previaRAF = requestAnimationFrame(paso);
+}
 function dibujarEscenaRuta(ctx, w, h) {
+  actualizarPreviaRuta();
   const ruta = rutaActiva();
   const bFn = d => valorRuta(ruta.b, ruta.paso, d); // pasada la llegada sigue derecho
   const eFn = ruta.e ? (d => valorRuta(ruta.e, ruta.paso, d)) : (d => d * (pendienteActual / 100));
