@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v133</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v134</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3372,6 +3372,16 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v134: RECORRIDOS DESDE RUMBO CON PAISAJE REAL (pedido de Hugo: "generar
+         desde Rumbo los escenarios para carrera, como en bici y kayak"). Rumbo
+         abre Correr con #rumbo=… (mismo paquete que Bici Indoor): el recorrido
+         se arma con construirRuta() del GPX que trae la altura real, y se le
+         guarda ruta.paisaje = {hz, peaks, ground, scenes}. En el escenario
+         "Recorrido", roadBands dibuja el horizonte real (montañas, nieve y
+         cerros con nombre), el color del suelo a cada lado, el agua del lado
+         de la costa y el escenario de cada tramo (ciudad, bosque, cornisa,
+         costa…), con los decorados de Bici. Recorridos de GPX comunes: igual
+         que antes.
    v133: RITMO AL AIRE LIBRE MÁS RÁPIDO (pedido de Hugo: retraso en las
        pasadas). Velocidad Doppler: mediana de los últimos 3 datos (un
        salto suelto no entra) seguida con suavizado adaptable (0,25 si la
@@ -6729,6 +6739,7 @@ function drawMountains(ctx, w, horizon, camB, sc) {
   }
 }
 function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
+  if (decor && decor !== 'stands' && decor !== 'lengas' && decor !== 'trees') { drawSideDecorBici(ctx, decor, tx, ty, th, seed, side); return; } // v134
   if (decor === 'stands') { // v94: tribuna con techo y público
     const sw = th * 0.7, sh = th * (1.0 + 0.3 * Math.abs(seed)), filas = 4;
     ctx.fillStyle = '#59616b'; ctx.fillRect(tx - sw / 2, ty - sh, sw, sh);
@@ -6775,12 +6786,22 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
   ctx.fillStyle = sky; ctx.fillRect(0, 0, w, horizon);
   if (sc.sol) dibujarSol(ctx, w, horizon, camB);
   if (sc.nubes) dibujarNubes(ctx, w, horizon, camB);
-  drawMountains(ctx, w, horizon, camB, sc);
+  // v134: recorrido de Rumbo → las montañas de verdad (routeName trae el recorrido)
+  const P = routeName && routeName.paisaje && paisajeRealOn() ? paisajeDe(routeName) : null;
+  if (P && P.hz) { try { dibujarHorizonteReal(ctx, w, horizon, camB, sc, f, P, routeName, d0, camE); } catch (e) { drawMountains(ctx, w, horizon, camB, sc); } }
+  else drawMountains(ctx, w, horizon, camB, sc);
   const fogH = Math.round(h * 0.10);
   const fog = ctx.createLinearGradient(0, horizon - fogH * 0.5, 0, horizon + fogH);
   fog.addColorStop(0, hexRgba(sc.sky[1], 0)); fog.addColorStop(0.5, hexRgba(sc.sky[1], .75)); fog.addColorStop(1, hexRgba(sc.sky[1], 0));
   ctx.fillStyle = fog; ctx.fillRect(0, horizon - fogH * 0.5, w, fogH * 1.5);
   ctx.fillStyle = sc.ground; ctx.fillRect(0, horizon, w, h - horizon);
+  if (P) { // v134: color real del suelo a cada lado, o agua del lado de la costa
+    const gs = sueloLados(P, d0, sc);
+    const lado = s => { if (sc.waterSide === s) { const L = WATER_LOOK[sc.waterKind] || WATER_LOOK.mar, g = ctx.createLinearGradient(0, horizon, 0, h); g.addColorStop(0, L.top); g.addColorStop(0.4, L.mid); g.addColorStop(1, L.bot); return g; }
+      return gs ? (s === 'right' ? gs.R : gs.L) : sc.ground; };
+    ctx.fillStyle = lado('left'); ctx.fillRect(0, horizon, w / 2, h - horizon);
+    ctx.fillStyle = lado('right'); ctx.fillRect(w / 2, horizon, w / 2, h - horizon);
+  }
   const gShade = Math.max(0.72, Math.min(1.15, 1 - gAhead * 0.02));
   const cb = sc.contrasteBandas || [1.1, 0.96], cord = sc.cordon || ['#eeeeee', '#d8452f'];
   const asphaltL = shadeHex(sc.asphalt, gShade * cb[0]), asphaltD = shadeHex(sc.asphalt, gShade * cb[1]);
@@ -7319,7 +7340,7 @@ function dibujarEscenaRuta(ctx, w, h) {
   const ruta = rutaActiva();
   const bFn = d => valorRuta(ruta.b, ruta.paso, d); // pasada la llegada sigue derecho
   const eFn = ruta.e ? (d => valorRuta(ruta.e, ruta.paso, d)) : (d => d * (pendienteActual / 100));
-  const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.fueguino, null);
+  const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, ruta.paisaje ? ruta : null, ruta.paisaje ? escenaRumboEn(ruta, distanciaAcumM) : SCENES.fueguino, null); // v134
   dibujarMojones(ctx, S);
   dibujarLineaMeta(ctx, S, ruta.longitudM);
   const youS = Math.max(20, h * 0.135);
@@ -7334,6 +7355,198 @@ function dibujarEscenaRuta(ctx, w, h) {
   drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad, true, inclinacionCorredor());
   dibujarBadgeGap(ctx, w, gapM, deltaSeg, null);
 }
+/* ============================================================
+   v134: RECORRIDOS DESDE RUMBO CON PAISAJE REAL (como Bici Indoor v165)
+   Rumbo abre Correr con #rumbo=… : la ruta (GPX con la altura del relieve suavizada para correr), los
+   escenarios por tramo (ciudad, bosque, costa, montaña…), el horizonte real (las montañas que se ven
+   desde cada punto, en 3 franjas de distancia, con la altura de la cumbre para la nieve), los cerros con
+   nombre y el color del suelo a cada lado (foto satelital). Se guarda dentro del recorrido (ruta.paisaje)
+   en la base interna, y se dibuja en el escenario "Recorrido". Sin paisaje (recorridos de GPX comunes),
+   todo sigue como antes: montañas dibujadas y escenario fueguino.
+   ============================================================ */
+const SCENES_RUMBO = {
+  urbana: { label: 'Urbana', sky: ['#8fb3cf', '#d8e6ec'], ground: '#3a3d42', asphalt: '#54595f', mtnCol: ['#93a0ad', '#717d89'], mtnAmp: 1.5, decor: 'buildings' },
+  cornisa: { label: 'Camino de cornisa', sky: ['#4f8fc0', '#a9d3e8'], ground: '#4a4034', asphalt: '#4c4640', mtnCol: ['#8f7f6e', '#6e6156'], mtnAmp: 1.9, decor: 'rocks' },
+  mar: { label: 'Costa / Mar', sky: ['#57b6e0', '#cdeffb'], ground: '#cdb583', asphalt: '#565049', mtnCol: ['#6fb0d6', '#3f80ab'], mtnAmp: 0.35, decor: 'waves' },
+  bosque: { label: 'Bosque de lengas', sky: ['#4fa3dc', '#bfe3f4'], ground: '#2d5a33', asphalt: '#4f5761', mtnCol: ['#7d97ad', '#5d7890'], mtnAmp: 1.2, decor: 'lengas' },
+  canal: { label: 'Costa del canal', sky: ['#5a9fd0', '#c9e4f2'], ground: '#4c6a45', asphalt: '#525a63', mtnCol: ['#9aaec2', '#7d93a9'], mtnAmp: 1.4, decor: 'lengas' },
+  montana: { label: 'Montaña nevada', sky: ['#5f9fcf', '#d3e7f2'], ground: '#6f7c72', asphalt: '#545b62', mtnCol: ['#aebbc8', '#8494a6'], mtnAmp: 2.0, decor: 'nieve' },
+  ciudad: { label: 'Casas de colores', sky: ['#6aa8d6', '#d6e8f1'], ground: '#4a4f55', asphalt: '#555c63', mtnCol: ['#8aa0b6', '#6a8198'], mtnAmp: 1.3, decor: 'casas' },
+  estepa: { label: 'Estepa y alambrado', sky: ['#6fb3e3', '#dceef7'], ground: '#9c8a56', asphalt: '#5a5650', mtnCol: ['#aaa190', '#8f8674'], mtnAmp: 0.5, decor: 'estepa' },
+};
+const WATER_LOOK = { mar: { top: '#4f8fb0', mid: '#2f6a8c', bot: '#173d54' }, rio: { top: '#5f8f86', mid: '#3e6b62', bot: '#24433d' }, laguna: { top: '#6f9fb8', mid: '#2e5d73', bot: '#16323f' } };
+const K_PAISAJE_REAL = LS_PREFIX + 'paisaje_real';
+const paisajeRealOn = () => lsGet(K_PAISAJE_REAL, true) !== false;
+const _paisajeDec = {};
+function b64aU8(t) { const b = atob(t.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((t.length + 3) % 4)); return Uint8Array.from(b, c => c.charCodeAt(0)); }
+// lo que mandó Rumbo, listo para dibujar (se decodifica una vez por recorrido)
+function paisajeDe(ruta) {
+  if (!ruta || !ruta.paisaje) return null;
+  if (_paisajeDec[ruta.id]) return _paisajeDec[ruta.id];
+  const p = ruta.paisaje; let r = null;
+  try { r = { hz: p.hz && p.hz.d ? Object.assign({}, p.hz, { u: b64aU8(p.hz.d) }) : null, ground: p.ground && p.ground.d ? Object.assign({}, p.ground, { u: b64aU8(p.ground.d) }) : null,
+              peaks: (p.peaks || []).filter(x => x && x.e > 0), scenes: Array.isArray(p.scenes) && p.scenes.length ? p.scenes : null }; } catch (e) { r = null; }
+  _paisajeDec[ruta.id] = r; return r;
+}
+// el escenario del tramo donde está la cámara (Rumbo lo arma con OpenStreetMap: ciudad, bosque, costa, cornisa…)
+function escenaRumboEn(ruta, d) {
+  const P = paisajeDe(ruta), base = SCENES.rural;
+  if (!P || !P.scenes) return SCENES.fueguino;
+  const km = d / 1000; let cur = P.scenes[0];
+  for (const x of P.scenes) { if (x.km <= km + 1e-6) cur = x; else break; }
+  const sc = SCENES_RUMBO[cur.scene] || SCENES[cur.scene] || base;
+  return Object.assign({ sol: true, nubes: true, lineaCentral: false, contrasteBandas: [1.03, 0.97], cordon: ['#9aa39a', '#8a938a'] }, sc, { waterSide: cur.water || null, waterKind: cur.waterKind || 'mar' });
+}
+function mixHex(a, b, t) { const A = parseInt(a.slice(1), 16), B = parseInt(b.slice(1), 16), m = (x, y) => Math.round(x + (y - x) * t);
+  return '#' + ((1 << 24) | (m(A >> 16 & 255, B >> 16 & 255) << 16) | (m(A >> 8 & 255, B >> 8 & 255) << 8) | m(A & 255, B & 255)).toString(16).slice(1); }
+// mismas cuentas que Bici Indoor: lo lejano se ve un 50 % más alto y los cerros altos y cercanos se comprimen para entrar
+const HZ_EX = 1.5, HZ_MAX = 13;
+const hzAng = a => a <= 0 ? a * HZ_EX : HZ_MAX * Math.tanh(a * HZ_EX / HZ_MAX);
+function hzSample(hz, d, az) {
+  const k = Math.max(0, Math.min(hz.n - 1, d / hz.sp)), i0 = Math.floor(k), i1 = Math.min(hz.n - 1, i0 + 1), t = k - i0;
+  let a = az * 180 / Math.PI % 360; if (a < 0) a += 360; const ak = a / (360 / hz.na), a0 = Math.floor(ak) % hz.na, a1 = (a0 + 1) % hz.na, u = ak - Math.floor(ak), U = hz.u, na = hz.na;
+  const v = f => { const A = U[(i0 * na + a0) * 7 + f] * (1 - u) + U[(i0 * na + a1) * 7 + f] * u, B = U[(i1 * na + a0) * 7 + f] * (1 - u) + U[(i1 * na + a1) * 7 + f] * u; return A * (1 - t) + B * t; };
+  const ang = x => (x - 60) * 0.25;
+  return [ang(v(0)), ang(v(1)), v(2) * 25, v(3) * 100, ang(v(4)), v(5) * 25, v(6) * 100];
+}
+// posición (lat/lon) a d metros del recorrido, con los puntos cada 25 m que guarda construirRuta
+function latLonEnRuta(ruta, d) {
+  const ll = ruta.ll; if (!ll || ll.length < 2) return null;
+  const paso = ruta.paso * 5, x = Math.max(0, Math.min(ll.length - 1, d / paso)), i = Math.floor(x), j = Math.min(ll.length - 1, i + 1), f = x - i;
+  return { lat: ll[i][0] + (ll[j][0] - ll[i][0]) * f, lon: ll[i][1] + (ll[j][1] - ll[i][1]) * f };
+}
+function dibujarHorizonteReal(ctx, w, horizon, camB, sc, f, P, ruta, d0, camE) {
+  const hz = P.hz, step = 4, cols = [], toD = 180 / Math.PI;
+  for (let px = 0; px <= w + step; px += step) cols.push([px, hzSample(hz, d0, camB + Math.atan((px - w / 2) / f))]);
+  const Y = a => horizon - f * Math.tan(Math.max(-15, hzAng(a)) / toD), base = horizon + 2;
+  const capa = (i, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(0, base); for (const [px, v] of cols) ctx.lineTo(px, Math.min(base, Y(v[i]))); ctx.lineTo(w + step, base); ctx.closePath(); ctx.fill(); };
+  const nieve = (ai, ei, di) => { if (!hz.snow) return; let run = [];
+    const flush = () => { if (run.length > 1) { ctx.beginPath(); ctx.moveTo(run[0][0], run[0][1]); for (const p of run) ctx.lineTo(p[0], p[1]); for (let k = run.length - 1; k >= 0; k--) ctx.lineTo(run[k][0], run[k][2]); ctx.closePath(); ctx.fill(); } run = []; };
+    ctx.fillStyle = '#eef3f7';
+    for (const [px, v] of cols) { const e = v[ei], dd = v[di];
+      if (e > hz.snow && dd > 0) { const ys = Math.min(base, Y(v[ai])), yb = Math.min(base, Math.max(ys + 1, Y(Math.atan((hz.snow - camE) / dd) * toD))); run.push([px, ys, yb]); } else flush(); }
+    flush(); };
+  capa(4, mixHex(sc.mtnCol[0], sc.sky[1], 0.45)); nieve(4, 5, 6);
+  capa(1, sc.mtnCol[0]); nieve(1, 2, 3);
+  capa(0, mixHex(sc.mtnCol[1], sc.ground, 0.35));
+  // cerros con nombre que se ven
+  const pos = P.peaks.length ? latLonEnRuta(ruta, d0) : null;
+  if (pos) {
+    const kc = Math.cos(pos.lat * Math.PI / 180), out = [];
+    for (const p of P.peaks) {
+      const dy = (p.la - pos.lat) * 111320, dx = (p.lo - pos.lon) * 111320 * kc, dist = Math.hypot(dx, dy); if (dist < 400 || dist > 22000) continue;
+      let rel = Math.atan2(dx, dy) - camB; rel = Math.atan2(Math.sin(rel), Math.cos(rel)); if (Math.abs(rel) > 0.62) continue;
+      const ang = Math.atan((p.e - camE - 1.6 - dist * dist * 0.87 / 12742000) / dist) * toD, v = hzSample(hz, d0, camB + rel), cielo = Math.max(v[0], v[1], v[4]);
+      if (ang < cielo - 1.5) continue;
+      out.push({ x: w / 2 + f * Math.tan(rel), y: Y(Math.max(ang, cielo)), p });
+    }
+    out.sort((a, b) => b.p.e - a.p.e); const vistos = [];
+    ctx.font = '600 11px system-ui,sans-serif'; ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+    for (const o of out) { if (vistos.length >= 4) break; if (vistos.some(s => Math.abs(s.x - o.x) < 90 && Math.abs(s.y - o.y) < 26)) continue; if (o.y < 6) continue; vistos.push(o);
+      ctx.fillStyle = '#ffffff'; ctx.beginPath(); ctx.moveTo(o.x, o.y - 3); ctx.lineTo(o.x - 4, o.y - 10); ctx.lineTo(o.x + 4, o.y - 10); ctx.closePath(); ctx.fill();
+      const t = o.p.n + ' · ' + Math.round(o.p.e) + ' m', ty = o.y - 14 < 12 ? o.y + 20 : o.y - 14;
+      ctx.strokeStyle = 'rgba(20,30,40,.75)'; ctx.lineWidth = 3; ctx.strokeText(t, o.x, ty); ctx.fillText(t, o.x, ty); }
+    ctx.textAlign = 'start';
+  }
+}
+// color real del suelo a cada lado (de la foto satelital), un poco aclarado y mezclado con el del escenario
+function sueloLados(P, d0, sc) {
+  if (!P || !P.ground) return null; const g = P.ground, k = Math.max(0, Math.min(g.n - 1, d0 / g.sp)), i0 = Math.floor(k), i1 = Math.min(g.n - 1, i0 + 1), t = k - i0, U = g.u;
+  const c = o => { const r = [0, 1, 2].map(j => Math.min(255, Math.round((U[i0 * 6 + o + j] * (1 - t) + U[i1 * 6 + o + j] * t) * 1.18))); return '#' + ((1 << 24) | (r[0] << 16) | (r[1] << 8) | r[2]).toString(16).slice(1); };
+  return { L: mixHex(c(0), sc.ground, 0.3), R: mixHex(c(3), sc.ground, 0.3) };
+}
+// decorados que trae Bici Indoor (edificios, rocas, olas, casas, estepa, nieve…), para los escenarios de Rumbo
+function drawSideDecorBici(ctx,decor,tx,ty,th,seed,side){
+  if(decor==="buildings"){
+    const bw=th*0.62, bh=th*(0.9+0.5*Math.abs(seed));
+    ctx.fillStyle=seed>0?"#5b6470":"#4a525c";
+    ctx.fillRect(tx-bw/2, ty-bh, bw, bh);
+    ctx.fillStyle="#e8c96a";
+    const rows=Math.max(1,Math.floor(bh/(th*0.22))), cols=2;
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      if(Math.sin(seed*13+r*3+c*7)>0.1) ctx.fillRect(tx-bw/2+bw*0.18+c*bw*0.42, ty-bh+bh*0.12+r*(th*0.22), bw*0.14, th*0.1);
+    }
+  } else if(decor==="rocks"){
+    const rw=th*0.55, rh=th*(0.8+0.5*Math.abs(seed));
+    ctx.fillStyle=seed>0?"#7d7266":"#69604f";
+    ctx.beginPath();
+    ctx.moveTo(tx-rw*0.5,ty); ctx.lineTo(tx-rw*0.3,ty-rh*0.55); ctx.lineTo(tx-rw*0.05,ty-rh);
+    ctx.lineTo(tx+rw*0.25,ty-rh*0.6); ctx.lineTo(tx+rw*0.5,ty); ctx.closePath(); ctx.fill();
+  } else if(decor==="waves"){
+    ctx.strokeStyle="rgba(255,255,255,.75)"; ctx.lineWidth=Math.max(1,th*0.08);
+    ctx.beginPath(); ctx.arc(tx, ty-th*0.06, th*0.32, Math.PI*0.15, Math.PI*0.85); ctx.stroke();
+  } else if(decor==="stands"){
+    const sw=th*0.7, sh=th*(1.0+0.3*Math.abs(seed)), tiers=4;
+    ctx.fillStyle="#3a4048";
+    ctx.fillRect(tx-sw/2, ty-sh, sw, sh);
+    for(let tI=0;tI<tiers;tI++){
+      const yy=ty-sh+ (tI/tiers)*sh;
+      ctx.fillStyle= (Math.sin(seed*17+tI*4)>0) ? "#c94b4b" : "#e6edf3";
+      ctx.globalAlpha=0.75;
+      for(let c=0;c<3;c++){ if(Math.sin(seed*23+tI*5+c*9)>-0.2) ctx.fillRect(tx-sw/2+c*(sw/3)+sw*0.05, yy+sh*0.03, sw/3*0.7, sh/tiers*0.5); }
+      ctx.globalAlpha=1;
+    }
+  } else if(decor==="lengas"){
+    const h=th*(1.3+0.6*Math.abs(seed));
+    ctx.fillStyle="#4a3527"; ctx.fillRect(tx-th*0.07,ty-h*0.35,th*0.14,h*0.35);
+    ctx.fillStyle=seed>0.3?"#2f6b39":(seed>-0.4?"#3d7a3a":"#8c4a2a");
+    for(let j=0;j<3;j++){ ctx.beginPath(); ctx.ellipse(tx+(j-1)*th*0.18,ty-h*(0.55+0.12*j),th*0.32,h*0.24,0,0,7); ctx.fill(); }
+  } else if(decor==="casas"){
+    const bw=th*1.1, bh=th*(0.8+0.4*Math.abs(seed)), cols=["#e07a3c","#3b82d6","#e2c044","#d4537e","#2fa36b","#c0392b"];
+    ctx.fillStyle=cols[Math.floor(Math.abs(seed)*60)%6]; ctx.fillRect(tx-bw/2,ty-bh,bw,bh);
+    ctx.fillStyle="#5a3a2e"; ctx.beginPath(); ctx.moveTo(tx-bw*0.6,ty-bh); ctx.lineTo(tx,ty-bh-th*0.55); ctx.lineTo(tx+bw*0.6,ty-bh); ctx.closePath(); ctx.fill();
+    ctx.fillStyle="#dbe7f0"; ctx.fillRect(tx-bw*0.3,ty-bh*0.7,bw*0.2,bh*0.25); ctx.fillRect(tx+bw*0.1,ty-bh*0.7,bw*0.2,bh*0.25);
+    if(seed>0.2){ ctx.fillStyle="#2c2f34"; ctx.fillRect(tx-side*bw*0.9,ty-th*1.8,th*0.06,th*1.8); ctx.fillRect(tx-side*bw*0.9,ty-th*1.8,side*-th*0.25,th*0.06); }
+  } else if(decor==="nieve"){
+    ctx.fillStyle="#f1f5f8"; ctx.beginPath(); ctx.ellipse(tx,ty,th*0.9,th*0.22,0,Math.PI,0); ctx.fill();
+    if(seed>0){ ctx.fillStyle="#6b6f73"; ctx.beginPath(); ctx.moveTo(tx-th*0.5,ty); ctx.lineTo(tx-th*0.1,ty-th*0.9); ctx.lineTo(tx+th*0.5,ty); ctx.closePath(); ctx.fill();
+      ctx.fillStyle="#f1f5f8"; ctx.beginPath(); ctx.moveTo(tx-th*0.24,ty-th*0.55); ctx.lineTo(tx-th*0.1,ty-th*0.9); ctx.lineTo(tx+th*0.06,ty-th*0.62); ctx.closePath(); ctx.fill(); }
+    ctx.fillStyle="#c9ced3"; ctx.fillRect(tx-side*th*0.6,ty-th*0.5,th*0.06,th*0.5); ctx.fillStyle="#e24b4a"; ctx.fillRect(tx-side*th*0.6,ty-th*0.5,th*0.06,th*0.1);
+  } else if(decor==="estepa"){
+    ctx.strokeStyle="#6a5a3a"; ctx.lineWidth=Math.max(1,th*0.06); ctx.beginPath(); ctx.moveTo(tx,ty); ctx.lineTo(tx,ty-th*0.6); ctx.stroke();
+    ctx.lineWidth=Math.max(0.5,th*0.015); ctx.beginPath(); ctx.moveTo(tx-th*0.8,ty-th*0.45); ctx.lineTo(tx+th*0.8,ty-th*0.45); ctx.moveTo(tx-th*0.8,ty-th*0.25); ctx.lineTo(tx+th*0.8,ty-th*0.25); ctx.stroke();
+    if(seed>0.1){ ctx.fillStyle="#f2efe6"; ctx.beginPath(); ctx.ellipse(tx+side*th*1.2,ty-th*0.2,th*0.3,th*0.18,0,0,7); ctx.fill();
+      ctx.fillStyle="#3a3a3a"; ctx.beginPath(); ctx.arc(tx+side*th*1.2+side*th*0.3,ty-th*0.25,th*0.09,0,7); ctx.fill(); }
+  } else if(decor==="none"){ /* orilla del río: sin decorado */
+  } else if(decor==="juncos"){
+    ctx.strokeStyle="#6b7a3e"; ctx.lineWidth=Math.max(1,th*0.05);
+    for(let j=0;j<5;j++){ const xx=tx+(j-2)*th*0.12, hh=th*(0.5+0.35*Math.abs(Math.sin(seed*9+j)));
+      ctx.beginPath(); ctx.moveTo(xx,ty); ctx.quadraticCurveTo(xx+side*th*0.05,ty-hh*0.6,xx+side*th*0.1,ty-hh); ctx.stroke(); }
+  } else if(decor==="rail"){ // guardarraíl del lado del valle
+    ctx.fillStyle="#8f959c"; ctx.fillRect(tx-th*0.03,ty-th*0.32,th*0.06,th*0.32);
+    ctx.fillStyle="#c8ccd1"; ctx.fillRect(tx-th*0.7,ty-th*0.3,th*1.4,th*0.08);
+  } else { // trees
+    ctx.fillStyle="#5a4634"; ctx.fillRect(tx-th*0.05, ty-th*0.32, th*0.1, th*0.32);
+    ctx.fillStyle=(seed>0)?"#2f6b39":"#367a3f";
+    ctx.beginPath();ctx.ellipse(tx, ty-th*0.5, th*0.28, th*0.5, 0, 0, 7);ctx.fill();
+  }
+}
+
+// ---- lo que manda Rumbo ----
+async function rumboImport() {
+  const m = (location.hash || '').match(/^#rumbo=([zj])([A-Za-z0-9_-]+)/); if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  try {
+    const u8 = b64aU8(m[2]); let txt;
+    if (m[1] === 'z') { if (!window.DecompressionStream) throw new Error('este navegador no puede descomprimir: actualizá Chrome');
+      txt = await new Response(new Blob([u8]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).text(); }
+    else txt = new TextDecoder().decode(u8);
+    const o = JSON.parse(txt); if (!o || !o.gpx) throw new Error('datos incompletos');
+    const pts = leerPuntosGPX(o.gpx); if (pts.length < 2) throw new Error('la ruta no tiene puntos');
+    const nombre = (o.name || 'Ruta de Rumbo').replace(/\.gpx$/i, '');
+    const ruta = construirRuta(pts, nombre);
+    ruta.origen = 'rumbo';
+    ruta.paisaje = { hz: o.hz || null, peaks: o.peaks || [], ground: o.ground || null, scenes: o.scenes || null };
+    // si ya había uno con el mismo nombre (se mandó de nuevo), se reemplaza
+    const viejos = bigGet(K_RUTAS, []).filter(r => r.nombre === nombre && r.origen === 'rumbo').map(r => r.id);
+    if (viejos.length) bigSet(K_RUTAS, bigGet(K_RUTAS, []).filter(r => !viejos.includes(r.id)));
+    guardarRuta(ruta);
+    const sel = document.getElementById('selectEscenario');
+    if (sel) { sel.value = 'ruta:' + ruta.id; cambiarEscenario(); }
+    toast('🧭 Recorrido de Rumbo: ' + nombre + ' · ' + (ruta.longitudM / 1000).toFixed(1).replace('.', ',') + ' km' + (o.hz ? ' · montañas reales' : '') + (o.scenes ? ' · escenario por tramos' : ''));
+  } catch (e) { toast('No pude abrir lo que mandó Rumbo: ' + e.message); }
+}
+window.addEventListener('hashchange', () => { rumboImport(); });
 function dibujarLineaMeta(ctx, S, dMeta) {
   // el límite de vuelta (d=0 / d=LARGO_PISTA_M en el espacio local de S) cae al final de la recta
   // principal — ver bearingPista (v96; antes caía al comienzo de la recta).
@@ -11158,7 +11371,7 @@ renderSelectorFantasma();
 cargarFormPlanCarrera(); // v108
 cargarFormPasadas(); // v116
 initPlegables(); // v130
-initBigStore().then(ofrecerRecuperacion); // v103: base interna; v104: después, ofrece retomar una sesión interrumpida
+initBigStore().then(ofrecerRecuperacion).then(rumboImport).catch(e => console.error(e)); // v103: base interna; v104: después, ofrece retomar una sesión interrumpida
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararBucleEscena();
   else if (escenarioActual !== 'ninguno' && document.getElementById('view-vivo').classList.contains('activa')) iniciarBucleEscena();
