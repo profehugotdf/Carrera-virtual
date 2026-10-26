@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v135</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v136</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3378,6 +3378,19 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v136: COSTADOS REALES DEL CAMINO (Hugo: "haz los escenarios más realistas,
+         de acuerdo a la info del mapa, zona urbana, zona rural etc"). Rumbo ahora
+         manda "land": cada 25 m, el uso del suelo a cada lado (barrio, comercios,
+         industria, parque, campo, pradera, bosque, matorral, arena, roca, agua,
+         mallín, cementerio, nieve), la casa o edificio más cercano (tipo, pisos y
+         distancia real al camino) y el tipo de camino (avenida, calle, ripio,
+         sendero, vereda, con luz). roadBands lo dibuja por franja, no un solo
+         escenario para todo el cuadro: el ancho y el color del camino (asfalto,
+         ripio, tierra), vereda con cordón, alambrado en el campo, ligustro en el
+         barrio, tejido en la industria, faroles, y las casas y edificios en 3D
+         (la cara que da al camino en perspectiva, la que da hacia vos y el techo
+         a dos aguas, con ventanas por piso), a la distancia real; los lejanos se
+         pierden en la bruma. Sin "land" (recorridos viejos), todo igual que v135.
    v135: VISTA PREVIA DEL RECORRIDO (Hugo: "¿cómo veo el escenario creado
          para correr sin realizar la sesión?"). Con el escenario "Recorrido" y
          sin sesión, debajo de la vista panorámica: deslizador para ir a
@@ -6801,6 +6814,8 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
   const P = routeName && routeName.paisaje && paisajeRealOn() ? paisajeDe(routeName) : null;
   if (P && P.hz) { try { dibujarHorizonteReal(ctx, w, horizon, camB, sc, f, P, routeName, d0, camE); } catch (e) { drawMountains(ctx, w, horizon, camB, sc); } }
   else drawMountains(ctx, w, horizon, camB, sc);
+  const LD = P && P.land ? P.land : null, anchoEn = dd => LD ? landAncho(LD, dd, wRoad) : wRoad; // v136: costados reales
+  const satEn = P && P.ground ? (dd => sueloLados(P, dd, sc)) : null;
   const fogH = Math.round(h * 0.10);
   const fog = ctx.createLinearGradient(0, horizon - fogH * 0.5, 0, horizon + fogH);
   fog.addColorStop(0, hexRgba(sc.sky[1], 0)); fog.addColorStop(0.5, hexRgba(sc.sky[1], .75)); fog.addColorStop(1, hexRgba(sc.sky[1], 0));
@@ -6822,7 +6837,7 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
     const dd = d0 + cum; let rel = bFn(dd) - camB; rel = Math.atan2(Math.sin(rel), Math.cos(rel));
     if (i > 0) x += Math.sin(rel) * prevSeg * latK;
     const Z = cum + 0.5, sc2 = f / Z, e = eFn(dd);
-    S.push({ cx: w / 2 + x * sc2, y: horizon - (e - camE - camEyeH) * sc2, hw: wRoad * sc2, d: dd, bank: Math.max(-0.6, Math.min(0.6, rel)) });
+    S.push({ cx: w / 2 + x * sc2, y: horizon - (e - camE - camEyeH) * sc2, hw: anchoEn(dd) * sc2, m: sc2, d: dd, bank: Math.max(-0.6, Math.min(0.6, rel)) });
     const seg = NEAR + i * GROW; prevSeg = seg; cum += seg;
   }
   for (let i = N - 1; i >= 0; i--) {
@@ -6834,21 +6849,26 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
     // dejaba una costura finita entre tramos por la que se veía el suelo oscuro — en el ripio
     // aparecían como franjas horizontales marcadas.
     ctx.lineWidth = 0.8; ctx.lineJoin = 'round';
+    const vl = LD ? landVia(landEn(LD, b.d).v, sc.asphalt) : null; // v136: el tipo de camino de esta franja
+    if (LD) landFranja(ctx, w, a, b, aLY, aRY, bLY, bRY, LD, false, sc, sc.waterSide, satEn, d0, sc.asphalt);
+    if (!LD) {
     ctx.fillStyle = ctx.strokeStyle = light ? cord[0] : cord[1];
     ctx.beginPath(); ctx.moveTo(b.cx - b.hw - rb, bLY); ctx.lineTo(b.cx - b.hw, bLY); ctx.lineTo(a.cx - a.hw, aLY); ctx.lineTo(a.cx - a.hw - ra, aLY); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(b.cx + b.hw + rb, bRY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx + a.hw + ra, aRY); ctx.closePath(); ctx.fill(); ctx.stroke();
-    ctx.fillStyle = ctx.strokeStyle = light ? asphaltL : asphaltD;
+    }
+    ctx.fillStyle = ctx.strokeStyle = vl ? shadeHex(vl.col, gShade * (light ? cb[0] : cb[1])) : (light ? asphaltL : asphaltD);
     ctx.beginPath(); ctx.moveTo(b.cx - b.hw, bLY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx - a.hw, aLY); ctx.closePath(); ctx.fill(); ctx.stroke();
-    if (sc.carriles) { // v94: líneas de carril continuas
+    const nCarr = vl ? vl.carriles : sc.carriles;
+    if (nCarr) { // v94: líneas de carril continuas
       ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = Math.max(0.6, b.hw * 0.012);
       ctx.beginPath();
-      for (let k = 1; k < sc.carriles; k++) {
-        const fr = -1 + 2 * k / sc.carriles;
+      for (let k = 1; k < nCarr; k++) {
+        const fr = -1 + 2 * k / nCarr;
         ctx.moveTo(b.cx + fr * b.hw, b.y + fr * bo); ctx.lineTo(a.cx + fr * a.hw, a.y + fr * ao);
       }
       ctx.stroke();
     }
-    if (sc.ripio && b.hw > 10) { // v94: piedritas fijas al terreno (no parpadean al avanzar)
+    if ((vl ? vl.unp : sc.ripio) && b.hw > 10) { // v94: piedritas fijas al terreno (no parpadean al avanzar)
       for (let dp = Math.ceil(b.d / 0.35) * 0.35; dp < a.d; dp += 0.35) {
         const n = Math.sin(dp * 12.9898) * 43758.5453, fr = (n - Math.floor(n)) * 2 - 1;
         const n2 = Math.sin(dp * 78.233) * 12543.1, claro = (n2 - Math.floor(n2)) > 0.5;
@@ -6858,10 +6878,15 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
         ctx.beginPath(); ctx.ellipse(b.cx + (a.cx - b.cx) * tt + fr * hw * 0.85, b.y + (a.y - b.y) * tt, hw * 0.014, hw * 0.006, 0, 0, 7); ctx.fill();
       }
     }
-    if (light && sc.lineaCentral !== false) {
+    if (light && (vl ? vl.linea : sc.lineaCentral !== false)) {
       const cb = Math.max(1, b.hw * 0.06), ca = Math.max(0.7, a.hw * 0.06);
       ctx.fillStyle = '#efe7c8';
       ctx.beginPath(); ctx.moveTo(b.cx - cb, b.y); ctx.lineTo(b.cx + cb, b.y); ctx.lineTo(a.cx + ca, a.y); ctx.lineTo(a.cx - ca, a.y); ctx.closePath(); ctx.fill();
+    }
+    if (LD) { // v136: casas, árboles, alambrados y faroles según lo que hay de verdad a cada lado
+      landDecorFranja(ctx, S, i, LD, false, sc, sc.waterSide, anchoEn, d0, sc.asphalt, (c2, k, x, y, m, seed, side) =>
+        drawSideDecor(c2, k === 'agua' ? ({ rio: 'none', laguna: 'juncos' }[sc.waterKind] || 'waves') : sc.decor, x, y, (k === 'agua' ? 2 : 4) * m, Math.sin(seed * 9.1), side));
+      continue;
     }
     const decorSpacing = 30;
     if (Math.floor(b.d / decorSpacing) !== Math.floor(a.d / decorSpacing) && b.hw > 6) {
@@ -7426,7 +7451,7 @@ function paisajeDe(ruta) {
   if (_paisajeDec[ruta.id]) return _paisajeDec[ruta.id];
   const p = ruta.paisaje; let r = null;
   try { r = { hz: p.hz && p.hz.d ? Object.assign({}, p.hz, { u: b64aU8(p.hz.d) }) : null, ground: p.ground && p.ground.d ? Object.assign({}, p.ground, { u: b64aU8(p.ground.d) }) : null,
-              peaks: (p.peaks || []).filter(x => x && x.e > 0), scenes: Array.isArray(p.scenes) && p.scenes.length ? p.scenes : null }; } catch (e) { r = null; }
+              peaks: (p.peaks || []).filter(x => x && x.e > 0), scenes: Array.isArray(p.scenes) && p.scenes.length ? p.scenes : null, land: landDec(p.land) }; } catch (e) { r = null; }
   _paisajeDec[ruta.id] = r; return r;
 }
 // el escenario del tramo donde está la cámara (Rumbo lo arma con OpenStreetMap: ciudad, bosque, costa, cornisa…)
@@ -7563,6 +7588,173 @@ function drawSideDecorBici(ctx,decor,tx,ty,th,seed,side){
   }
 }
 
+// ---- costados reales del camino: el paquete "land" que manda Rumbo. Cada 25 m: el uso del suelo a cada lado (barrio,
+// comercios, industria, parque, campo, pradera, bosque, matorral, arena, roca, agua, mallín, cementerio, nieve), la casa o
+// el edificio más cercano (tipo, pisos y a qué distancia del eje) y el tipo de camino (calle, avenida, ripio, sendero,
+// vereda…). Con eso, cada franja del camino lleva su suelo, su vereda, su alambrado y sus casas a la distancia real.
+// Este bloque es el mismo en Correr y en Bici Indoor: si se cambia en una, copiarlo en la otra.
+const LAND_SUELO={1:"#6c7a58",2:"#8f9194",3:"#7d7d78",4:"#4e8c3f",5:"#a3a457",6:"#8f9a5c",7:"#2e5732",8:"#6a7244",9:"#dcc99c",10:"#8d877c",11:"#2e5d73",12:"#5c7150",13:"#5a8a4a",14:"#e9eff3"};
+const LAND_ANCHO={1:7.5,2:6,3:5,4:4.2,5:2.6,6:0.9,7:1.6,8:1.2}; // medio ancho del camino (m) según el tipo
+function landU8(s){ const b=atob(s.replace(/-/g,"+").replace(/_/g,"/")+"===".slice((s.length+3)%4)); return Uint8Array.from(b,c=>c.charCodeAt(0)); }
+function landDec(o){ if(!o||!o.d||!o.n) return null; try{ const u=landU8(o.d); return u.length>=o.n*7?{sp:o.sp||25,n:o.n,u,sur:!!o.sur}:null; }catch(_){ return null; } }
+// lo que hay a la altura d (m). Índice 0 = izquierda. flip: el tramo se recorre al revés (ida y vuelta) → se cambian los lados
+// L.map(d) → {d, back}: en Bici, las rutas de ida y vuelta se dibujan con los datos de la ida
+const landMap=(L,d,flip)=>{ if(!L.map) return [d,flip]; const r=L.map(d); return [r.d,flip!==!!r.back]; };
+function landEn(L,d0,flip0){ const [d,flip]=landMap(L,d0,flip0), q=Math.max(0,Math.min(L.n-1,Math.round(d/L.sp))), o=q*7, U=L.u, i=flip?1:0, j=flip?0:1;
+  return {c:[U[o+i],U[o+j]], b:[U[o+2+i],U[o+2+j]], dist:[U[o+4+i],U[o+4+j]], v:U[o+6], q}; }
+function landAncho(L,d0,def){ const d=landMap(L,d0,false)[0], k=Math.max(0,Math.min(L.n-1,d/L.sp)), i0=Math.floor(k), i1=Math.min(L.n-1,i0+1), t=k-i0,
+  a=LAND_ANCHO[L.u[i0*7+6]&15]||def, b=LAND_ANCHO[L.u[i1*7+6]&15]||def; return a+(b-a)*t; }
+// cómo se ve el camino: color, si es de tierra, línea central, carriles, cordón
+function landVia(v,asf){ const c=v&15, unp=!!(v&16); if(!c) return null;
+  return {c, unp, col:unp?(c===6||c===7?"#7b6a4e":"#8d7f64"):(c===7?"#a39c90":c===8?"#9a5444":asf), linea:!unp&&c<=3, carriles:c===1?3:0,
+    vereda:!unp&&!!(v&128), calle:!unp&&c>=2&&c<=4, farol:!!(v&64), puente:!!(v&32)}; }
+// punto del camino (centro, altura en pantalla y píxeles por metro) a la distancia d, entre las franjas ya calculadas
+function landPunto(S,d){ const n=S.length; if(n<2||d<S[0].d||d>S[n-1].d) return null; let lo=0,hi=n-1;
+  while(hi-lo>1){ const mid=(lo+hi)>>1; if(S[mid].d<=d) lo=mid; else hi=mid; }
+  const A=S[lo],B=S[hi],t=(d-A.d)/((B.d-A.d)||1); return {cx:A.cx+(B.cx-A.cx)*t, y:A.y+(B.y-A.y)*t, m:A.m+(B.m-A.m)*t}; }
+const landHash=x=>{ const n=Math.sin(x*12.9898)*43758.5453; return n-Math.floor(n); };
+const landSalta=(skip,side)=>{ const n=side<0?"left":"right"; return Array.isArray(skip)?skip.includes(n):skip===n; };
+function landBruma(col,sc,d,d0){ return mixHex(col,sc.sky[1],Math.min(0.6,Math.max(0,(d-d0)/650))); }
+// color del suelo de un lado: el del uso del suelo, mezclado con el de la foto satelital si lo hay
+function landColSuelo(c,sat,sc){ const base=LAND_SUELO[c]; if(base&&sat) return mixHex(base,sat,c===11?0.15:0.4); return base||sat||sc.ground; }
+// ¿hay vereda de este lado? (calle asfaltada en barrio o con casas, o marcada en OpenStreetMap)
+function landHayVereda(vl,lm,s){ return !!vl&&(vl.vereda||(vl.calle&&(lm.c[s]===1||lm.c[s]===2||lm.b[s]>0))); }
+// FRANJA: suelo de cada costado, vereda y cerco o alambrado continuo. b = franja cercana, a = la siguiente (más lejos).
+// skip: "left"/"right" (o una lista) del lado que ya es agua de la costa, pared o valle: no se pinta encima. sat(d) → {L,R} colores satelitales o null.
+function landFranja(ctx,w,a,b,aLY,aRY,bLY,bRY,L,flip,sc,skip,sat,d0,asf){
+  const lm=landEn(L,b.d,flip), vl=landVia(lm.v,asf), sg=sat?sat(b.d):null, ma=a.m||a.hw/5, mb=b.m||b.hw/5;
+  for(const side of [-1,1]){
+    const s=side<0?0:1; if(landSalta(skip,side)) continue;
+    const c=lm.c[s];
+    const col=landBruma(landColSuelo(c,sg?(s?sg.R:sg.L):null,sc),sc,b.d,d0), by=side<0?bLY:bRY, ay=side<0?aLY:aRY;
+    const ex=side*w*2+w/2;
+    ctx.fillStyle=col; ctx.strokeStyle=col; ctx.lineWidth=1;
+    ctx.beginPath(); ctx.moveTo(b.cx+side*b.hw,by); ctx.lineTo(ex,by); ctx.lineTo(ex,ay); ctx.lineTo(a.cx+side*a.hw,ay); ctx.closePath(); ctx.fill(); ctx.stroke();
+    let edB=b.hw, edA=a.hw; // borde exterior de lo que ya está dibujado (px desde el centro)
+    if(landHayVereda(vl,lm,s)){ // vereda de 2 m con cordón, juntas cada 1,5 m
+      const vc=landBruma(Math.floor(b.d/1.5)%2?"#bdb9b0":"#b3afa6",sc,b.d,d0), nb=b.hw+2.2*mb, na=a.hw+2.2*ma;
+      ctx.fillStyle=vc; ctx.strokeStyle=vc;
+      ctx.beginPath(); ctx.moveTo(b.cx+side*b.hw,by); ctx.lineTo(b.cx+side*nb,by); ctx.lineTo(a.cx+side*na,ay); ctx.lineTo(a.cx+side*a.hw,ay); ctx.closePath(); ctx.fill(); ctx.stroke();
+      ctx.fillStyle=landBruma("#d6d3cb",sc,b.d,d0); // cordón
+      ctx.beginPath(); ctx.moveTo(b.cx+side*b.hw,by); ctx.lineTo(b.cx+side*(b.hw+0.18*mb),by); ctx.lineTo(a.cx+side*(a.hw+0.18*ma),ay); ctx.lineTo(a.cx+side*a.hw,ay); ctx.closePath(); ctx.fill();
+      edB=nb; edA=na;
+    }
+    if(lm.b[s]) continue; // con casa, el cerco lo tapa la casa
+    // cerco continuo: alambrado en el campo, tejido en la industria, ligustro en el barrio
+    const tipo=(c===5||c===6)?"alambre":c===3?"tejido":(c===1&&b.m>1.2)?"ligustro":null; if(!tipo) continue;
+    const off=1.2, xb=b.cx+side*(edB+off*mb), xa=a.cx+side*(edA+off*ma);
+    if(tipo==="ligustro"){ const hb=1.3*mb, ha=1.3*ma, g=landBruma(landHash(Math.floor(b.d/9))>0.5?"#355e2c":"#2f5427",sc,b.d,d0);
+      ctx.fillStyle=g; ctx.strokeStyle=g; ctx.beginPath(); ctx.moveTo(xb,by); ctx.lineTo(xa,ay); ctx.lineTo(xa,ay-ha); ctx.lineTo(xb,by-hb); ctx.closePath(); ctx.fill(); ctx.stroke(); continue; }
+    const hgt=tipo==="tejido"?2:1.15;
+    ctx.strokeStyle=landBruma(tipo==="tejido"?"#9aa0a4":"#5e5446",sc,b.d,d0); ctx.lineWidth=Math.max(0.4,mb*0.025);
+    ctx.beginPath(); for(const f of tipo==="tejido"?[1]:[0.45,0.75,1]){ ctx.moveTo(xb,by-hgt*f*mb); ctx.lineTo(xa,ay-hgt*f*ma); } ctx.stroke();
+    if(tipo==="tejido"&&mb>2){ ctx.fillStyle="rgba(150,156,160,.25)"; ctx.beginPath(); ctx.moveTo(xb,by); ctx.lineTo(xa,ay); ctx.lineTo(xa,ay-hgt*ma); ctx.lineTo(xb,by-hgt*mb); ctx.closePath(); ctx.fill(); }
+    const P=tipo==="tejido"?3:4; // postes
+    for(let dd=Math.ceil(b.d/P)*P; dd<a.d; dd+=P){ const t=(dd-b.d)/((a.d-b.d)||1), x=xb+(xa-xb)*t, y=by+(ay-by)*t, m=mb+(ma-mb)*t;
+      ctx.fillStyle=ctx.strokeStyle; ctx.fillRect(x-Math.max(0.5,m*0.05),y-hgt*1.05*m,Math.max(1,m*0.1),hgt*1.05*m); }
+  }
+}
+// casas y edificios: dos caras (la que da al camino, que se aleja en perspectiva, y la que da hacia vos) y techo
+const LAND_COL={casaSur:["#e07a3c","#3b82d6","#e2c044","#d4537e","#2fa36b","#c0392b","#e8e2d0","#7a9cc0"], casa:["#e9dcc3","#d9c2a0","#f0ebe0","#c98f6a","#e3d5b8","#b9c4c9","#d8b49a"],
+  techoSur:["#5a3a2e","#2f4f6f","#7a2f2f","#3f5f3f","#6b6f73"], techo:["#9c4a32","#a35a3a","#6b6b6b","#7d3b2a"], edif:["#cfc9bf","#b9b3a8","#d8d2c6","#a9a49c","#c4b49a","#9fa8ad"],
+  toldo:["#c0392b","#2b6cb0","#2f855a","#d69e2e","#6b46c1"], galpon:["#9aa0a6","#b7b09e","#8d9399","#a8a28f"], publico:["#d8c9a6","#a8553a","#c9b48a"]};
+function landCasa(ctx,S,dd,side,lat,byte,seed,sur,sc,d0){
+  const k=byte>>5, lv=Math.max(1,byte&31), r1=landHash(seed*3.1), r2=landHash(seed*7.7);
+  const len=[9,16,12,22,18][k]*(0.8+0.45*r1), dep=[9,13,12,16,15][k], fl=k===2?3.6:k===3?4.5:3, H=Math.min(90,k===3?Math.max(4.5,lv*fl):lv*fl+(k===0?0:0.4));
+  const p0=landPunto(S,dd); if(!p0) return; let p1=landPunto(S,dd+len); if(!p1){ const z=S[S.length-1]; p1={cx:z.cx,y:z.y,m:z.m}; }
+  const X=(p,l)=>p.cx+side*l*p.m, x0=X(p0,lat), x1=X(p1,lat), xb=X(p0,lat+dep), y0=p0.y, y1=p1.y, t0=y0-H*p0.m, t1=y1-H*p1.m;
+  const pick=a=>a[Math.floor(r2*a.length)%a.length];
+  let col=k===0?pick(sur?LAND_COL.casaSur:LAND_COL.casa):k===1?pick(LAND_COL.edif):k===2?pick(LAND_COL.casa):k===3?pick(LAND_COL.galpon):pick(LAND_COL.publico);
+  col=landBruma(col,sc,dd,d0);
+  const frente=shadeHex(col,0.82), punta=col;
+  // cara que da al camino
+  ctx.fillStyle=frente; ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.lineTo(x1,t1); ctx.lineTo(x0,t0); ctx.closePath(); ctx.fill();
+  // cara que da hacia vos
+  ctx.fillStyle=punta; ctx.fillRect(Math.min(x0,xb),t0,Math.abs(xb-x0),y0-t0);
+  // techo a dos aguas (casas y galpones): el faldón que mira al camino y el triángulo de la punta
+  if(k===0||k===3){ const rh=k===0?2.6:1.8, xr0=X(p0,lat+dep/2), xr1=X(p1,lat+dep/2), r0=y0-(H+rh)*p0.m, rr1=y1-(H+rh)*p1.m;
+    const tc=landBruma(k===3?"#8b9096":pick(sur?LAND_COL.techoSur:LAND_COL.techo),sc,dd,d0);
+    ctx.fillStyle=tc; ctx.beginPath(); ctx.moveTo(x0-side*0.4*p0.m,t0); ctx.lineTo(x1-side*0.4*p1.m,t1); ctx.lineTo(xr1,rr1); ctx.lineTo(xr0,r0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=shadeHex(punta,0.94); ctx.beginPath(); ctx.moveTo(x0,t0); ctx.lineTo(xb,t0); ctx.lineTo(xr0,r0); ctx.closePath(); ctx.fill();
+  } else { ctx.fillStyle=shadeHex(col,0.7); ctx.fillRect(Math.min(x0,xb),t0,Math.abs(xb-x0),Math.max(1,0.5*p0.m)); // pretil
+    ctx.beginPath(); ctx.moveTo(x0,t0); ctx.lineTo(x1,t1); ctx.lineTo(x1,t1+0.5*p1.m); ctx.lineTo(x0,t0+0.5*p0.m); ctx.closePath(); ctx.fill(); }
+  if(p0.m<1.6) return; // lejos: sin ventanas
+  const vid=landBruma(k===3?"#5d6266":"#4d6a80",sc,dd,d0);
+  // ventanas de la cara del camino (una cada ~3,2 m, por piso)
+  const nc=Math.max(1,Math.floor(len/3.2)), pisos=k===3?1:Math.min(lv,30);
+  const cols=[]; for(let j=0;j<nc;j++){ const u=(j+0.5)/nc, a=landPunto(S,dd+u*len-0.6), b=landPunto(S,dd+u*len+0.6); if(a&&b) cols.push([a,b]); }
+  ctx.fillStyle=vid;
+  for(let f=0;f<pisos;f++){ const v0=f*fl+(k===2&&f===0?0.3:0.9), v1=f*fl+(k===2&&f===0?2.8:k===3?3.2:2.2);
+    if(k===3&&f===0){ /* portón */ const a=landPunto(S,dd+len*0.35),b=landPunto(S,dd+len*0.65); if(a&&b){ ctx.beginPath(); ctx.moveTo(X(a,lat),a.y-0.1*a.m); ctx.lineTo(X(b,lat),b.y-0.1*b.m); ctx.lineTo(X(b,lat),b.y-3.4*b.m); ctx.lineTo(X(a,lat),a.y-3.4*a.m); ctx.closePath(); ctx.fill(); } continue; }
+    for(const [a,b] of cols){ if(k===0&&f===0&&cols.length>1&&a===cols[0][0]){ // puerta
+        ctx.fillStyle=landBruma("#5a3d2b",sc,dd,d0); ctx.beginPath(); ctx.moveTo(X(a,lat),a.y); ctx.lineTo(X(b,lat),b.y); ctx.lineTo(X(b,lat),b.y-2.1*b.m); ctx.lineTo(X(a,lat),a.y-2.1*a.m); ctx.closePath(); ctx.fill(); ctx.fillStyle=vid; continue; }
+      ctx.beginPath(); ctx.moveTo(X(a,lat),a.y-v0*a.m); ctx.lineTo(X(b,lat),b.y-v0*b.m); ctx.lineTo(X(b,lat),b.y-v1*b.m); ctx.lineTo(X(a,lat),a.y-v1*a.m); ctx.closePath(); ctx.fill(); } }
+  if(k===2){ // toldo del local
+    const tl=landBruma(pick(LAND_COL.toldo),sc,dd,d0); ctx.fillStyle=tl; ctx.beginPath(); ctx.moveTo(x0,y0-3.2*p0.m); ctx.lineTo(x1,y1-3.2*p1.m);
+    ctx.lineTo(X(p1,lat-1.2),y1-2.7*p1.m); ctx.lineTo(X(p0,lat-1.2),y0-2.7*p0.m); ctx.closePath(); ctx.fill(); }
+  // ventanas de la cara que da hacia vos
+  const w2=Math.abs(xb-x0); if(w2>8&&k!==3){ const nv=Math.max(1,Math.floor(dep/4));
+    for(let f=0;f<pisos;f++){ const yy0=y0-(f*fl+2.2)*p0.m, hh=1.3*p0.m;
+      for(let j=0;j<nv;j++){ const u=(j+0.5)/nv, xc=x0+(xb-x0)*u, ww=Math.min(w2/nv*0.5,1.3*p0.m); ctx.fillRect(xc-ww/2,yy0,ww,hh); } } }
+}
+// árboles: "hoja" (latifoliado: tronco y copa de varias bolas, con luz de un lado), "pino" (conífera en pisos) y
+// "lenga" (copa irregular, en otoño rojiza). x,y = pie del árbol; H = alto en metros
+function landArbol(ctx,x,y,m,H,tipo,r,sc,dd,d0){
+  const B=c=>landBruma(c,sc,dd,d0), h=H*m, tr=Math.max(0.6,0.07*h);
+  ctx.fillStyle=B("#4a3a2c"); ctx.fillRect(x-tr/2,y-h*0.42,tr,h*0.42);
+  if(tipo==="pino"){ const cs=[B("#1f4228"),B("#24502e"),B("#2b5c34")];
+    for(let k=0;k<4;k++){ const yb=y-h*(0.18+k*0.2), wk=h*(0.24-k*0.045); ctx.fillStyle=cs[k%3];
+      ctx.beginPath(); ctx.moveTo(x-wk,yb); ctx.lineTo(x+wk,yb); ctx.lineTo(x,yb-h*0.34); ctx.closePath(); ctx.fill(); } return; }
+  const otono=tipo==="lenga"&&r>0.62, base=otono?["#8a4b1f","#b8742a","#d49a3a"]:tipo==="lenga"?["#2f4a2c","#3f6236","#557a44"]:["#2c5a2e","#3a7036","#4f8a43"];
+  const bolas=tipo==="lenga"?[[-0.16,0.62,0.2],[0.15,0.66,0.19],[0,0.8,0.2],[-0.08,0.93,0.13],[0.12,0.88,0.12]]:[[-0.17,0.6,0.22],[0.17,0.62,0.21],[0,0.78,0.25],[-0.1,0.9,0.15],[0.1,0.92,0.14]];
+  bolas.forEach(([dx,dy,rr],j)=>{ ctx.fillStyle=B(base[j===2?1:j>2?2:0]); ctx.beginPath(); ctx.ellipse(x+dx*h*(0.9+0.2*r),y-dy*h,rr*h,rr*h*0.9,0,0,7); ctx.fill(); });
+  ctx.fillStyle="rgba(255,250,210,.10)"; ctx.beginPath(); ctx.ellipse(x+0.08*h,y-0.82*h,0.13*h,0.11*h,0,0,7); ctx.fill();
+}
+// lo que va al costado cuando no hay casa, según el uso del suelo (tamaños en metros)
+function landObjeto(ctx,c,x,y,m,seed,side,sur,sc,dd,d0){
+  const r=landHash(seed), dec=(nombre,alto)=>{ ctx.save(); ctx.globalAlpha*=1-Math.min(0.55,Math.max(0,(dd-d0)/700)); drawSideDecor(ctx,nombre,x,y,alto*m,seed*2-1,side); ctx.restore(); };
+  if(c===7){ // bosque: tres árboles a distintas distancias del borde, de atrás hacia adelante
+    for(const [o,f] of [[11,0.37],[5.5,0.71],[0,0.13]]){ const rr=landHash(seed*f+o), tipo=sur?"lenga":rr>0.55?"pino":"hoja";
+      landArbol(ctx,x+side*(o+3*rr)*m,y,m,(sur?8:9)+7*rr,tipo,rr,sc,dd,d0); } return; }
+  if(c===4){ if(r<0.55) landArbol(ctx,x+side*3*r*m,y,m,6+5*r,sur?"lenga":r<0.2?"pino":"hoja",r,sc,dd,d0); else if(r>0.85&&m>2){ ctx.fillStyle="#6b4b33"; ctx.fillRect(x-0.8*m,y-0.45*m,1.6*m,0.12*m); ctx.fillRect(x-0.8*m,y-0.9*m,1.6*m,0.1*m); } return; }
+  if(c===8){ ctx.fillStyle=landBruma(r>0.5?"#4f5a32":"#5d6638",sc,dd,d0); for(let j=0;j<3;j++){ ctx.beginPath(); ctx.ellipse(x+(j-1)*0.9*m,y-0.35*m,0.7*m,0.45*m,0,Math.PI,0); ctx.fill(); } return; }
+  if(c===5){ if(r>0.8&&m>1){ ctx.fillStyle=landBruma("#d2b25a",sc,dd,d0); ctx.beginPath(); ctx.ellipse(x+side*4*m,y-0.6*m,0.75*m,0.6*m,0,0,7); ctx.fill(); ctx.strokeStyle="rgba(120,90,30,.5)"; ctx.lineWidth=Math.max(0.5,m*0.05); ctx.beginPath(); ctx.ellipse(x+side*4*m,y-0.6*m,0.4*m,0.32*m,0,0,7); ctx.stroke(); } else if(r<0.1) landArbol(ctx,x+side*(8+12*r)*m,y,m,8+4*r,"hoja",r,sc,dd,d0); return; }
+  if(c===6){ if(sur){ if(r>0.55) dec("estepa",2); } else if(r>0.85) landArbol(ctx,x+side*(6+10*r)*m,y,m,6+3*r,"hoja",r,sc,dd,d0); else if(r>0.5){ ctx.fillStyle=landBruma("#6d7a40",sc,dd,d0); ctx.beginPath(); ctx.ellipse(x+side*2*m,y-0.25*m,0.8*m,0.35*m,0,Math.PI,0); ctx.fill(); } return; }
+  if(c===10){ if(r>0.35) dec("rocks",1.2+1.5*r); return; }
+  if(c===12||c===11){ if(r>0.4) dec("juncos",1.4); return; }
+  if(c===14){ dec("nieve",1.6); return; }
+  if(c===13){ ctx.fillStyle=landBruma("#c9c9c4",sc,dd,d0); for(let j=0;j<4;j++){ const xx=x+side*j*1.6*m; ctx.fillRect(xx-0.25*m,y-0.9*m,0.5*m,0.9*m); if(j%2){ ctx.fillRect(xx-0.06*m,y-1.4*m,0.12*m,0.6*m); ctx.fillRect(xx-0.25*m,y-1.25*m,0.5*m,0.1*m); } } return; }
+  if(c===1||c===2){ if(r<0.4) landArbol(ctx,x,y,m,5+3*r,"hoja",r,sc,dd,d0); return; }   // árbol de vereda
+  if(c===3){ if(r>0.6){ /* galpón de fondo */ } return; }
+}
+function landFarol(ctx,x,y,m,side,sc,dd,d0){ const col=landBruma("#4a4f55",sc,dd,d0); ctx.fillStyle=col; ctx.fillRect(x-0.08*m,y-7*m,0.16*m,7*m);
+  ctx.fillRect(x-side*1.6*m,y-7*m,side*1.6*m,0.12*m); ctx.fillStyle=landBruma("#f3e7b8",sc,dd,d0); ctx.fillRect(x-side*1.7*m-0.3*m,y-6.95*m,0.6*m,0.2*m); }
+// DECORADO de la franja: cada 12,5 m, de cada lado, la casa real (a su distancia, con sus pisos) o lo que corresponda al
+// uso del suelo; faroles en las calles. hwM(d) = medio ancho del camino en metros.
+function landDecorFranja(ctx,S,i,L,flip,sc,skip,hwM,d0,asf,fallback){
+  const b=S[i], a=S[i+1], STEP=12.5;
+  for(let dd=Math.ceil(b.d/STEP)*STEP; dd<a.d; dd+=STEP){
+    const t=(dd-b.d)/((a.d-b.d)||1), cx=b.cx+(a.cx-b.cx)*t, y=b.y+(a.y-b.y)*t, m=(b.m+(a.m-b.m)*t);
+    if(m<0.25) continue;
+    const lm=landEn(L,dd,flip), slot=Math.round(dd/STEP), hw=hwM(dd), vl=landVia(lm.v,asf);
+    for(const side of [-1,1]){
+      const s=side<0?0:1, seed=slot*1.37+side*0.71+lm.q*0.013;
+      if(landSalta(skip,side)){ if(slot%2===0&&fallback) fallback(ctx,"agua",cx+side*(hw+3+4*landHash(seed))*m,y,m,seed,side); continue; }
+      const ver=landHayVereda(vl,lm,s), borde=hw+(ver?2.2:0.6);
+      const bb=lm.b[s];
+      if(bb){ // la casa: una por muestra; en barrio o comercios, otra pegada si la siguiente muestra también tiene
+        const dist=lm.dist[s], k=bb>>5, dep=[9,13,12,16,15][k], lat=Math.max(borde+0.3,dist-dep/2);
+        if(slot%2===0||((lm.c[s]===1||lm.c[s]===2)&&landEn(L,dd+STEP,flip).b[s])) landCasa(ctx,S,dd,side,lat,bb,seed,L.sur,sc,d0);
+        continue;
+      }
+      const c=lm.c[s];
+      if(vl&&(vl.farol||vl.calle&&(c===1||c===2))&&slot%3===0&&(side>0)===(slot%2===0)) landFarol(ctx,cx+side*(borde-0.4)*m,y,m,side,sc,dd,d0);
+      if(c){ landObjeto(ctx,c,cx+side*(borde+2+6*landHash(seed*1.9))*m,y,m,landHash(seed),side,L.sur,sc,dd,d0); continue; }
+      if(fallback&&slot%2===0) fallback(ctx,null,cx+side*(borde+1.5+4*landHash(seed))*m,y,m,seed,side);
+    }
+  }
+}
+
 // ---- lo que manda Rumbo ----
 async function rumboImport() {
   const m = (location.hash || '').match(/^#rumbo=([zj])([A-Za-z0-9_-]+)/); if (!m) return;
@@ -7577,14 +7769,14 @@ async function rumboImport() {
     const nombre = (o.name || 'Ruta de Rumbo').replace(/\.gpx$/i, '');
     const ruta = construirRuta(pts, nombre);
     ruta.origen = 'rumbo';
-    ruta.paisaje = { hz: o.hz || null, peaks: o.peaks || [], ground: o.ground || null, scenes: o.scenes || null };
+    ruta.paisaje = { hz: o.hz || null, peaks: o.peaks || [], ground: o.ground || null, scenes: o.scenes || null, land: o.land || null }; // v136: + land
     // si ya había uno con el mismo nombre (se mandó de nuevo), se reemplaza
     const viejos = bigGet(K_RUTAS, []).filter(r => r.nombre === nombre && r.origen === 'rumbo').map(r => r.id);
     if (viejos.length) bigSet(K_RUTAS, bigGet(K_RUTAS, []).filter(r => !viejos.includes(r.id)));
     guardarRuta(ruta);
     const sel = document.getElementById('selectEscenario');
     if (sel) { sel.value = 'ruta:' + ruta.id; cambiarEscenario(); }
-    toast('🧭 Recorrido de Rumbo: ' + nombre + ' · ' + (ruta.longitudM / 1000).toFixed(1).replace('.', ',') + ' km' + (o.hz ? ' · montañas reales' : '') + (o.scenes ? ' · escenario por tramos' : ''));
+    toast('🧭 Recorrido de Rumbo: ' + nombre + ' · ' + (ruta.longitudM / 1000).toFixed(1).replace('.', ',') + ' km' + (o.hz ? ' · montañas reales' : '') + (o.scenes ? ' · escenario por tramos' : '') + (o.land ? ' · casas, calles y campo reales' : ''));
   } catch (e) { toast('No pude abrir lo que mandó Rumbo: ' + e.message); }
 }
 window.addEventListener('hashchange', () => { rumboImport(); });

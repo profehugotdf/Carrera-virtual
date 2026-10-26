@@ -13,6 +13,7 @@ Correr en cinta, pista, sendero o al aire libre: pulso y cadencia por BLE (HRM-P
 - La animación lee `correr_editor_keyframes_v3`. **No cambiar poses ni proporciones** sin pedido explícito.
 - Lo que más le importa a Hugo en vivo: correr contra sus propias sesiones (fantasma), realista y consistente.
 - Recorridos desde Rumbo (v134): `rumboImport()` arma la ruta con `construirRuta()` y le guarda `ruta.paisaje` (horizonte, cerros, suelo, escenas). `roadBands` recibe la ruta en el parámetro `routeName` y dibuja el horizonte real, el suelo y el agua; `drawSideDecorBici` trae los decorados de Bici.
+- Costados reales (v136): con `ruta.paisaje.land`, `roadBands` dibuja cada franja con su suelo, vereda, cerco, casas en 3D a la distancia real y el ancho y piso del camino. El bloque `landDec`/`landFranja`/`landDecorFranja`/`landCasa`… es **el mismo que en Bici**: si se cambia acá, copiarlo allá.
 - Problema conocido: el umbral calculado solo puede quedar muy por debajo de la VMA medida (toma el esfuerzo más largo). Revisarlo antes de tocar las zonas.
 
 ## Quién y cómo trabajamos
@@ -61,6 +62,6 @@ Todas las apps comparten `localStorage` (unos 5 MB en total para todas) y pueden
   - Rumbo: NGP con pendiente para correr, potencia estimada/FTP para bici.
   - Una salida grabada por Rumbo **y** por la app dedicada cuenta una sola vez, la de la dedicada.
 - Rumbo abre las otras apps con `#rumbo=` en el link:
-  - Bici, Correr y Kayak: `z` + base64url de JSON comprimido con deflate-raw. Bici y Correr reciben el mismo paquete (gpx con la altura, escenas, horizonte, cerros y suelo); Kayak recibe `app:'kayak'`, puntos, orillas y perfil, horizonte y cerros.
+  - Bici, Correr y Kayak: `z` + base64url de JSON comprimido con deflate-raw. Bici y Correr reciben el mismo paquete (gpx con la altura, escenas, horizonte, cerros, suelo y `land`: qué hay a cada costado cada 25 m: uso del suelo, casa más cercana con pisos y distancia, tipo de camino); Kayak recibe `app:'kayak'`, puntos, orillas y perfil, horizonte y cerros.
   - Mi plan: base64 de `{v,s:[sesiones]}`, sin comprimir.
 - Hay una app de Backup (`profehugotdf.github.io`) que exporta y restaura localStorage e IndexedDB de todas.
