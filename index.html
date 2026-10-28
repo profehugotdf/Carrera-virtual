@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v139</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v140</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -549,6 +549,7 @@
           <label>Mirar el recorrido sin correr</label>
           <input type="range" id="sliderPreviaRuta" min="0" max="1000" step="5" value="0" oninput="moverPreviaRuta(this.value)" style="width:100%; touch-action:pan-y;">
           <button class="btn" id="btnPreviaRuta" onclick="togglePreviaRuta()">▶ Recorrer sin correr</button>
+          <div class="estado-conexion" id="mapaInfoRuta" style="margin-top:6px;"></div>
           <!-- v138: clima real del recorrido -->
           <div id="wxBox" style="margin-top:10px; padding-top:8px; border-top:1px solid var(--borde, #2a3440);">
             <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="wxOn" onchange="wxCambio()" style="width:22px;height:22px;"> 🌬️ Viento y clima reales del recorrido</label>
@@ -3390,6 +3391,15 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v140: CIUDAD AUNQUE FALTEN LAS CASAS EN EL MAPA (Hugo, con una captura de
+         un recorrido urbano que se veía como ruta de campo: "¿por qué no
+         reconoce la zona urbana?"). En muchas ciudades argentinas OpenStreetMap
+         no tiene dibujadas las casas. Ahora, en barrio, zona de comercios o
+         una calle de barrio asfaltada, si no hay casa cargada se completa con
+         casas genéricas pegadas (como una cuadra), con vereda y faroles. Y
+         debajo de "Mirar el recorrido sin correr" se ve qué datos del mapa
+         trajo el recorrido (tramos, montañas, suelo, casas, calles), para
+         saber si hay que mandarlo de nuevo desde Rumbo.
    v139: PERSPECTIVA REAL DE LOS FANTASMAS Y CORREDORES (Hugo, con una captura
          de la carrera virtual: "¿podrías mejorar la vista en perspectiva de los
          fantasmas y darle más realismo?"). Antes los otros se ubicaban a su
@@ -7461,12 +7471,21 @@ function dibujarPanorama() {
    (distanciaAcumM, que se pone en 0 al iniciar la sesión), para ver el paisaje antes de correrlo. */
 let previaRAF = null, previaLast = 0;
 var _wxUiRuta = null;
+// v140: qué datos del mapa trajo el recorrido (diagnóstico a la vista)
+function mapaInfoRuta(ruta) {
+  const el = document.getElementById('mapaInfoRuta'); if (!el) return;
+  const P = paisajeDe(ruta);
+  if (!P) { el.innerHTML = '🗺️ Sin datos del mapa: este recorrido no vino de Rumbo. Para ver casas, calles y montañas reales, abrilo en Rumbo y tocá 🏃 Correrla en Correr.'; return; }
+  const p = [P.scenes ? P.scenes.length + ' tramo' + (P.scenes.length > 1 ? 's' : '') + ' de escenario' : 'sin escenario por tramos', P.hz ? 'montañas reales' : 'sin montañas reales', P.ground ? 'colores del suelo' : 'sin colores del suelo'];
+  if (P.land) { const r = landResumen(P.land); p.push('casas en el mapa ' + r.casas + ' %', 'tipo de calle ' + r.calles + ' %', 'uso del suelo ' + r.uso + ' %'); }
+  el.innerHTML = '🗺️ Del mapa: ' + p.join(' · ') + (P.land ? '' : '<br>Sin los costados (casas, calles): mandalo de nuevo desde Rumbo.') + (P.land && landResumen(P.land).casas < 20 && landResumen(P.land).calles > 30 ? '<br>OpenStreetMap tiene pocas casas cargadas acá: donde es barrio, se completan con casas genéricas.' : '');
+}
 function actualizarPreviaRuta() {
   const el = document.getElementById('previaRuta'); if (!el) return;
   const ruta = escenarioActual === 'ruta' ? rutaActiva() : null, ver = !!ruta && !sesionActiva;
   if ((el.style.display !== 'none') !== ver) el.style.display = ver ? 'block' : 'none';
   if (!ver) { pararPreviaRuta(); return; }
-  if (_wxUiRuta !== ruta.id) { _wxUiRuta = ruta.id; try { wxUI(); const W0 = wxPara(ruta); if (wxCfg().on && (!W0 || (W0.fuente !== 'a mano' && Date.now() - W0.at > 3600000))) wxBuscar(true); } catch (e) { console.warn(e); } } // v138
+  if (_wxUiRuta !== ruta.id) { _wxUiRuta = ruta.id; try { mapaInfoRuta(ruta); wxUI(); const W0 = wxPara(ruta); if (wxCfg().on && (!W0 || (W0.fuente !== 'a mano' && Date.now() - W0.at > 3600000))) wxBuscar(true); } catch (e) { console.warn(e); } } // v138
   const sl = document.getElementById('sliderPreviaRuta');
   if (+sl.max !== ruta.longitudM) sl.max = ruta.longitudM;
   if (document.activeElement !== sl) sl.value = Math.round(Math.min(ruta.longitudM, distanciaAcumM || 0));
@@ -7877,14 +7896,20 @@ function landBruma(col,sc,d,d0){ return mixHex(col,sc.sky[1],Math.min(0.6,Math.m
 // color del suelo de un lado: el del uso del suelo, mezclado con el de la foto satelital si lo hay
 function landColSuelo(c,sat,sc){ const base=LAND_SUELO[c]; if(base&&sat) return mixHex(base,sat,c===11?0.15:0.4); return base||sat||sc.ground; }
 // ¿hay vereda de este lado? (calle asfaltada en barrio o con casas, o marcada en OpenStreetMap)
-function landHayVereda(vl,lm,s){ return !!vl&&(vl.vereda||(vl.calle&&(lm.c[s]===1||lm.c[s]===2||lm.b[s]>0))); }
+// ¿es ciudad aunque OpenStreetMap no tenga dibujadas las casas? (en muchas ciudades argentinas faltan): barrio o
+// comercios, o una calle asfaltada de barrio (highway=residential) sin otro uso del suelo a los costados
+function landUrbano(vl,c){ return c===1||c===2||(c===0&&!!vl&&vl.calle&&vl.c===4); }
+function landHayVereda(vl,lm,s){ return !!vl&&(vl.vereda||(vl.calle&&(landUrbano(vl,lm.c[s])||lm.b[s]>0))); }
+// resumen de lo que trajo Rumbo, para mostrarlo en la app (diagnóstico)
+function landResumen(L){ let casas=0,via=0,uso=0; for(let q=0;q<L.n;q++){ const o=q*7; if(L.u[o+2]||L.u[o+3])casas++; if(L.u[o+6]&15)via++; if(L.u[o]||L.u[o+1])uso++; }
+  const pc=x=>Math.round(x/L.n*100); return {casas:pc(casas),calles:pc(via),uso:pc(uso)}; }
 // FRANJA: suelo de cada costado, vereda y cerco o alambrado continuo. b = franja cercana, a = la siguiente (más lejos).
 // skip: "left"/"right" (o una lista) del lado que ya es agua de la costa, pared o valle: no se pinta encima. sat(d) → {L,R} colores satelitales o null.
 function landFranja(ctx,w,a,b,aLY,aRY,bLY,bRY,L,flip,sc,skip,sat,d0,asf){
   const lm=landEn(L,b.d,flip), vl=landVia(lm.v,asf), sg=sat?sat(b.d):null, ma=a.m||a.hw/5, mb=b.m||b.hw/5;
   for(const side of [-1,1]){
     const s=side<0?0:1; if(landSalta(skip,side)) continue;
-    const c=lm.c[s];
+    const c=lm.c[s]===0&&landUrbano(vl,0)?1:lm.c[s];
     const col=landBruma(landColSuelo(c,sg?(s?sg.R:sg.L):null,sc),sc,b.d,d0), by=side<0?bLY:bRY, ay=side<0?aLY:aRY;
     const ex=side*w*2+w/2;
     ctx.fillStyle=col; ctx.strokeStyle=col; ctx.lineWidth=1;
@@ -8000,14 +8025,20 @@ function landDecorFranja(ctx,S,i,L,flip,sc,skip,hwM,d0,asf,fallback){
       const s=side<0?0:1, seed=slot*1.37+side*0.71+lm.q*0.013;
       if(landSalta(skip,side)){ if(slot%2===0&&fallback) fallback(ctx,"agua",cx+side*(hw+3+4*landHash(seed))*m,y,m,seed,side); continue; }
       const ver=landHayVereda(vl,lm,s), borde=hw+(ver?2.2:0.6);
-      const bb=lm.b[s];
+      let bb=lm.b[s];
+      /* ciudad sin casas cargadas en el mapa: se completa con casas genéricas pegadas, como una cuadra (en el sur, de
+         chapa de colores); en zona de comercios, más locales y algún edificio */
+      let sint=false;
+      if(!bb&&landUrbano(vl,lm.c[s])){ const r=landHash(seed*5.3), r2=landHash(seed*9.7), com=lm.c[s]===2;
+        const k=com?(r<0.55?2:r<0.8?1:0):(r<0.12?1:0), lv=k===1?3+Math.floor(r2*6):k===2?1+Math.floor(r2*2):(r2>0.7?2:1);
+        bb=k<<5|lv; sint=true; }
       if(bb){ // la casa: una por muestra; en barrio o comercios, otra pegada si la siguiente muestra también tiene
-        const dist=lm.dist[s], k=bb>>5, dep=[9,13,12,16,15][k], lat=Math.max(borde+0.3,dist-dep/2);
-        if(slot%2===0||((lm.c[s]===1||lm.c[s]===2)&&landEn(L,dd+STEP,flip).b[s])) landCasa(ctx,S,dd,side,lat,bb,seed,L.sur,sc,d0);
+        const k=bb>>5, dep=[9,13,12,16,15][k], dist=sint?borde+0.4+landHash(seed*3.9)*2.5+dep/2:lm.dist[s], lat=Math.max(borde+0.3,dist-dep/2);
+        if(sint||slot%2===0||((lm.c[s]===1||lm.c[s]===2)&&landEn(L,dd+STEP,flip).b[s])) landCasa(ctx,S,dd,side,lat,bb,seed,L.sur,sc,d0);
         continue;
       }
       const c=lm.c[s];
-      if(vl&&(vl.farol||vl.calle&&(c===1||c===2))&&slot%3===0&&(side>0)===(slot%2===0)) landFarol(ctx,cx+side*(borde-0.4)*m,y,m,side,sc,dd,d0);
+      if(vl&&(vl.farol||vl.calle&&landUrbano(vl,c))&&slot%3===0&&(side>0)===(slot%2===0)) landFarol(ctx,cx+side*(borde-0.4)*m,y,m,side,sc,dd,d0);
       if(c){ landObjeto(ctx,c,cx+side*(borde+2+6*landHash(seed*1.9))*m,y,m,landHash(seed),side,L.sur,sc,dd,d0); continue; }
       if(fallback&&slot%2===0) fallback(ctx,null,cx+side*(borde+1.5+4*landHash(seed))*m,y,m,seed,side);
     }
