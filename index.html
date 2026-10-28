@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v140</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v141</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3391,6 +3391,11 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v141: Hugo mandó la línea de diagnóstico: "1 tramo de escenario · sin los
+         costados" en un recorrido por la ciudad: OpenStreetMap no le había
+         respondido a Rumbo. Rumbo ahora reintenta, usa las calles que ya tiene
+         guardadas para calcular rutas y marca como urbanos los tramos de
+         calles de barrio; acá se muestra también cómo respondió OpenStreetMap.
    v140: CIUDAD AUNQUE FALTEN LAS CASAS EN EL MAPA (Hugo, con una captura de
          un recorrido urbano que se veía como ruta de campo: "¿por qué no
          reconoce la zona urbana?"). En muchas ciudades argentinas OpenStreetMap
@@ -7478,7 +7483,8 @@ function mapaInfoRuta(ruta) {
   if (!P) { el.innerHTML = '🗺️ Sin datos del mapa: este recorrido no vino de Rumbo. Para ver casas, calles y montañas reales, abrilo en Rumbo y tocá 🏃 Correrla en Correr.'; return; }
   const p = [P.scenes ? P.scenes.length + ' tramo' + (P.scenes.length > 1 ? 's' : '') + ' de escenario' : 'sin escenario por tramos', P.hz ? 'montañas reales' : 'sin montañas reales', P.ground ? 'colores del suelo' : 'sin colores del suelo'];
   if (P.land) { const r = landResumen(P.land); p.push('casas en el mapa ' + r.casas + ' %', 'tipo de calle ' + r.calles + ' %', 'uso del suelo ' + r.uso + ' %'); }
-  el.innerHTML = '🗺️ Del mapa: ' + p.join(' · ') + (P.land ? '' : '<br>Sin los costados (casas, calles): mandalo de nuevo desde Rumbo.') + (P.land && landResumen(P.land).casas < 20 && landResumen(P.land).calles > 30 ? '<br>OpenStreetMap tiene pocas casas cargadas acá: donde es barrio, se completan con casas genéricas.' : '');
+  const osm = ruta.paisaje && ruta.paisaje.osm ? '<br>OpenStreetMap: ' + String(ruta.paisaje.osm).replace(/[<>]/g, '') : '';
+  el.innerHTML = '🗺️ Del mapa: ' + p.join(' · ') + osm + (P.land ? '' : '<br>Sin los costados (casas, calles): mandalo de nuevo desde Rumbo.') + (P.land && landResumen(P.land).casas < 20 && landResumen(P.land).calles > 30 ? '<br>OpenStreetMap tiene pocas casas cargadas acá: donde es barrio, se completan con casas genéricas.' : '');
 }
 function actualizarPreviaRuta() {
   const el = document.getElementById('previaRuta'); if (!el) return;
@@ -8059,7 +8065,7 @@ async function rumboImport() {
     const nombre = (o.name || 'Ruta de Rumbo').replace(/\.gpx$/i, '');
     const ruta = construirRuta(pts, nombre);
     ruta.origen = 'rumbo';
-    ruta.paisaje = { hz: o.hz || null, peaks: o.peaks || [], ground: o.ground || null, scenes: o.scenes || null, land: o.land || null }; // v136: + land
+    ruta.paisaje = { hz: o.hz || null, peaks: o.peaks || [], ground: o.ground || null, scenes: o.scenes || null, land: o.land || null, osm: o.osm || '' }; // v136: + land · v141: + cómo respondió OpenStreetMap
     // si ya había uno con el mismo nombre (se mandó de nuevo), se reemplaza
     const viejos = bigGet(K_RUTAS, []).filter(r => r.nombre === nombre && r.origen === 'rumbo').map(r => r.id);
     if (viejos.length) bigSet(K_RUTAS, bigGet(K_RUTAS, []).filter(r => !viejos.includes(r.id)));
