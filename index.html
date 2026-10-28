@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v143</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v144</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -929,7 +929,7 @@
     <button class="cerrar" onclick="cerrarEditorEscenas()">← Volver</button>
     <div class="card">
       <h2 id="escTitulo">🎨 Escenarios</h2>
-      <div class="estado-conexion" style="margin-bottom:8px;">Cada tramo empieza en su km y sigue hasta el próximo. "Agua" es de qué lado se ve el mar, el río o la laguna. Mirá cómo queda con el deslizador de "Mirar el recorrido sin correr".</div>
+      <div class="estado-conexion" style="margin-bottom:8px;">Cada tramo empieza en su km y sigue hasta el próximo. "Agua" es de qué lado se ve el mar, el río o la laguna. "Izq." y "Der.": qué hay a cada costado (casas, edificios, parque, campo, bosque) si no querés lo que dice el mapa. Mirá cómo queda con el deslizador de "Mirar el recorrido sin correr".</div>
       <div id="escFilas"></div>
       <button class="btn" onclick="agregarTramoEscena()" style="margin-top:8px;">＋ Tramo nuevo desde el km que estás mirando</button>
       <div style="display:flex; gap:8px; margin-top:10px;">
@@ -3407,6 +3407,11 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v144: LADOS A MANO EN EL EDITOR DE ESCENARIOS (Hugo: "en todos los editores
+         de escenarios, quisiera tener la opción de parque a un lado y edificios
+         o casas del otro"). Cada tramo tiene Izq. y Der.: según el mapa, casas,
+         edificios, parque, campo o bosque. Pisan lo del mapa en ese tramo
+         (landConEscenas, en el bloque land compartido con Bici).
    v143: Hugo: "¿se guardan los escenarios para usarlos después aún sin haber
          hecho una sesión?" Sí (van con el recorrido, en la base interna). Lo
          que faltaba: al mandar de nuevo el mismo recorrido desde Rumbo, se
@@ -7512,7 +7517,7 @@ let escEdit = null;
 function abrirEditorEscenas() {
   const ruta = rutaActiva(); if (!ruta) { toast('Elegí un recorrido'); return; }
   const P = paisajeDe(ruta);
-  escEdit = { id: ruta.id, filas: (P && P.scenes ? P.scenes : [{ km: 0, scene: ruta.paisaje ? 'rural' : 'fueguino', water: null, waterKind: 'mar' }]).map(x => ({ km: +x.km || 0, scene: x.scene, water: x.water || null, waterKind: x.waterKind || 'mar' })) };
+  escEdit = { id: ruta.id, filas: (P && P.scenes ? P.scenes : [{ km: 0, scene: ruta.paisaje ? 'rural' : 'fueguino', water: null, waterKind: 'mar' }]).map(x => ({ km: +x.km || 0, scene: x.scene, water: x.water || null, waterKind: x.waterKind || 'mar', izq: x.izq || '', der: x.der || '' })) };
   document.getElementById('escTitulo').textContent = '🎨 Escenarios · ' + (ruta.nombre || 'Recorrido') + ' (' + (ruta.longitudM / 1000).toFixed(2).replace('.', ',') + ' km)';
   pintarFilasEscena(); document.getElementById('overlayEscenas').classList.add('activa');
 }
@@ -7524,17 +7529,19 @@ function pintarFilasEscena() {
     sel(ESC_OPC, x.scene, 'escEdit.filas[' + i + '].scene=this.value') + (i ? '<button class="btn chico" style="width:auto;" onclick="escEdit.filas.splice(' + i + ',1);pintarFilasEscena()">🗑️</button>' : '') + '</div>' +
     '<div style="display:flex; gap:6px; align-items:center; margin-top:6px;"><span class="estado-conexion" style="flex:none;">Agua</span>' +
     sel([['', 'ninguna'], ['left', 'a la izquierda'], ['right', 'a la derecha']], x.water, 'escEdit.filas[' + i + '].water=this.value||null') +
-    sel([['mar', 'mar'], ['rio', 'río'], ['laguna', 'laguna']], x.waterKind, 'escEdit.filas[' + i + '].waterKind=this.value') + '</div></div>').join('');
+    sel([['mar', 'mar'], ['rio', 'río'], ['laguna', 'laguna']], x.waterKind, 'escEdit.filas[' + i + '].waterKind=this.value') + '</div>' +
+    '<div style="display:flex; gap:6px; align-items:center; margin-top:6px;"><span class="estado-conexion" style="flex:none;">Izq.</span>' + sel(LAND_LADOS, x.izq, 'escEdit.filas[' + i + '].izq=this.value') +
+    '<span class="estado-conexion" style="flex:none;">Der.</span>' + sel(LAND_LADOS, x.der, 'escEdit.filas[' + i + '].der=this.value') + '</div></div>').join('');
 }
 function agregarTramoEscena() {
   const km = Math.round((distanciaAcumM || 0) / 50) * 0.05, prev = escEdit.filas.filter(x => x.km <= km).pop() || escEdit.filas[0];
-  escEdit.filas.push({ km: Math.max(0.05, km), scene: prev.scene === 'urbana' ? 'rural' : 'urbana', water: null, waterKind: 'mar' }); pintarFilasEscena();
+  escEdit.filas.push({ km: Math.max(0.05, km), scene: prev.scene === 'urbana' ? 'rural' : 'urbana', water: null, waterKind: 'mar', izq: '', der: '' }); pintarFilasEscena();
 }
 function guardarEscenas() {
   const rutas = bigGet(K_RUTAS, []), ruta = rutas.find(r => r.id === escEdit.id); if (!ruta) { toast('No encontré el recorrido'); return; }
   const filas = escEdit.filas.sort((a, b) => a.km - b.km).filter((x, i, a) => i === 0 || x.km > a[i - 1].km + 0.01);
   filas[0].km = 0;
-  ruta.paisaje = Object.assign({ hz: null, peaks: [], ground: null, land: null }, ruta.paisaje || {}, { scenes: filas.map(x => ({ km: +x.km.toFixed(2), scene: x.scene, water: x.water || null, waterKind: x.waterKind || 'mar', wall: null })), escenasAMano: true });
+  ruta.paisaje = Object.assign({ hz: null, peaks: [], ground: null, land: null }, ruta.paisaje || {}, { scenes: filas.map(x => Object.assign({ km: +x.km.toFixed(2), scene: x.scene, water: x.water || null, waterKind: x.waterKind || 'mar', wall: null }, x.izq ? { izq: x.izq } : {}, x.der ? { der: x.der } : {})), escenasAMano: true });
   try { bigSet(K_RUTAS, rutas); } catch (e) { toast('No se pudo guardar: ' + e.message); return; }
   delete _paisajeDec[ruta.id]; _rutaCache = null; _wxUiRuta = null;
   cerrarEditorEscenas(); toast('Escenarios guardados: ' + filas.length + ' tramo' + (filas.length > 1 ? 's' : ''));
@@ -7805,15 +7812,7 @@ function paisajeDe(ruta) {
 // v142: en los tramos de ciudad (urbana / casas de colores) sin calle en los datos, se marca calle de barrio con vereda:
 // así se dibujan las cuadras de casas aunque el recorrido no traiga los costados (o venga de un GPX común)
 function landDesdeEscenas(ruta, scenes, real) {
-  if (!scenes) return real;
-  const urb = s => s === 'urbana' || s === 'ciudad', n = Math.max(2, Math.ceil((ruta.longitudM || 0) / 25) + 1);
-  if (!scenes.some(x => urb(x.scene))) return real;
-  const L = real && real.n === n ? { sp: real.sp, n, u: real.u.slice(), sur: real.sur } : { sp: 25, n, u: new Uint8Array(n * 7), sur: !!(ruta.ll && ruta.ll[0] && ruta.ll[0][0] < -45) };
-  if (real && real.n !== n) { for (let q = 0; q < n; q++) { const k = Math.min(real.n - 1, Math.round(q * 25 / real.sp)); for (let j = 0; j < 7; j++) L.u[q * 7 + j] = real.u[k * 7 + j]; } L.sur = real.sur; }
-  let cur = scenes[0];
-  for (let q = 0, i = 0; q < n; q++) { const km = q * 25 / 1000; while (i + 1 < scenes.length && scenes[i + 1].km <= km + 1e-6) cur = scenes[++i]; if (q === 0) cur = scenes[0];
-    if (urb(cur.scene) && !(L.u[q * 7 + 6] & 15)) L.u[q * 7 + 6] = 4 | 128; }
-  return L;
+  return landConEscenas(real, scenes, ruta.longitudM || 0, !!(ruta.ll && ruta.ll[0] && ruta.ll[0][0] < -45)); // v144: el bloque land (con los lados a mano)
 }
 // el escenario del tramo donde está la cámara (Rumbo lo arma con OpenStreetMap: ciudad, bosque, costa, cornisa…)
 function escenaRumboEn(ruta, d) {
@@ -7983,6 +7982,34 @@ function landColSuelo(c,sat,sc){ const base=LAND_SUELO[c]; if(base&&sat) return 
 // comercios, o una calle asfaltada de barrio (highway=residential) sin otro uso del suelo a los costados
 function landUrbano(vl,c){ return c===1||c===2||(c===0&&!!vl&&vl.calle&&vl.c===4); }
 function landHayVereda(vl,lm,s){ return !!vl&&(vl.vereda||(vl.calle&&(landUrbano(vl,lm.c[s])||lm.b[s]>0))); }
+// LADOS A MANO por tramo del editor de escenarios (izq / der): casas, edificios, parque, campo o bosque. Pisan lo que
+// diga el mapa en ese tramo. En los tramos de ciudad (urbana / casas de colores) sin calle en los datos, se marca calle de
+// barrio con vereda, para que se armen las cuadras. real = lo que trajo Rumbo (o null), totalM = largo del recorrido.
+// Hugo: "en todos los editores de escenarios, quisiera tener la opción de parque a un lado y edificios o casas del otro".
+const LAND_LADOS=[["","según el mapa"],["casas","casas"],["edificios","edificios"],["parque","parque"],["campo","campo"],["bosque","bosque"]];
+const LAND_LADO_CLS={casas:1,edificios:2,parque:4,campo:5,bosque:7};
+function landConEscenas(real,scenes,totalM,sur){
+  if(!scenes||!scenes.length||!(totalM>0)) return real;
+  const urb=s=>s==="urbana"||s==="ciudad";
+  if(!scenes.some(x=>urb(x.scene)||x.izq||x.der)) return real;
+  const n=Math.max(2,Math.ceil(totalM/25)+1), L={sp:25,n,u:new Uint8Array(n*7),sur:real?!!real.sur:!!sur}, U=L.u;
+  if(real) for(let q=0;q<n;q++){ const k=Math.min(real.n-1,Math.round(q*25/real.sp)); for(let j=0;j<7;j++) U[q*7+j]=real.u[k*7+j]; }
+  const S=scenes.slice().sort((a,b)=>a.km-b.km); let i=0;
+  for(let q=0;q<n;q++){
+    const km=q*25/1000; while(i+1<S.length&&S[i+1].km<=km+1e-6) i++;
+    const cur=S[i], o=q*7;
+    if(urb(cur.scene)&&!(U[o+6]&15)) U[o+6]=4|128;
+    for(const s of [0,1]){ const lado=s?cur.der:cur.izq; if(!lado||!LAND_LADO_CLS[lado]) continue;
+      U[o+s]=LAND_LADO_CLS[lado];
+      if(lado==="casas"||lado==="edificios"){
+        if(!(U[o+6]&15)) U[o+6]=4|128; else U[o+6]|=128;
+        const h=landHash(q*3.7+s*1.3), k=lado==="edificios"?1:0, lv=k?4+Math.floor(h*7):(h>0.75?2:1), dep=k?13:9;
+        U[o+2+s]=k<<5|lv; U[o+4+s]=Math.min(255,Math.round((LAND_ANCHO[U[o+6]&15]||5)+2.6+h*2+dep/2));
+      } else { U[o+2+s]=0; U[o+4+s]=0; }
+    }
+  }
+  return L;
+}
 // resumen de lo que trajo Rumbo, para mostrarlo en la app (diagnóstico)
 function landResumen(L){ let casas=0,via=0,uso=0; for(let q=0;q<L.n;q++){ const o=q*7; if(L.u[o+2]||L.u[o+3])casas++; if(L.u[o+6]&15)via++; if(L.u[o]||L.u[o+1])uso++; }
   const pc=x=>Math.round(x/L.n*100); return {casas:pc(casas),calles:pc(via),uso:pc(uso)}; }
