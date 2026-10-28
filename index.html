@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v138</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v139</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3390,6 +3390,19 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v139: PERSPECTIVA REAL DE LOS FANTASMAS Y CORREDORES (Hugo, con una captura
+         de la carrera virtual: "¿podrías mejorar la vista en perspectiva de los
+         fantasmas y darle más realismo?"). Antes los otros se ubicaban a su
+         distancia contada desde la CÁMARA, pero vos te dibujás unos metros más
+         adelante: un fantasma a +3 m se veía más grande que vos, y todos iban
+         en fila por el medio. Ahora: se ubican a su distancia contada desde
+         TUS pies (el punto del camino donde pisás), con el tamaño que da la
+         perspectiva real (una persona de 1,75 m a esa distancia, en la misma
+         escala que vos), cada uno en su carril (a ±0,9 m, ±1,8 m del centro,
+         sin salirse del camino), así cuando van parejos se ven al lado tuyo.
+         Los que quedaron detrás de la cámara aparecen en una chapita abajo
+         ("↓ 3º −80 m"). Vale para la carrera virtual (pista, sendero y
+         recorridos) y para el fantasma en vivo.
    v138: VIENTO Y CLIMA REALES DEL RECORRIDO (Hugo, después de pedirlo para
          Bici y Kayak: "¿y Carrera?"). Con el escenario "Recorrido", debajo de
          "Mirar el recorrido sin correr": 🌬️ trae el clima de ahora del lugar
@@ -6938,7 +6951,44 @@ function roadPointAt(S, d) {
   if (d <= S[0].d || d >= S[S.length - 1].d) return null;
   let i = 0; while (i < S.length - 1 && S[i + 1].d < d) i++;
   const t = (d - S[i].d) / ((S[i + 1].d - S[i].d) || 1);
-  return { cx: S[i].cx + (S[i + 1].cx - S[i].cx) * t, y: S[i].y + (S[i + 1].y - S[i].y) * t, hw: S[i].hw + (S[i + 1].hw - S[i].hw) * t };
+  const mA = S[i].m || S[i].hw / 5.2, mB = S[i + 1].m || S[i + 1].hw / 5.2;
+  return { cx: S[i].cx + (S[i + 1].cx - S[i].cx) * t, y: S[i].y + (S[i + 1].y - S[i].y) * t, hw: S[i].hw + (S[i + 1].hw - S[i].hw) * t, m: mA + (mB - mA) * t };
+}
+// v139: dónde estás vos en el camino. Te dibujás con los pies en h−6: el punto del camino que cae ahí es tu lugar
+// (dCam), y k ajusta la escala para que alguien parado a tu lado se vea de tu mismo tamaño.
+const CR_ALTO_S = 0.605; // drawRunnerRear mide 2,89·s de alto: una persona de 1,75 m → s = 0,605 px por cada px/m
+function camaraCorredor(S, h, youS) {
+  const yPie = h - 6; let dCam = S[0].d, mCam = S[0].m || S[0].hw / 5.2;
+  for (let i = 0; i < S.length - 1; i++) { const a = S[i], b = S[i + 1];
+    if (a.y >= yPie && b.y <= yPie) { const t = (a.y - yPie) / ((a.y - b.y) || 1), ma = a.m || a.hw / 5.2, mb = b.m || b.hw / 5.2; dCam = a.d + (b.d - a.d) * t; mCam = ma + (mb - ma) * t; break; } }
+  return { dCam, k: youS / (CR_ALTO_S * mCam) };
+}
+// otro corredor a gap metros de vos (+ adelante), en su carril (m del centro). null si quedó detrás de la cámara.
+function puntoOtroCorredor(S, cam, gap, carril) {
+  const p = roadPointAt(S, cam.dCam + gap); if (!p) return null;
+  const mm = p.m * cam.k, lim = Math.max(0, p.hw / (p.m || 1) - 0.35), c = Math.max(-lim, Math.min(lim, carril));
+  return { x: p.cx + c * mm, y: p.y, s: Math.max(2, CR_ALTO_S * mm) };
+}
+const carrilDe = k => (k % 2 ? 1 : -1) * 0.9 * (1 + Math.floor(k / 2)); // 0 → −0,9 m, 1 → +0,9, 2 → −1,8…
+// chapita abajo con los que van detrás de la cámara
+function dibujarAtrasRep(ctx, w, h, lista) {
+  if (!lista.length) return; ctx.save(); ctx.font = '700 11px system-ui'; ctx.textAlign = 'left'; let x = 8;
+  for (const it of lista.slice(0, 3)) { const tx = '↓ ' + it.txt, tw = ctx.measureText(tx).width + 10;
+    ctx.fillStyle = 'rgba(4,7,10,.72)'; ctx.fillRect(x, h - 24, tw, 18); ctx.fillStyle = it.color; ctx.fillText(tx, x + 5, h - 11); x += tw + 4; }
+  ctx.restore();
+}
+// los demás corredores de la carrera virtual: de lejos a cerca, cada uno en su carril; gapDe(x) = metros respecto de la cámara
+function dibujarOtrosRep(ctx, S, w, h, youS, otros, gapDe, etiqueta) {
+  const cam = camaraCorredor(S, h, youS), atras = [], orden = repRacers.slice();
+  const items = otros.map(x => ({ x, gap: gapDe(x), carril: carrilDe(Math.max(0, orden.indexOf(x.r) - (orden.indexOf(x.r) > repCam ? 1 : 0))) }))
+    .sort((a, b) => b.gap - a.gap);
+  for (const it of items) {
+    const q = puntoOtroCorredor(S, cam, it.gap, it.carril), g = Math.round(it.gap), txt = etiqueta ? etiqueta(it.x) : (g >= 0 ? '+' : '') + g + ' m';
+    if (!q) { atras.push({ txt, color: it.x.r.color }); continue; }
+    drawRunnerRear(ctx, q.x, q.y, q.s, it.x.r.fase, it.x.r.color, 0.95, it.x.velocidad, q.s > 12);
+    dibujarEtiquetaRep(ctx, q.x, q.y - q.s * 3.2, txt, it.x.r.color);
+  }
+  return atras;
 }
 // óvalo cerrado sintético para la pista (forma estadio: 2 rectas + 2 curvas semicirculares) — idéntico a Bici Indoor
 function velodromeGeom(trackLen) {
@@ -7045,21 +7095,22 @@ function inclinacionCorredor() {
 // v93: fantasma con estela (3 copias tenues por delante) y un marcador sobre la cabeza,
 // para ubicarlo cuando está lejos y se ve chiquito
 function dibujarFantasmaEscena(ctx, S, dFant, youS, velMS) {
-  const p = roadPointAt(S, dFant);
+  // v139: a su distancia contada desde tus pies, con perspectiva real y en el carril de la derecha (al lado tuyo si van parejos)
+  const h = (roadCtxEscena && roadCtxEscena.h) || ((S[0] && S[0].y) + 6), cam = camaraCorredor(S, h, youS), gap = dFant - S[0].d, CARRIL = 0.9;
+  const p = puntoOtroCorredor(S, cam, gap, CARRIL);
   if (!p) return;
-  const tam = q => Math.max(5, Math.min(youS * 0.8, q.hw * 0.14));
   for (let i = 3; i >= 1; i--) {
-    const q = roadPointAt(S, dFant + i * 1.4);
-    if (q) drawRunnerRear(ctx, q.cx, q.y, tam(q), ghostRunnerPhase - i * 0.4, '#9fb0c0', 0.1 / i, velMS);
+    const q = puntoOtroCorredor(S, cam, gap - i * 1.4, CARRIL);
+    if (q) drawRunnerRear(ctx, q.x, q.y, q.s, ghostRunnerPhase - i * 0.4, '#9fb0c0', 0.1 / i, velMS);
   }
-  const gs = tam(p);
+  const gs = p.s;
   ctx.save(); // v94: brillo celeste para que se lea como fantasma y no como otro corredor
   ctx.shadowColor = 'rgba(170,220,255,.9)'; ctx.shadowBlur = Math.max(4, gs * 0.8);
-  drawRunnerRear(ctx, p.cx, p.y, gs, ghostRunnerPhase, '#b9cbd8', 0.5, velMS, true);
+  drawRunnerRear(ctx, p.x, p.y, gs, ghostRunnerPhase, '#b9cbd8', 0.5, velMS, true);
   ctx.restore();
   const my = p.y - gs * 3.1 - 4;
   ctx.fillStyle = '#FF8A7A';
-  ctx.beginPath(); ctx.moveTo(p.cx - 6, my - 8); ctx.lineTo(p.cx + 6, my - 8); ctx.lineTo(p.cx, my); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(p.x - 6, my - 8); ctx.lineTo(p.x + 6, my - 8); ctx.lineTo(p.x, my); ctx.closePath(); ctx.fill();
 }
 
 
@@ -8015,7 +8066,8 @@ function dibujarEscenaPista(ctx, w, h) {
     deltaSeg = deltaFantasmaSeg(puntosFantasma, t, distanciaAcumM);
     lapDiff = calcularVueltaGap(gapM, LARGO_PISTA_M);
     const gd0 = ((gNow % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
-    const relAhead = ((gd0 - d0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
+    let relAhead = ((gd0 - d0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
+    if (relAhead > LARGO_PISTA_M - 30) relAhead -= LARGO_PISTA_M; // v139: hasta 30 m atrás está detrás tuyo, no 370 m adelante
     dibujarFantasmaEscena(ctx, S, d0 + relAhead, youS, repInterp(puntosFantasma, t, 'velocidad'));
   }
   drawRunnerRear(ctx, w / 2, h - 6, youS, runnerPhase, '#3d7ec9', 1, actual.velocidad, true, inclinacionCorredor());
@@ -8221,15 +8273,9 @@ function dibujarRepRuta(st) {
   dibujarMojones(ctx, S);
   dibujarLineaMeta(ctx, S, L);
   const youS = Math.max(20, h * 0.135);
-  const otros = st.filter(x => x.r !== camRacer).sort((a, b) => b.d - a.d);
-  for (const x of otros) {
-    const p = roadPointAt(S, camD0 + (x.d - cam.d)); if (!p) continue;
-    const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
-    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, x.velocidad);
-    const gap = Math.round(x.d - cam.d);
-    dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m', x.r.color);
-  }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad);
+  const atras = dibujarOtrosRep(ctx, S, w, h, youS, st.filter(x => x.r !== camRacer), x => x.d - cam.d); // v139
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad, true);
+  dibujarAtrasRep(ctx, w, h, atras);
   // dónde va la cámara en el recorrido
   ctx.font = '600 11px system-ui'; ctx.textAlign = 'left'; const tx = (ruta.nombre || 'Recorrido').slice(0, 28) + ' · km ' + (camD0 / 1000).toFixed(2).replace('.', ',') + (vuelta ? ' · vuelta ' + (vuelta + 1) : '');
   const tw = ctx.measureText(tx).width; ctx.fillStyle = 'rgba(4,7,10,.6)'; ctx.fillRect(8, 8, tw + 10, 18); ctx.fillStyle = '#e6edf3'; ctx.fillText(tx, 13, 21);
@@ -8273,20 +8319,13 @@ function dibujarRepPista(st) {
   const S = roadBands(ctx, w, h, camD0, bFn, velodromeEleAt, null, SCENES.velodromo_open, VELO_GEOM);
   dibujarLineaMeta(ctx, S);
   const youS = Math.max(20, h * 0.135);
-  const otros = st.filter(x => x.r !== camRacer).map(x => {
-    const xd0 = ((x.d % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M;
-    const relAhead = ((xd0 - camD0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M;
-    return { x, posD: camD0 + relAhead, relAhead };
-  }).sort((a, b) => b.relAhead - a.relAhead);
-  for (const { x, posD } of otros) {
-    const p = roadPointAt(S, posD); if (!p) continue;
-    const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
-    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, x.velocidad);
-    const lapDiff = Math.floor(x.d / LARGO_PISTA_M) - Math.floor(cam.d / LARGO_PISTA_M);
-    const gap = Math.round(x.d - cam.d);
-    dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m' + (lapDiff !== 0 ? ' (' + (lapDiff > 0 ? '+' : '') + lapDiff + 'v)' : ''), x.r.color);
-  }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad);
+  // v139: en la pista, el que va hasta 30 m detrás está detrás tuyo (no 370 m adelante)
+  const relDe = x => { const xd0 = ((x.d % LARGO_PISTA_M) + LARGO_PISTA_M) % LARGO_PISTA_M; let r = ((xd0 - camD0) % LARGO_PISTA_M + LARGO_PISTA_M) % LARGO_PISTA_M; return r > LARGO_PISTA_M - 30 ? r - LARGO_PISTA_M : r; };
+  const etq = x => { const lapDiff = Math.floor(x.d / LARGO_PISTA_M) - Math.floor(cam.d / LARGO_PISTA_M), gap = Math.round(x.d - cam.d);
+    return (gap >= 0 ? '+' : '') + gap + ' m' + (lapDiff !== 0 ? ' (' + (lapDiff > 0 ? '+' : '') + lapDiff + 'v)' : ''); };
+  const atras = dibujarOtrosRep(ctx, S, w, h, youS, st.filter(x => x.r !== camRacer), relDe, etq);
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad, true);
+  dibujarAtrasRep(ctx, w, h, atras);
 }
 function dibujarRepSendero(st) {
   if (!repRoadCtx || repRoadCtx.w < 10) fitRepRoad();
@@ -8297,15 +8336,9 @@ function dibujarRepSendero(st) {
   const bFn = () => 0, eFn = () => 0; // sendero recto y llano (no hay una pendiente "en vivo" acá, es replay)
   const S = roadBands(ctx, w, h, cam.d, bFn, eFn, null, SCENES.rural, null);
   const youS = Math.max(20, h * 0.135);
-  const otros = st.filter(x => x.r !== camRacer).sort((a, b) => b.d - a.d);
-  for (const x of otros) {
-    const p = roadPointAt(S, x.d); if (!p) continue;
-    const s = Math.max(5, Math.min(youS * 0.85, p.hw * 0.14));
-    drawRunnerRear(ctx, p.cx, p.y, s, x.r.fase, x.r.color, 0.9, x.velocidad);
-    const gap = Math.round(x.d - cam.d);
-    dibujarEtiquetaRep(ctx, p.cx, p.y - s * 3.5, (gap >= 0 ? '+' : '') + gap + ' m', x.r.color);
-  }
-  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad);
+  const atras = dibujarOtrosRep(ctx, S, w, h, youS, st.filter(x => x.r !== camRacer), x => x.d - cam.d); // v139
+  drawRunnerRear(ctx, w / 2, h - 6, youS, camRacer.fase, camRacer.color, 1, cam.velocidad, true);
+  dibujarAtrasRep(ctx, w, h, atras);
 }
 function dibujarEtiquetaRep(ctx, cx, cy, texto, color) {
   ctx.font = '700 12px system-ui'; ctx.textAlign = 'center';
