@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v142</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v143</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3407,6 +3407,11 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v143: Hugo: "¿se guardan los escenarios para usarlos después aún sin haber
+         hecho una sesión?" Sí (van con el recorrido, en la base interna). Lo
+         que faltaba: al mandar de nuevo el mismo recorrido desde Rumbo, se
+         reemplazaba y se perdían los escenarios editados; ahora pregunta si
+         mantenerlos.
    v142: EDITAR LOS ESCENARIOS DE UN RECORRIDO (Hugo: "¿cómo edito los
          escenarios en Correr?"). Con el escenario "Recorrido", debajo de "Mirar
          el recorrido sin correr": 🎨 Editar escenarios. Tramos desde un km con su
@@ -8140,6 +8145,9 @@ async function rumboImport() {
     ruta.paisaje = { hz: o.hz || null, peaks: o.peaks || [], ground: o.ground || null, scenes: o.scenes || null, land: o.land || null, osm: o.osm || '' }; // v136: + land · v141: + cómo respondió OpenStreetMap
     // si ya había uno con el mismo nombre (se mandó de nuevo), se reemplaza
     const viejos = bigGet(K_RUTAS, []).filter(r => r.nombre === nombre && r.origen === 'rumbo').map(r => r.id);
+    // v143: si a ese recorrido le habías editado los escenarios a mano, no se pierden al mandarlo de nuevo
+    const aMano = bigGet(K_RUTAS, []).find(r => viejos.includes(r.id) && r.paisaje && r.paisaje.escenasAMano);
+    if (aMano && confirm('Este recorrido ya tenía escenarios editados a mano. ¿Los mantenés? (Cancelar = usar los nuevos de Rumbo)')) { ruta.paisaje.scenes = aMano.paisaje.scenes; ruta.paisaje.escenasAMano = true; }
     if (viejos.length) bigSet(K_RUTAS, bigGet(K_RUTAS, []).filter(r => !viejos.includes(r.id)));
     guardarRuta(ruta);
     const sel = document.getElementById('selectEscenario');
