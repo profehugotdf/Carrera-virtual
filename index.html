@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v141</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v142</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -550,6 +550,7 @@
           <input type="range" id="sliderPreviaRuta" min="0" max="1000" step="5" value="0" oninput="moverPreviaRuta(this.value)" style="width:100%; touch-action:pan-y;">
           <button class="btn" id="btnPreviaRuta" onclick="togglePreviaRuta()">▶ Recorrer sin correr</button>
           <div class="estado-conexion" id="mapaInfoRuta" style="margin-top:6px;"></div>
+          <button class="btn chico" onclick="abrirEditorEscenas()" style="margin-top:6px;">🎨 Editar escenarios del recorrido</button>
           <!-- v138: clima real del recorrido -->
           <div id="wxBox" style="margin-top:10px; padding-top:8px; border-top:1px solid var(--borde, #2a3440);">
             <label style="display:flex; align-items:center; gap:8px;"><input type="checkbox" id="wxOn" onchange="wxCambio()" style="width:22px;height:22px;"> 🌬️ Viento y clima reales del recorrido</label>
@@ -923,6 +924,21 @@
   </div>
 
   <!-- ===================== OVERLAY: CARRERA VIRTUAL (REPLAY) ===================== -->
+  <!-- v142: editor de escenarios del recorrido -->
+  <div class="overlay" id="overlayEscenas">
+    <button class="cerrar" onclick="cerrarEditorEscenas()">← Volver</button>
+    <div class="card">
+      <h2 id="escTitulo">🎨 Escenarios</h2>
+      <div class="estado-conexion" style="margin-bottom:8px;">Cada tramo empieza en su km y sigue hasta el próximo. "Agua" es de qué lado se ve el mar, el río o la laguna. Mirá cómo queda con el deslizador de "Mirar el recorrido sin correr".</div>
+      <div id="escFilas"></div>
+      <button class="btn" onclick="agregarTramoEscena()" style="margin-top:8px;">＋ Tramo nuevo desde el km que estás mirando</button>
+      <div style="display:flex; gap:8px; margin-top:10px;">
+        <button class="btn primario" onclick="guardarEscenas()">✓ Guardar</button>
+        <button class="btn" onclick="cerrarEditorEscenas()">Cancelar</button>
+      </div>
+    </div>
+  </div>
+
   <div class="overlay" id="overlayReplay">
     <button class="cerrar" onclick="cerrarReplay()">← Volver</button>
 
@@ -3391,6 +3407,14 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v142: EDITAR LOS ESCENARIOS DE UN RECORRIDO (Hugo: "¿cómo edito los
+         escenarios en Correr?"). Con el escenario "Recorrido", debajo de "Mirar
+         el recorrido sin correr": 🎨 Editar escenarios. Tramos desde un km con su
+         escenario (urbana, casas de colores, rural, bosque, costa, cornisa,
+         montaña, estepa, fueguino) y de qué lado hay agua. Sirve también para
+         los GPX que no vinieron de Rumbo. En los tramos de ciudad, aunque el
+         mapa no traiga las casas, la calle se arma con cuadras de casas,
+         veredas y faroles (los mismos dibujos que con los datos de Rumbo).
    v141: Hugo mandó la línea de diagnóstico: "1 tramo de escenario · sin los
          costados" en un recorrido por la ciudad: OpenStreetMap no le había
          respondido a Rumbo. Rumbo ahora reintenta, usa las calles que ya tiene
@@ -7476,15 +7500,49 @@ function dibujarPanorama() {
    (distanciaAcumM, que se pone en 0 al iniciar la sesión), para ver el paisaje antes de correrlo. */
 let previaRAF = null, previaLast = 0;
 var _wxUiRuta = null;
+// v142: editor de escenarios
+const ESC_OPC = [['urbana', 'Urbana (edificios)'], ['ciudad', 'Casas de colores'], ['rural', 'Rural'], ['bosque', 'Bosque de lengas'], ['mar', 'Costa / Mar'], ['canal', 'Costa del canal'],
+  ['cornisa', 'Camino de cornisa'], ['montana', 'Montaña nevada'], ['estepa', 'Estepa y alambrado'], ['fueguino', 'Sendero fueguino']];
+let escEdit = null;
+function abrirEditorEscenas() {
+  const ruta = rutaActiva(); if (!ruta) { toast('Elegí un recorrido'); return; }
+  const P = paisajeDe(ruta);
+  escEdit = { id: ruta.id, filas: (P && P.scenes ? P.scenes : [{ km: 0, scene: ruta.paisaje ? 'rural' : 'fueguino', water: null, waterKind: 'mar' }]).map(x => ({ km: +x.km || 0, scene: x.scene, water: x.water || null, waterKind: x.waterKind || 'mar' })) };
+  document.getElementById('escTitulo').textContent = '🎨 Escenarios · ' + (ruta.nombre || 'Recorrido') + ' (' + (ruta.longitudM / 1000).toFixed(2).replace('.', ',') + ' km)';
+  pintarFilasEscena(); document.getElementById('overlayEscenas').classList.add('activa');
+}
+function cerrarEditorEscenas() { document.getElementById('overlayEscenas').classList.remove('activa'); escEdit = null; }
+function pintarFilasEscena() {
+  const f = escEdit.filas.sort((a, b) => a.km - b.km), sel = (opts, v, on) => '<select onchange="' + on + '" style="flex:1; min-width:0;">' + opts.map(([k, n]) => '<option value="' + k + '"' + (k === (v || '') ? ' selected' : '') + '>' + n + '</option>').join('') + '</select>';
+  document.getElementById('escFilas').innerHTML = f.map((x, i) => '<div style="border-bottom:1px solid var(--borde,#2a3440); padding:8px 0;">' +
+    '<div style="display:flex; gap:6px; align-items:center;"><span class="estado-conexion" style="flex:none;">Desde km</span><input type="number" step="0.05" min="0" value="' + x.km.toFixed(2) + '" ' + (i === 0 ? 'disabled ' : '') + 'onchange="escEdit.filas[' + i + '].km=Math.max(0,parseFloat(this.value)||0)" style="width:84px;">' +
+    sel(ESC_OPC, x.scene, 'escEdit.filas[' + i + '].scene=this.value') + (i ? '<button class="btn chico" style="width:auto;" onclick="escEdit.filas.splice(' + i + ',1);pintarFilasEscena()">🗑️</button>' : '') + '</div>' +
+    '<div style="display:flex; gap:6px; align-items:center; margin-top:6px;"><span class="estado-conexion" style="flex:none;">Agua</span>' +
+    sel([['', 'ninguna'], ['left', 'a la izquierda'], ['right', 'a la derecha']], x.water, 'escEdit.filas[' + i + '].water=this.value||null') +
+    sel([['mar', 'mar'], ['rio', 'río'], ['laguna', 'laguna']], x.waterKind, 'escEdit.filas[' + i + '].waterKind=this.value') + '</div></div>').join('');
+}
+function agregarTramoEscena() {
+  const km = Math.round((distanciaAcumM || 0) / 50) * 0.05, prev = escEdit.filas.filter(x => x.km <= km).pop() || escEdit.filas[0];
+  escEdit.filas.push({ km: Math.max(0.05, km), scene: prev.scene === 'urbana' ? 'rural' : 'urbana', water: null, waterKind: 'mar' }); pintarFilasEscena();
+}
+function guardarEscenas() {
+  const rutas = bigGet(K_RUTAS, []), ruta = rutas.find(r => r.id === escEdit.id); if (!ruta) { toast('No encontré el recorrido'); return; }
+  const filas = escEdit.filas.sort((a, b) => a.km - b.km).filter((x, i, a) => i === 0 || x.km > a[i - 1].km + 0.01);
+  filas[0].km = 0;
+  ruta.paisaje = Object.assign({ hz: null, peaks: [], ground: null, land: null }, ruta.paisaje || {}, { scenes: filas.map(x => ({ km: +x.km.toFixed(2), scene: x.scene, water: x.water || null, waterKind: x.waterKind || 'mar', wall: null })), escenasAMano: true });
+  try { bigSet(K_RUTAS, rutas); } catch (e) { toast('No se pudo guardar: ' + e.message); return; }
+  delete _paisajeDec[ruta.id]; _rutaCache = null; _wxUiRuta = null;
+  cerrarEditorEscenas(); toast('Escenarios guardados: ' + filas.length + ' tramo' + (filas.length > 1 ? 's' : ''));
+}
 // v140: qué datos del mapa trajo el recorrido (diagnóstico a la vista)
 function mapaInfoRuta(ruta) {
   const el = document.getElementById('mapaInfoRuta'); if (!el) return;
   const P = paisajeDe(ruta);
   if (!P) { el.innerHTML = '🗺️ Sin datos del mapa: este recorrido no vino de Rumbo. Para ver casas, calles y montañas reales, abrilo en Rumbo y tocá 🏃 Correrla en Correr.'; return; }
   const p = [P.scenes ? P.scenes.length + ' tramo' + (P.scenes.length > 1 ? 's' : '') + ' de escenario' : 'sin escenario por tramos', P.hz ? 'montañas reales' : 'sin montañas reales', P.ground ? 'colores del suelo' : 'sin colores del suelo'];
-  if (P.land) { const r = landResumen(P.land); p.push('casas en el mapa ' + r.casas + ' %', 'tipo de calle ' + r.calles + ' %', 'uso del suelo ' + r.uso + ' %'); }
+  if (P.landReal) { const r = landResumen(P.landReal); p.push('casas en el mapa ' + r.casas + ' %', 'tipo de calle ' + r.calles + ' %', 'uso del suelo ' + r.uso + ' %'); }
   const osm = ruta.paisaje && ruta.paisaje.osm ? '<br>OpenStreetMap: ' + String(ruta.paisaje.osm).replace(/[<>]/g, '') : '';
-  el.innerHTML = '🗺️ Del mapa: ' + p.join(' · ') + osm + (P.land ? '' : '<br>Sin los costados (casas, calles): mandalo de nuevo desde Rumbo.') + (P.land && landResumen(P.land).casas < 20 && landResumen(P.land).calles > 30 ? '<br>OpenStreetMap tiene pocas casas cargadas acá: donde es barrio, se completan con casas genéricas.' : '');
+  el.innerHTML = '🗺️ Del mapa: ' + p.join(' · ') + osm + (P.landReal ? '' : '<br>Sin los costados (casas, calles): mandalo de nuevo desde Rumbo, o marcá los tramos de ciudad en 🎨 Editar escenarios.') + (P.landReal && landResumen(P.landReal).casas < 20 && landResumen(P.landReal).calles > 30 ? '<br>OpenStreetMap tiene pocas casas cargadas acá: donde es barrio, se completan con casas genéricas.' : '');
 }
 function actualizarPreviaRuta() {
   const el = document.getElementById('previaRuta'); if (!el) return;
@@ -7735,8 +7793,22 @@ function paisajeDe(ruta) {
   if (_paisajeDec[ruta.id]) return _paisajeDec[ruta.id];
   const p = ruta.paisaje; let r = null;
   try { r = { hz: p.hz && p.hz.d ? Object.assign({}, p.hz, { u: b64aU8(p.hz.d) }) : null, ground: p.ground && p.ground.d ? Object.assign({}, p.ground, { u: b64aU8(p.ground.d) }) : null,
-              peaks: (p.peaks || []).filter(x => x && x.e > 0), scenes: Array.isArray(p.scenes) && p.scenes.length ? p.scenes : null, land: landDec(p.land) }; } catch (e) { r = null; }
+              peaks: (p.peaks || []).filter(x => x && x.e > 0), scenes: Array.isArray(p.scenes) && p.scenes.length ? p.scenes : null, landReal: landDec(p.land) };
+        r.land = landDesdeEscenas(ruta, r.scenes, r.landReal); } catch (e) { r = null; }
   _paisajeDec[ruta.id] = r; return r;
+}
+// v142: en los tramos de ciudad (urbana / casas de colores) sin calle en los datos, se marca calle de barrio con vereda:
+// así se dibujan las cuadras de casas aunque el recorrido no traiga los costados (o venga de un GPX común)
+function landDesdeEscenas(ruta, scenes, real) {
+  if (!scenes) return real;
+  const urb = s => s === 'urbana' || s === 'ciudad', n = Math.max(2, Math.ceil((ruta.longitudM || 0) / 25) + 1);
+  if (!scenes.some(x => urb(x.scene))) return real;
+  const L = real && real.n === n ? { sp: real.sp, n, u: real.u.slice(), sur: real.sur } : { sp: 25, n, u: new Uint8Array(n * 7), sur: !!(ruta.ll && ruta.ll[0] && ruta.ll[0][0] < -45) };
+  if (real && real.n !== n) { for (let q = 0; q < n; q++) { const k = Math.min(real.n - 1, Math.round(q * 25 / real.sp)); for (let j = 0; j < 7; j++) L.u[q * 7 + j] = real.u[k * 7 + j]; } L.sur = real.sur; }
+  let cur = scenes[0];
+  for (let q = 0, i = 0; q < n; q++) { const km = q * 25 / 1000; while (i + 1 < scenes.length && scenes[i + 1].km <= km + 1e-6) cur = scenes[++i]; if (q === 0) cur = scenes[0];
+    if (urb(cur.scene) && !(L.u[q * 7 + 6] & 15)) L.u[q * 7 + 6] = 4 | 128; }
+  return L;
 }
 // el escenario del tramo donde está la cámara (Rumbo lo arma con OpenStreetMap: ciudad, bosque, costa, cornisa…)
 function escenaRumboEn(ruta, d) {

@@ -15,6 +15,7 @@ Correr en cinta, pista, sendero o al aire libre: pulso y cadencia por BLE (HRM-P
 - Recorridos desde Rumbo (v134): `rumboImport()` arma la ruta con `construirRuta()` y le guarda `ruta.paisaje` (horizonte, cerros, suelo, escenas). `roadBands` recibe la ruta en el parámetro `routeName` y dibuja el horizonte real, el suelo y el agua; `drawSideDecorBici` trae los decorados de Bici.
 - Costados reales (v136): con `ruta.paisaje.land`, `roadBands` dibuja cada franja con su suelo, vereda, cerco, casas en 3D a la distancia real y el ancho y piso del camino. El bloque `landDec`/`landFranja`/`landDecorFranja`/`landCasa`… es **el mismo que en Bici**: si se cambia acá, copiarlo allá.
 - v138: 🌬️ clima real del recorrido (Open-Meteo): se ve en la escena, la flecha dice la pendiente equivalente para la cinta (`pendienteEquivViento`) y, opcional, `velCorrerConViento` cambia la distancia virtual. Claves `correr_wx` y `correr_wx_ultimos`. El bloque `wxTraer`/`wxRelativo`/`wxCielo`/`wxAire`/`wxEspuma`/`wxFlecha` es **el mismo que en Bici y Kayak**.
+- v142: 🎨 editor de escenarios del recorrido (`abrirEditorEscenas`): guarda `ruta.paisaje.scenes` (también en GPX comunes). `landDesdeEscenas` marca calle de barrio en los tramos urbanos sin datos, para que se armen las cuadras; el diagnóstico usa `P.landReal`.
 - Problema conocido: el umbral calculado solo puede quedar muy por debajo de la VMA medida (toma el esfuerzo más largo). Revisarlo antes de tocar las zonas.
 
 ## Quién y cómo trabajamos
