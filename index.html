@@ -246,7 +246,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v146</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v147</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -629,7 +629,7 @@
         </div>
         <div class="hud-item pulso">
           <div class="val" id="hudPulso">--</div>
-          <div class="lbl">Pulso bpm</div>
+          <div class="lbl" id="hudPulsoLbl">Pulso bpm</div>
         </div>
         <div class="hud-item">
           <div class="val" id="hudCadencia">--</div>
@@ -3409,6 +3409,12 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v147: PULSO EN VIVO CON EL COLOR DE SU ZONA (Hugo: "tanto en bici como en correr, se
+         muestre el dato de pulsaciones en vivo con los colores correspondientes a cada
+         zona de entrenamiento"). El número del HUD (hudPulso) se pinta con el color de la
+         zona vigente (pintarPulsoZona: zonaVistaPulso + colorZonaVista, o sea la vista de 5 o
+         7 zonas elegida y los mismos colores de la cinta de zonas) y el rótulo dice
+         "Pulso bpm · Z3". Sin umbral de pulso cargado queda en el color de siempre.
    v146: SIN DESLIZAR-PARA-RECARGAR NUNCA (Hugo: "desplacé de más la pantalla de correr y
          se salió la página. Ya había terminado la sesión"). Desde v104 el
          overscroll-behavior-y:none solo valía con la sesión en curso (clase en-sesion);
@@ -3626,6 +3632,14 @@ function zonaVistaPulso(pulso, umbral) {
 function zonaVistaRitmo(ritmo, umbral) {
   if (!ritmo || !umbral) return null;
   const r = ritmo / umbral; return zonasRitmoVista().find(d => r >= d.min && r < d.max) || null;
+}
+// v147: pulso en vivo con el color de su zona (Hugo: "en bici y en correr, el pulso en vivo con los colores de cada zona"). Usa la misma
+// vista de zonas (5 o 7) y los mismos colores que la cinta de zonas; sin umbral de pulso cargado queda como siempre.
+function pintarPulsoZona(pulso) {
+  const el = document.getElementById('hudPulso'), lbl = document.getElementById('hudPulsoLbl'); if (!el) return;
+  const zv = (zonas.umbralPulso && pulso) ? zonaVistaPulso(pulso, zonas.umbralPulso) : null;
+  el.style.color = zv ? colorZonaVista(zv) : '';
+  if (lbl) lbl.textContent = zv ? 'Pulso bpm · Z' + zv.id : 'Pulso bpm';
 }
 function colorZonaVista(d) { return COLOR_ZONA[d.id] || COLOR_ZONA[d.z]; }
 
@@ -9334,6 +9348,7 @@ function tick() {
   document.getElementById('hudRitmo').textContent = ritmoSegKm ? segAMMSS(ritmoSegKm) : '--:--';
   document.getElementById('hudKmh').textContent = velocidad > 0.1 ? (velocidad * 3.6).toFixed(1) + ' km/h' : '-- km/h';
   document.getElementById('hudPulso').textContent = pulso || '--';
+  pintarPulsoZona(pulso); // v147
   document.getElementById('hudCadencia').textContent = cadencia || '--';
   if (velocidad > 0.1 && cadencia > 0) {
     const zancadaM = (velocidad * 60) / cadencia; // m/min ÷ zancadas/min = m/zancada
@@ -9759,6 +9774,7 @@ function resetearHUD() {
   document.getElementById('hudRitmo').textContent = '--:--';
   document.getElementById('hudKmh').textContent = '-- km/h';
   document.getElementById('hudPulso').textContent = '--';
+  pintarPulsoZona(0);
   document.getElementById('hudCadencia').textContent = '--';
   document.getElementById('hudZancada').textContent = '--';
   document.getElementById('tileZancada').style.display = 'none';
