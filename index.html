@@ -244,7 +244,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v144</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v145</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3407,6 +3407,17 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v145: BANDA HRM-PRO+ QUE NO CONECTA (Hugo mandó captura: "No se pudo conectar: La
+         conexión no respondió en 10s", Correr v144, modo Manual). Causas probables: la
+         primera conexión en Android a una banda ya emparejada tarda más de 10 s; un
+         gatt.connect() colgado quedaba pendiente y el reintento (o la reconexión
+         automática, que corre cada 30 s a la vez) se pegaba a ese intento viejo; y la
+         HRM-Pro+ puede estar tomada por el reloj Garmin u otra app. Nuevo gattConectar():
+         espera 20 s, al fallar cancela el intento (gatt.disconnect()) y, en una conexión
+         manual, reintenta una vez sola; la reconexión automática se frena mientras hay un
+         intento manual (bandaManualEnCurso). El mensaje de error ahora dice qué revisar
+         (Garmin, otra app, "olvidar" en los ajustes de Bluetooth). Lo usan conectarBandaHR
+         y conectarRelojBLE. No lo pude probar con la banda real: solo la sintaxis y la lógica.
    v144: LADOS A MANO EN EL EDITOR DE ESCENARIOS (Hugo: "en todos los editores
          de escenarios, quisiera tener la opción de parque a un lado y edificios
          o casas del otro"). Cada tramo tiene Izq. y Der.: según el mapa, casas,
@@ -5528,6 +5539,29 @@ function conProgreso(estadoEl, base) {
   estadoEl.textContent = base + ' (0s)';
   return setInterval(() => { seg++; estadoEl.textContent = base + ' (' + seg + 's)'; }, 1000);
 }
+// v145: conexión GATT más tolerante (Hugo: "no se conecta la banda Pro+", "La conexión no respondió en 10s"). En Android la
+// primera conexión a una banda ya emparejada suele tardar más de 10 s, y un gatt.connect() colgado se queda pendiente: el
+// reintento siguiente (o la reconexión automática de cada 30 s, que corría a la vez) se pegaba a ese intento viejo y fallaba igual.
+// Ahora: 20 s de espera, al fallar se CANCELA el intento (gatt.disconnect()) y, si lo tocó Hugo a mano, se reintenta una vez sola.
+// Mientras hay un intento manual, la reconexión automática espera (bandaManualEnCurso).
+let bandaManualEnCurso = false;
+async function gattConectar(device, estadoEl, manual) {
+  const intentos = manual ? 2 : 1;
+  if (manual) bandaManualEnCurso = true;
+  try {
+    for (let n = 1; n <= intentos; n++) {
+      const iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando' + (n > 1 ? ' (2º intento)' : ''));
+      try {
+        return await conTimeout(device.gatt.connect(), 20000, 'La conexión no respondió en 20s — si la banda (HRM-Pro+) está conectada a tu reloj Garmin, a Garmin Connect o a otra app, desconectala de ahí (apagá el Bluetooth del reloj un rato) y probá de nuevo; si ya está emparejada en los ajustes de Bluetooth del teléfono, "olvidala" antes de reintentar.');
+      } catch (e) {
+        try { device.gatt.disconnect(); } catch (_) {}   // cancela el intento pendiente para que el próximo arranque limpio
+        if (n >= intentos) throw e;
+        logBLE('Sin respuesta en 20 s: cancelo y reintento…', '#d29922');
+        await new Promise(r => setTimeout(r, 1500));
+      } finally { clearInterval(iv); }
+    }
+  } finally { if (manual) bandaManualEnCurso = false; }
+}
 async function leerBateria(server) {
   try {
     const battService = await server.getPrimaryService('battery_service');
@@ -5559,11 +5593,7 @@ async function conectarRelojBLE(deviceDado, silencioso) {
     // viejo durante todo el handshake (hasta 10s con el timeout de v53), y el watchdog puede
     // dispararse sobre una conexión que todavía está en curso, no realmente colgada.
     if (!device._correrDesc) { device._correrDesc = true; device.addEventListener('gattserverdisconnected', () => manejarDesconexionReloj('explicita')); }
-    let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
-    let server;
-    try {
-      server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
-    } finally { clearInterval(iv); }
+    let iv, server = await gattConectar(device, estadoEl, !silencioso);
     logBLE('GATT conectado', '#3fb950');
 
     const rscService = await server.getPrimaryService('running_speed_and_cadence');
@@ -5683,11 +5713,7 @@ async function conectarBandaHR(deviceDado, silencioso) { // v127: mismos paráme
     dispositivoBanda = device; hrDesdeReloj = false; // v127
     ultimoDatoBandaAt = Date.now(); bandaColgada = false; bandaConectada = false; // mismo criterio que en conectarRelojBLE — reseteo al empezar, no al terminar
     if (!device._correrDesc) { device._correrDesc = true; device.addEventListener('gattserverdisconnected', () => manejarDesconexionBandaHR('explicita')); }
-    let iv = conProgreso(estadoEl, 'Dispositivo elegido, conectando');
-    let server;
-    try {
-      server = await conTimeout(device.gatt.connect(), 10000, 'La conexión no respondió en 10s — probá desconectar/reconectar la banda, o revisar en los ajustes de Bluetooth del teléfono si ya está emparejada ahí y "olvidarla" antes de reintentar.');
-    } finally { clearInterval(iv); }
+    let iv, server = await gattConectar(device, estadoEl, !silencioso);
     logBLE('GATT conectado', '#3fb950');
     const hrService = await server.getPrimaryService('heart_rate');
     const hrChar = await hrService.getCharacteristic('heart_rate_measurement');
@@ -5745,7 +5771,7 @@ async function buscarBandaRecordada() {
   } catch (e) { return null; }
 }
 async function autoconectarBanda(origen) {
-  if (!bandaAutoCfg.activo || bandaOk() || autoBandaEnCurso || !navigator.bluetooth) return false;
+  if (!bandaAutoCfg.activo || bandaOk() || autoBandaEnCurso || bandaManualEnCurso || !navigator.bluetooth) return false;
   const d = await buscarBandaRecordada(); if (!d) return false;
   autoBandaEnCurso = true;
   try { return await (bandaAutoCfg.tipo === 'hr' ? conectarBandaHR(d, true) : conectarRelojBLE(d, true)); }
