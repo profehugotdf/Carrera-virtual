@@ -246,7 +246,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v148</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v149</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3409,6 +3409,8 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v149: 📅 Mismo error de día UTC en el resultado del test de VMA (la fecha que se muestra "medida con el test del…") y en los nombres de
+         los archivos de backup/calibración/edición: ahora usan el día local (fechaLocalISO). Hugo: "Dale".
    v148: DÍA CORRECTO EN LA FORMA COMPARTIDA (Hugo pidió arreglarlo tras detectarse que Correr y
          Kayak anotaban el día en UTC). actualizarFormaCompartida() usaba sesion.fecha.slice(0,10), o sea
          el día en UTC: una sesión terminada a las 22:30 en Ushuaia (UTC-3) quedaba anotada al día
@@ -8947,7 +8949,7 @@ function descargarEdicionEditor() {
   const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'correr_edicion_' + new Date().toISOString().slice(0, 10) + '.json';
+  a.href = url; a.download = 'correr_edicion_' + fechaLocalISO(new Date()) + '.json';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('Edición descargada');
@@ -9586,7 +9588,7 @@ function finalizarSesion(automatica) {
       toast('Test de VMA muy corto: no completaste ni un escalón entero');
       logBLE('Test VMA inválido — menos de un escalón completo', '#f85149');
     } else {
-      lsSet(K_VMA_TEST, { fecha: new Date().toISOString().slice(0, 10), velocidadKmh: vmaKmh, cfg: testVmaCfg, duracionSeg: Math.round(duracionSeg) });
+      lsSet(K_VMA_TEST, { fecha: fechaLocalISO(new Date()), velocidadKmh: vmaKmh, cfg: testVmaCfg, duracionSeg: Math.round(duracionSeg) });
       toast('VMA medida: ' + vmaKmh.toFixed(1) + ' km/h (' + segAMMSS(1000 / (vmaKmh / 3.6)) + '/km)');
       logBLE('Test VMA terminado — VMA ' + vmaKmh.toFixed(1) + ' km/h', '#3fb950');
     }
@@ -9833,7 +9835,7 @@ function exportarMuestrasCalibracion() {
   const blob = new Blob([filas.join('\n')], { type: 'text/csv' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'calibracion_correr_' + new Date().toISOString().slice(0, 10) + '.csv';
+  a.href = url; a.download = 'calibracion_correr_' + fechaLocalISO(new Date()) + '.csv';
   a.click();
   URL.revokeObjectURL(url);
 }
@@ -10895,7 +10897,7 @@ function exportarBackupJSON() {
   const blob = new Blob([JSON.stringify(paquete, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  a.href = url; a.download = 'correr_backup_' + new Date().toISOString().slice(0, 10) + '.json';
+  a.href = url; a.download = 'correr_backup_' + fechaLocalISO(new Date()) + '.json';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
   toast('Backup descargado (' + paquete.sesiones.length + ' sesiones' + (paquete.editorKeyframes ? ' + edición del corredor' : '') + ')');
