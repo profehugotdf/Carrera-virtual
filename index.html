@@ -246,7 +246,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v147</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v148</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3409,6 +3409,15 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v148: DÍA CORRECTO EN LA FORMA COMPARTIDA (Hugo pidió arreglarlo tras detectarse que Correr y
+         Kayak anotaban el día en UTC). actualizarFormaCompartida() usaba sesion.fecha.slice(0,10), o sea
+         el día en UTC: una sesión terminada a las 22:30 en Ushuaia (UTC-3) quedaba anotada al día
+         siguiente, y eso corría el CTL/ATL/TSB de todas las apps y los días de Mi plan. Ahora usa
+         diaFormaDeSesion(): el día LOCAL en que EMPEZÓ la sesión (inicioISO; en las viejas, fecha).
+         Además repararFechasForma() corrige, al abrir la app, las entradas ya anotadas mal (solo las de
+         deporte 'correr' cuyo id es una sesión de esta app; no toca Bici, Kayak ni lo importado de
+         Garmin) y avisa en el registro de eventos. calcularSerieForma() y el nombre del .tcx usan
+         también el día local. Prueba: TZ=America/Argentina/Ushuaia node tests/forma_fecha.js
    v147: PULSO EN VIVO CON EL COLOR DE SU ZONA (Hugo: "tanto en bici como en correr, se
          muestre el dato de pulsaciones en vivo con los colores correspondientes a cada
          zona de entrenamiento"). El número del HUD (hudPulso) se pinta con el color de la
@@ -3773,16 +3782,17 @@ async function migrarClave(db, k) {
   return final.length;
 }
 async function initBigStore() {
-  if (!window.indexedDB) { logBLE('Almacén: este navegador no tiene IndexedDB, todo sigue en localStorage'); return; }
+  if (!window.indexedDB) { logBLE('Almacén: este navegador no tiene IndexedDB, todo sigue en localStorage'); repararFechasForma(); return; }
   try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist().then(ok => logBLE('Almacenamiento persistente: ' + (ok ? 'concedido' : 'no concedido por el navegador'))); } catch (e) {}
   let db;
   try { db = await abrirBaseCorrer(); }
-  catch (e) { logBLE('Almacén: no se pudo abrir la base (' + e.message + '), todo sigue en localStorage', '#d29922'); return; }
+  catch (e) { logBLE('Almacén: no se pudo abrir la base (' + e.message + '), todo sigue en localStorage', '#d29922'); repararFechasForma(); return; }
   bigDb = db;
   for (const k of [K_SESIONES, K_RUTAS]) {
     try { const n = await migrarClave(db, k); logBLE('Almacén: ' + k.replace(LS_PREFIX, '') + ' en la base interna (' + n + ')'); }
     catch (e) { bigEnBase[k] = false; logBLE('Almacén: ' + k.replace(LS_PREFIX, '') + ' sigue en localStorage, no se borró nada (' + e.message + ')', '#d29922'); }
   }
+  repararFechasForma(); // v148: con las sesiones ya leídas de la base
   refrescarTrasAlmacen();
 }
 // lo que se dibujó al arrancar con la lista de localStorage (vacía o solo resumen) se vuelve a dibujar
@@ -10081,6 +10091,44 @@ function accionDeshacerUmbral(id) {
 /* ============================================================
    FORMA COMPARTIDA ENTRE APPS (CTL/ATL/TSB)
    ============================================================ */
+// ===== INICIO FECHA FORMA =====
+// v148: el día de la sesión en el registro compartido de Forma es el día LOCAL en que EMPEZÓ (inicioISO; si
+// la sesión es vieja y no lo tiene, el de fecha). Antes se usaba sesion.fecha.slice(0,10), que es el día en UTC:
+// una sesión a las 22:30 en Ushuaia (UTC-3) quedaba anotada al día siguiente. Devuelve null si no hay fecha válida.
+function diaFormaDeSesion(s) {
+  const f = s && (s.inicioISO || s.fecha);
+  if (!f || isNaN(new Date(f).getTime())) return null;
+  return fechaLocalISO(f);
+}
+// Arregla las entradas que ya quedaron con el día corrido: solo las de ESTA app (deporte 'correr' y el id de una
+// sesión que existe acá). No toca las de otras apps ni las que importó Mi plan de Garmin. No modifica los originales.
+function corregirFechasForma(registro, sesiones) {
+  const porId = {};
+  (sesiones || []).forEach((x) => { if (x && x.id) porId[x.id] = x; });
+  let cambios = 0;
+  const nuevo = (registro || []).map((r) => {
+    if (!r || r.deporte !== 'correr' || !porId[r.id]) return r;
+    const dia = diaFormaDeSesion(porId[r.id]);
+    if (!dia || r.fecha === dia) return r;
+    cambios++;
+    return Object.assign({}, r, { fecha: dia });
+  });
+  return { registro: nuevo, cambios };
+}
+// ===== FIN FECHA FORMA =====
+function repararFechasForma() {
+  try {
+    const sesiones = bigGet(K_SESIONES, []);
+    const registro = lsGet(K_FORMA_COMPARTIDA, []);
+    if (!sesiones.length || !registro.length) return;
+    const r = corregirFechasForma(registro, sesiones);
+    if (!r.cambios) return;
+    lsSet(K_FORMA_COMPARTIDA, r.registro);
+    logBLE('Forma: corregí el día de ' + r.cambios + ' sesión(es) de Correr que figuraban un día después (se anotaban en horario UTC)', '#4FD8C4');
+  } catch (e) {
+    logBLE('Forma: no pude corregir las fechas (' + e.message + '). No se tocó nada.', '#f85149');
+  }
+}
 function actualizarFormaCompartida(sesion) {
   const registro = lsGet(K_FORMA_COMPARTIDA, []);
   // Pasos totales de la sesión — pedido de Hugo, para que la app de Nutrición no cuente dos veces
@@ -10101,7 +10149,7 @@ function actualizarFormaCompartida(sesion) {
   // vivo — hoy, la importada por TCX, que no pasa por tick().
   const pasos = sesion.pasosVivo != null ? sesion.pasosVivo :
     (sesion.cadenciaPromedio ? Math.round(sesion.cadenciaPromedio * (sesion.duracionSeg / 60)) : null);
-  registro.push({ fecha: sesion.fecha.slice(0, 10), deporte: 'correr', tss: sesion.tss, id: sesion.id, pasos, pasosAprox: pasos !== null });
+  registro.push({ fecha: diaFormaDeSesion(sesion) || String(sesion.fecha).slice(0, 10), deporte: 'correr', tss: sesion.tss, id: sesion.id, pasos, pasosAprox: pasos !== null });
   lsSet(K_FORMA_COMPARTIDA, registro);
 }
 /* v105: actividades de Garmin que Mi plan importó al registro compartido de Forma.
@@ -10154,7 +10202,7 @@ function calcularSerieForma() {
   if (!sesiones.length) return { serie: [], ctl: 0, atl: 0, tsb: 0 };
   const porDia = {};
   sesiones.forEach(s => {
-    const dia = s.fecha.slice(0, 10);
+    const dia = diaFormaDeSesion(s) || String(s.fecha).slice(0, 10);
     porDia[dia] = (porDia[dia] || 0) + (s.tss || 0);
   });
   const dias = Object.keys(porDia).sort();
@@ -10803,7 +10851,7 @@ function exportarSesionTCX(id) {
   const blob = new Blob([xml], { type: 'application/vnd.garmin.tcx+xml' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
-  const fecha = new Date(sesion.fecha).toISOString().slice(0, 10);
+  const fecha = diaFormaDeSesion(sesion) || new Date(sesion.fecha).toISOString().slice(0, 10); // v148: día local, no UTC
   a.href = url; a.download = 'correr_' + fecha + '.tcx';
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url);
