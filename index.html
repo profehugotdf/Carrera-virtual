@@ -246,7 +246,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v149</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v150</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3409,6 +3409,15 @@
    v132: campos de tiempo/ritmo con inputmode="decimal" (en el iPhone el
        "numeric" no trae separador): se escribe con coma (1,00,00 · 5,30)
        y al salir del campo queda con dos puntos.
+   v150: ☀️ ANIMACIÓN MÁS REAL (Hugo, 9-nov: "mejora el realismo en el armado de las animaciones para entrenar en las apps del
+         ecosistema"; eligió luz y texturas, casas/árboles/paisaje, el deportista y el movimiento, en Correr, Bici y Kayak).
+         Un solo sol para toda la escena (LUZ, luzCuadro): las casas tienen una cara al sol y otra en sombra y tiran sombra
+         sobre la vereda y la calle; los árboles tienen volumen y sombra en el piso; vidrios que reflejan el cielo, zócalo y
+         sombra del alero. Camino: parches del asfalto en vez de bandas parejas, huellas gastadas, orillas más oscuras, línea
+         de banquina y bruma a lo lejos (luzVia, luzHuellas). Corredor: la sombra se estira hacia el lado contrario al sol y
+         la remera se ilumina de ese lado (NINGUNA pose ni proporción del Editor cambia). Movimiento: la vista sube y baja
+         3 cm con cada paso (LUZ.bob). Con el clima real, nublado o con lluvia las sombras se apagan. Las funciones luz*
+         están en el bloque "land", que es el mismo que en Bici (v176).
    v149: 📅 Mismo error de día UTC en el resultado del test de VMA (la fecha que se muestra "medida con el test del…") y en los nombres de
          los archivos de backup/calibración/edición: ahora usan el día local (fechaLocalISO). Hugo: "Dale".
    v148: DÍA CORRECTO EN LA FORMA COMPARTIDA (Hugo pidió arreglarlo tras detectarse que Correr y
@@ -6952,7 +6961,8 @@ function drawSideDecor(ctx, decor, tx, ty, th, seed, side) {
 // routeName/sceneOverride: acá siempre paso sceneOverride, así que routeName no se usa (no hay rutas GPX en Correr).
 function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
   const N = (geom && geom.N) || 130, NEAR = (geom && geom.NEAR) != null ? geom.NEAR : 2.0, GROW = (geom && geom.GROW) != null ? geom.GROW : 0.045,
-    f = w * 0.95, wRoad = (geom && geom.wRoad) || 5.2, camEyeH = 1.4, latK = 0.9, bandLen = 6, horizonK = 5;
+    f = w * 0.95, wRoad = (geom && geom.wRoad) || 5.2, camEyeH = 1.4 + (LUZ.bob || 0), latK = 0.9, bandLen = 6, horizonK = 5; // v150: la cámara sube y baja con la zancada
+  LUZ.bob = 0;
   const camB = bFn(d0), camE = eFn(d0);
   const gAhead = (eFn(d0 + 50) - camE) / 50 * 100;
   let horizon = Math.round(h * 0.44 - gAhead * horizonK);
@@ -6964,6 +6974,7 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
   if (sc.sol) dibujarSol(ctx, w, horizon, camB);
   if (sc.nubes) dibujarNubes(ctx, w, horizon, camB);
   const Wv = routeName && routeName.id ? wxPara(routeName) : null, tW = performance.now() / 1000; // v138: clima del recorrido
+  luzCuadro(camB, f, Wv); // v150: de qué lado viene el sol en este cuadro
   if (Wv) wxCielo(ctx, w, horizon, Wv, camB, tW, f);
   // v134: recorrido de Rumbo → las montañas de verdad (routeName trae el recorrido)
   const P = routeName && routeName.paisaje && paisajeRealOn() ? paisajeDe(routeName) : null;
@@ -7012,9 +7023,10 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
     ctx.beginPath(); ctx.moveTo(b.cx - b.hw - rb, bLY); ctx.lineTo(b.cx - b.hw, bLY); ctx.lineTo(a.cx - a.hw, aLY); ctx.lineTo(a.cx - a.hw - ra, aLY); ctx.closePath(); ctx.fill(); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(b.cx + b.hw + rb, bRY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx + a.hw + ra, aRY); ctx.closePath(); ctx.fill(); ctx.stroke();
     }
-    ctx.fillStyle = ctx.strokeStyle = vl ? shadeHex(vl.col, gShade * (light ? cb[0] : cb[1])) : (light ? asphaltL : asphaltD);
+    ctx.fillStyle = ctx.strokeStyle = luzVia(vl ? vl.col : sc.asphalt, gShade, b.d, d0, sc, cb, bandLen); // v150
     ctx.beginPath(); ctx.moveTo(b.cx - b.hw, bLY); ctx.lineTo(b.cx + b.hw, bRY); ctx.lineTo(a.cx + a.hw, aRY); ctx.lineTo(a.cx - a.hw, aLY); ctx.closePath(); ctx.fill(); ctx.stroke();
     const nCarr = vl ? vl.carriles : sc.carriles;
+    if (!nCarr && b.hw > 7) luzHuellas(ctx, a, b, ao, bo, vl ? vl.linea : false); // v150
     if (nCarr) { // v94: líneas de carril continuas
       ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.lineWidth = Math.max(0.6, b.hw * 0.012);
       ctx.beginPath();
@@ -7051,6 +7063,7 @@ function roadBands(ctx, w, h, d0, bFn, eFn, routeName, sceneOverride, geom) {
         if (sc.decor === 'stands' && side === -1) continue; // sin tribunas en el interior de la pista
         const off = b.hw * (0.45 + 0.5 * Math.abs(seed));
         const tx = b.cx + side * (b.hw + off), ty = b.y, th = b.hw * (0.45 + 0.3 * Math.abs(seed));
+        if (/tree|leng|pin/.test(sc.decor || '')) { const mm = b.m || b.hw / 5.2; luzSombra(ctx, tx, ty, mm, th / mm * 1.3, th / mm * 0.25); } // v150
         drawSideDecor(ctx, sc.decor, tx, ty, th, seed, side);
       }
     }
@@ -7367,6 +7380,7 @@ function dibujarEscenaSendero(ctx, w, h) {
   // v93: curvas suaves (antes era recto) para que el paisaje se mueva con profundidad
   const bFn = d => 0.16 * Math.sin(d / 150) + 0.07 * Math.sin(d / 57 + 1.3);
   const eFn = d => d * (pendienteActual / 100); // usa la pendiente en vivo como si fuera una subida constante
+  LUZ.bob = actual.velocidad > 0.4 ? 0.03 * Math.sin(2 * runnerPhase) : 0; // v150: la vista sube y baja 3 cm con cada paso
   const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, null, SCENES.fueguino, null);
   dibujarMojones(ctx, S);
   const youS = Math.max(20, h * 0.135);
@@ -7813,6 +7827,7 @@ function dibujarEscenaRuta(ctx, w, h) {
   const ruta = rutaActiva();
   const bFn = d => valorRuta(ruta.b, ruta.paso, d); // pasada la llegada sigue derecho
   const eFn = ruta.e ? (d => valorRuta(ruta.e, ruta.paso, d)) : (d => d * (pendienteActual / 100));
+  LUZ.bob = actual.velocidad > 0.4 ? 0.03 * Math.sin(2 * runnerPhase) : 0; // v150: la vista sube y baja 3 cm con cada paso
   const S = roadBands(ctx, w, h, distanciaAcumM, bFn, eFn, ruta.paisaje ? ruta : null, ruta.paisaje ? escenaRumboEn(ruta, distanciaAcumM) : SCENES.fueguino, null); // v134
   dibujarMojones(ctx, S);
   dibujarLineaMeta(ctx, S, ruta.longitudM);
@@ -8035,6 +8050,39 @@ function landPunto(S,d){ const n=S.length; if(n<2||d<S[0].d||d>S[n-1].d) return 
   const A=S[lo],B=S[hi],t=(d-A.d)/((B.d-A.d)||1); return {cx:A.cx+(B.cx-A.cx)*t, y:A.y+(B.y-A.y)*t, m:A.m+(B.m-A.m)*t}; }
 const landHash=x=>{ const n=Math.sin(x*12.9898)*43758.5453; return n-Math.floor(n); };
 const landSalta=(skip,side)=>{ const n=side<0?"left":"right"; return Array.isArray(skip)?skip.includes(n):skip===n; };
+// LUZ: un solo sol para toda la escena (mismo rumbo que el sol dibujado en el cielo). luzCuadro() se llama una vez por cuadro
+// desde roadBands; después las casas, los árboles, el camino y el deportista se iluminan y dan sombra del mismo lado.
+// k = fuerza del sol (1 despejado; nublado, lluvia o de noche baja y las sombras casi desaparecen). bob = sube y baja de la cámara (m).
+const LUZ={az:0.55, sx:0.5, sz:0.85, k:1, f:400, bob:0};
+function luzCuadro(camB,f,W){ const rel=LUZ.az-camB; LUZ.sx=Math.sin(rel); LUZ.sz=Math.cos(rel); LUZ.f=f||400;
+  LUZ.k=W?(W.dia===false?0:Math.max(0.12,1-(+W.nubes||0)/115)*((+W.lluvia||0)>0?0.35:1)):1; }
+// resplandor del sol en el cielo, en su rumbo (se corre en las curvas, como las montañas)
+function luzSol(ctx,w,horizon,camB,f){ if(LUZ.k<0.3) return; const rel=Math.atan2(Math.sin(LUZ.az-camB),Math.cos(LUZ.az-camB)); if(Math.abs(rel)>0.9) return;
+  const x=w/2+f*Math.tan(rel), y=horizon*0.42, g=ctx.createRadialGradient(x,y,0,x,y,horizon*0.55), k=LUZ.k;
+  g.addColorStop(0,"rgba(255,244,214,"+(0.95*k).toFixed(2)+")"); g.addColorStop(0.12,"rgba(255,236,190,"+(0.8*k).toFixed(2)+")"); g.addColorStop(1,"rgba(255,230,180,0)");
+  ctx.fillStyle=g; ctx.fillRect(0,0,w,horizon); }
+// cuánto le da el sol a una cara: nx,nz = hacia dónde mira (lateral +derecha, +adelante). Devuelve el factor para shadeHex.
+function luzCara(nx,nz){ const dot=nx*LUZ.sx+nz*LUZ.sz; return 0.86+(0.72+0.42*Math.max(0,dot)-0.86)*LUZ.k; }
+// sombra en el suelo de algo de "alto" metros y "radio" metros de medio ancho, con el pie en x,y (m = px por metro)
+function luzSombra(ctx,x,y,m,alto,radio){ if(LUZ.k<0.08||m<0.45) return;
+  const L=Math.min(13,alto*1.15), fore=Math.min(0.32,1.4*m/LUZ.f), dx=-LUZ.sx*L*m, dy=LUZ.sz*L*m*fore, len=Math.hypot(dx,dy);
+  ctx.fillStyle="rgba(8,16,28,"+(0.24*LUZ.k).toFixed(3)+")";
+  ctx.beginPath(); ctx.ellipse(x+dx/2,y+dy/2,len/2+radio*m,Math.max(0.6,radio*m*(0.22+0.5*fore)),Math.atan2(dy,dx),0,7); ctx.fill(); }
+// color de una franja del camino: en vez de bandas claras y oscuras parejas, cada tramo de 6 m tiene su tono (parches del
+// asfalto) y a lo lejos se va al color del cielo (perspectiva aérea). sh = sombreado por la pendiente, cb = contraste de la escena
+function luzVia(col,sh,d,d0,sc,cb,bandLen){ const q=Math.floor(d/bandLen), amp=Math.min(0.05,(cb[0]-cb[1])*0.5);
+  const t=(cb[0]+cb[1])/2+(q%2===0?amp:-amp)*0.45+(landHash(q*1.31)-0.5)*amp*1.6;
+  const n=parseInt(col.slice(1),16), k=sh*t, c=v=>Math.min(255,Math.round(v*k)).toString(16).padStart(2,"0");
+  return mixHex("#"+c(n>>16&255)+c(n>>8&255)+c(n&255),sc.sky[1],Math.min(0.45,Math.max(0,(d-d0)/380))); }
+// huellas: por donde pasan las ruedas el asfalto está más gastado y claro; borde = línea blanca de banquina
+function luzHuellas(ctx,a,b,ao,bo,borde){
+  ctx.fillStyle="rgba(255,255,255,.045)";
+  for(const fr of [-0.5,0.5]){ const w0=0.13;
+    ctx.beginPath(); ctx.moveTo(b.cx+(fr-w0)*b.hw,b.y+(fr-w0)*bo); ctx.lineTo(b.cx+(fr+w0)*b.hw,b.y+(fr+w0)*bo); ctx.lineTo(a.cx+(fr+w0)*a.hw,a.y+(fr+w0)*ao); ctx.lineTo(a.cx+(fr-w0)*a.hw,a.y+(fr-w0)*ao); ctx.closePath(); ctx.fill(); }
+  ctx.fillStyle="rgba(0,0,0,.07)"; // la orilla junta tierra y queda más oscura
+  for(const sd of [-1,1]){ ctx.beginPath(); ctx.moveTo(b.cx+sd*b.hw,b.y+sd*bo); ctx.lineTo(b.cx+sd*0.86*b.hw,b.y+sd*0.86*bo); ctx.lineTo(a.cx+sd*0.86*a.hw,a.y+sd*0.86*ao); ctx.lineTo(a.cx+sd*a.hw,a.y+sd*ao); ctx.closePath(); ctx.fill(); }
+  if(borde&&b.hw>14){ ctx.fillStyle="rgba(240,240,232,.8)";
+    for(const sd of [-1,1]){ ctx.beginPath(); ctx.moveTo(b.cx+sd*0.93*b.hw,b.y+sd*0.93*bo); ctx.lineTo(b.cx+sd*0.9*b.hw,b.y+sd*0.9*bo); ctx.lineTo(a.cx+sd*0.9*a.hw,a.y+sd*0.9*ao); ctx.lineTo(a.cx+sd*0.93*a.hw,a.y+sd*0.93*ao); ctx.closePath(); ctx.fill(); } } }
 function landBruma(col,sc,d,d0){ return mixHex(col,sc.sky[1],Math.min(0.6,Math.max(0,(d-d0)/650))); }
 // color del suelo de un lado: el del uso del suelo, mezclado con el de la foto satelital si lo hay
 function landColSuelo(c,sat,sc){ const base=LAND_SUELO[c]; if(base&&sat) return mixHex(base,sat,c===11?0.15:0.4); return base||sat||sc.ground; }
@@ -8121,7 +8169,10 @@ function landCasa(ctx,S,dd,side,lat,byte,seed,sur,sc,d0){
   const pick=a=>a[Math.floor(r2*a.length)%a.length];
   let col=k===0?pick(sur?LAND_COL.casaSur:LAND_COL.casa):k===1?pick(LAND_COL.edif):k===2?pick(LAND_COL.casa):k===3?pick(LAND_COL.galpon):pick(LAND_COL.publico);
   col=landBruma(col,sc,dd,d0);
-  const frente=shadeHex(col,0.82), punta=col;
+  const frente=shadeHex(col,luzCara(-side,0)), fPunta=luzCara(0,-1), punta=shadeHex(col,fPunta);
+  if(LUZ.k>0.08&&side*LUZ.sx>0.12&&p0.m>0.5){ // el sol está detrás de la casa: la sombra cae hacia la calle
+    const Ls=Math.min(lat+3,H*1.1*Math.abs(LUZ.sx)); ctx.fillStyle="rgba(8,16,28,"+(0.22*LUZ.k).toFixed(3)+")";
+    ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.lineTo(X(p1,lat-Ls),y1); ctx.lineTo(X(p0,lat-Ls),y0); ctx.closePath(); ctx.fill(); }
   // cara que da al camino
   ctx.fillStyle=frente; ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.lineTo(x1,t1); ctx.lineTo(x0,t0); ctx.closePath(); ctx.fill();
   // cara que da hacia vos
@@ -8129,10 +8180,13 @@ function landCasa(ctx,S,dd,side,lat,byte,seed,sur,sc,d0){
   // techo a dos aguas (casas y galpones): el faldón que mira al camino y el triángulo de la punta
   if(k===0||k===3){ const rh=k===0?2.6:1.8, xr0=X(p0,lat+dep/2), xr1=X(p1,lat+dep/2), r0=y0-(H+rh)*p0.m, rr1=y1-(H+rh)*p1.m;
     const tc=landBruma(k===3?"#8b9096":pick(sur?LAND_COL.techoSur:LAND_COL.techo),sc,dd,d0);
-    ctx.fillStyle=tc; ctx.beginPath(); ctx.moveTo(x0-side*0.4*p0.m,t0); ctx.lineTo(x1-side*0.4*p1.m,t1); ctx.lineTo(xr1,rr1); ctx.lineTo(xr0,r0); ctx.closePath(); ctx.fill();
-    ctx.fillStyle=shadeHex(punta,0.94); ctx.beginPath(); ctx.moveTo(x0,t0); ctx.lineTo(xb,t0); ctx.lineTo(xr0,r0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=shadeHex(tc,luzCara(-side*0.6,-0.2)+0.12); ctx.beginPath(); ctx.moveTo(x0-side*0.4*p0.m,t0); ctx.lineTo(x1-side*0.4*p1.m,t1); ctx.lineTo(xr1,rr1); ctx.lineTo(xr0,r0); ctx.closePath(); ctx.fill();
+    ctx.fillStyle=shadeHex(col,fPunta*0.94); ctx.beginPath(); ctx.moveTo(x0,t0); ctx.lineTo(xb,t0); ctx.lineTo(xr0,r0); ctx.closePath(); ctx.fill();
   } else { ctx.fillStyle=shadeHex(col,0.7); ctx.fillRect(Math.min(x0,xb),t0,Math.abs(xb-x0),Math.max(1,0.5*p0.m)); // pretil
     ctx.beginPath(); ctx.moveTo(x0,t0); ctx.lineTo(x1,t1); ctx.lineTo(x1,t1+0.5*p1.m); ctx.lineTo(x0,t0+0.5*p0.m); ctx.closePath(); ctx.fill(); }
+  if(p0.m>0.9&&k!==3){ ctx.fillStyle="rgba(0,0,0,.14)"; // sombra del alero o pretil sobre la pared y zócalo
+    ctx.beginPath(); ctx.moveTo(x0,t0); ctx.lineTo(x1,t1); ctx.lineTo(x1,t1+0.45*p1.m); ctx.lineTo(x0,t0+0.45*p0.m); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x0,y0); ctx.lineTo(x1,y1); ctx.lineTo(x1,y1-0.35*p1.m); ctx.lineTo(x0,y0-0.35*p0.m); ctx.closePath(); ctx.fill(); }
   if(p0.m<1.6) return; // lejos: sin ventanas
   const vid=landBruma(k===3?"#5d6266":"#4d6a80",sc,dd,d0);
   // ventanas de la cara del camino (una cada ~3,2 m, por piso)
@@ -8143,7 +8197,9 @@ function landCasa(ctx,S,dd,side,lat,byte,seed,sur,sc,d0){
     if(k===3&&f===0){ /* portón */ const a=landPunto(S,dd+len*0.35),b=landPunto(S,dd+len*0.65); if(a&&b){ ctx.beginPath(); ctx.moveTo(X(a,lat),a.y-0.1*a.m); ctx.lineTo(X(b,lat),b.y-0.1*b.m); ctx.lineTo(X(b,lat),b.y-3.4*b.m); ctx.lineTo(X(a,lat),a.y-3.4*a.m); ctx.closePath(); ctx.fill(); } continue; }
     for(const [a,b] of cols){ if(k===0&&f===0&&cols.length>1&&a===cols[0][0]){ // puerta
         ctx.fillStyle=landBruma("#5a3d2b",sc,dd,d0); ctx.beginPath(); ctx.moveTo(X(a,lat),a.y); ctx.lineTo(X(b,lat),b.y); ctx.lineTo(X(b,lat),b.y-2.1*b.m); ctx.lineTo(X(a,lat),a.y-2.1*a.m); ctx.closePath(); ctx.fill(); ctx.fillStyle=vid; continue; }
-      ctx.beginPath(); ctx.moveTo(X(a,lat),a.y-v0*a.m); ctx.lineTo(X(b,lat),b.y-v0*b.m); ctx.lineTo(X(b,lat),b.y-v1*b.m); ctx.lineTo(X(a,lat),a.y-v1*a.m); ctx.closePath(); ctx.fill(); } }
+      ctx.beginPath(); ctx.moveTo(X(a,lat),a.y-v0*a.m); ctx.lineTo(X(b,lat),b.y-v0*b.m); ctx.lineTo(X(b,lat),b.y-v1*b.m); ctx.lineTo(X(a,lat),a.y-v1*a.m); ctx.closePath(); ctx.fill();
+      if(p0.m>3&&landHash(seed+f*1.7+a.cx*0.01)>0.45){ const vm=(v0+v1)/2; ctx.fillStyle="rgba(215,235,250,"+(0.16+0.2*LUZ.k).toFixed(2)+")"; // el cielo reflejado en la mitad de arriba del vidrio
+        ctx.beginPath(); ctx.moveTo(X(a,lat),a.y-vm*a.m); ctx.lineTo(X(b,lat),b.y-vm*b.m); ctx.lineTo(X(b,lat),b.y-v1*b.m); ctx.lineTo(X(a,lat),a.y-v1*a.m); ctx.closePath(); ctx.fill(); ctx.fillStyle=vid; } } }
   if(k===2){ // toldo del local
     const tl=landBruma(pick(LAND_COL.toldo),sc,dd,d0); ctx.fillStyle=tl; ctx.beginPath(); ctx.moveTo(x0,y0-3.2*p0.m); ctx.lineTo(x1,y1-3.2*p1.m);
     ctx.lineTo(X(p1,lat-1.2),y1-2.7*p1.m); ctx.lineTo(X(p0,lat-1.2),y0-2.7*p0.m); ctx.closePath(); ctx.fill(); }
@@ -8155,15 +8211,26 @@ function landCasa(ctx,S,dd,side,lat,byte,seed,sur,sc,d0){
 // árboles: "hoja" (latifoliado: tronco y copa de varias bolas, con luz de un lado), "pino" (conífera en pisos) y
 // "lenga" (copa irregular, en otoño rojiza). x,y = pie del árbol; H = alto en metros
 function landArbol(ctx,x,y,m,H,tipo,r,sc,dd,d0){
-  const B=c=>landBruma(c,sc,dd,d0), h=H*m, tr=Math.max(0.6,0.07*h);
+  const B=c=>landBruma(c,sc,dd,d0), h=H*m, tr=Math.max(0.6,0.07*h), sl=LUZ.sx>=0?1:-1, lk=LUZ.k;
+  luzSombra(ctx,x,y,m,H,H*(tipo==="pino"?0.14:0.2));
   ctx.fillStyle=B("#4a3a2c"); ctx.fillRect(x-tr/2,y-h*0.42,tr,h*0.42);
+  if(h>26){ ctx.fillStyle="rgba(0,0,0,.22)"; ctx.fillRect(sl>0?x-tr/2:x,y-h*0.42,tr/2,h*0.42); }
   if(tipo==="pino"){ const cs=[B("#1f4228"),B("#24502e"),B("#2b5c34")];
     for(let k=0;k<4;k++){ const yb=y-h*(0.18+k*0.2), wk=h*(0.24-k*0.045); ctx.fillStyle=cs[k%3];
-      ctx.beginPath(); ctx.moveTo(x-wk,yb); ctx.lineTo(x+wk,yb); ctx.lineTo(x,yb-h*0.34); ctx.closePath(); ctx.fill(); } return; }
+      ctx.beginPath(); ctx.moveTo(x-wk,yb); ctx.lineTo(x+wk,yb); ctx.lineTo(x,yb-h*0.34); ctx.closePath(); ctx.fill();
+      if(h>14){ ctx.fillStyle="rgba(0,12,6,"+(0.1+0.16*lk).toFixed(2)+")"; ctx.beginPath(); ctx.moveTo(x-sl*wk,yb); ctx.lineTo(x,yb); ctx.lineTo(x,yb-h*0.34); ctx.closePath(); ctx.fill(); // media copa a la sombra
+        ctx.fillStyle="rgba(0,10,5,.16)"; ctx.fillRect(x-wk*0.8,yb-1,wk*1.6,Math.max(1,h*0.012)); } } return; }
   const otono=tipo==="lenga"&&r>0.62, base=otono?["#8a4b1f","#b8742a","#d49a3a"]:tipo==="lenga"?["#2f4a2c","#3f6236","#557a44"]:["#2c5a2e","#3a7036","#4f8a43"];
   const bolas=tipo==="lenga"?[[-0.16,0.62,0.2],[0.15,0.66,0.19],[0,0.8,0.2],[-0.08,0.93,0.13],[0.12,0.88,0.12]]:[[-0.17,0.6,0.22],[0.17,0.62,0.21],[0,0.78,0.25],[-0.1,0.9,0.15],[0.1,0.92,0.14]];
   bolas.forEach(([dx,dy,rr],j)=>{ ctx.fillStyle=B(base[j===2?1:j>2?2:0]); ctx.beginPath(); ctx.ellipse(x+dx*h*(0.9+0.2*r),y-dy*h,rr*h,rr*h*0.9,0,0,7); ctx.fill(); });
-  ctx.fillStyle="rgba(255,250,210,.10)"; ctx.beginPath(); ctx.ellipse(x+0.08*h,y-0.82*h,0.13*h,0.11*h,0,0,7); ctx.fill();
+  if(h<10) return;
+  // volumen: abajo y del lado contrario al sol la copa queda a la sombra; del lado del sol, la luz
+  ctx.fillStyle="rgba(0,14,8,"+(0.1+0.14*lk).toFixed(2)+")";
+  ctx.beginPath(); ctx.ellipse(x-sl*0.12*h,y-0.6*h,0.2*h,0.13*h,0,0,7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x-sl*0.05*h,y-0.74*h,0.15*h,0.1*h,0,0,7); ctx.fill();
+  ctx.fillStyle="rgba(255,248,200,"+(0.05+0.11*lk).toFixed(2)+")";
+  ctx.beginPath(); ctx.ellipse(x+sl*0.11*h,y-0.84*h,0.13*h,0.1*h,0,0,7); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(x+sl*0.17*h,y-0.66*h,0.09*h,0.07*h,0,0,7); ctx.fill();
 }
 // lo que va al costado cuando no hay casa, según el uso del suelo (tamaños en metros)
 function landObjeto(ctx,c,x,y,m,seed,side,sur,sc,dd,d0){
@@ -8182,7 +8249,7 @@ function landObjeto(ctx,c,x,y,m,seed,side,sur,sc,dd,d0){
   if(c===1||c===2){ if(r<0.4) landArbol(ctx,x,y,m,5+3*r,"hoja",r,sc,dd,d0); return; }   // árbol de vereda
   if(c===3){ if(r>0.6){ /* galpón de fondo */ } return; }
 }
-function landFarol(ctx,x,y,m,side,sc,dd,d0){ const col=landBruma("#4a4f55",sc,dd,d0); ctx.fillStyle=col; ctx.fillRect(x-0.08*m,y-7*m,0.16*m,7*m);
+function landFarol(ctx,x,y,m,side,sc,dd,d0){ luzSombra(ctx,x,y,m,7,0.12); const col=landBruma("#4a4f55",sc,dd,d0); ctx.fillStyle=col; ctx.fillRect(x-0.08*m,y-7*m,0.16*m,7*m);
   ctx.fillRect(x-side*1.6*m,y-7*m,side*1.6*m,0.12*m); ctx.fillStyle=landBruma("#f3e7b8",sc,dd,d0); ctx.fillRect(x-side*1.7*m-0.3*m,y-6.95*m,0.6*m,0.2*m); }
 // DECORADO de la franja: cada 12,5 m, de cada lado, la casa real (a su distancia, con sus pisos) o lo que corresponda al
 // uso del suelo; faroles en las calles. hwM(d) = medio ancho del camino en metros.
@@ -8768,7 +8835,11 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra
   // v93 (detalle): la sombra se achica cuando el cuerpo está en el aire, según el rebote del editor
   const escSombra = detalle ? 1 - Math.min(0.45, Math.max(0, bounce || 0) * 4) : 1;
   ctx.fillStyle = 'rgba(0,0,0,.28)';
-  ctx.beginPath(); ctx.ellipse(cx, gyBase + s * 0.05, s * 0.42 * escSombra, s * 0.12 * escSombra, 0, 0, 7); ctx.fill();
+  ctx.beginPath();
+  if (detalle) { const sk = LUZ.k; ctx.fillStyle = 'rgba(0,0,0,' + (0.2 + 0.14 * sk).toFixed(2) + ')'; // v150: sombra alargada hacia el lado contrario al sol
+    ctx.ellipse(cx - LUZ.sx * s * 0.55 * sk, gyBase + s * (0.05 + 0.1 * LUZ.sz * sk), s * (0.42 + 0.62 * Math.abs(LUZ.sx) * sk) * escSombra, s * (0.12 + 0.05 * sk) * escSombra, 0, 0, 7); }
+  else ctx.ellipse(cx, gyBase + s * 0.05, s * 0.42 * escSombra, s * 0.12 * escSombra, 0, 0, 7);
+  ctx.fill();
 
   function leg(side, d) {
     const hipX = cx + side * s * 0.16;
@@ -8811,8 +8882,9 @@ function dibujarPoseDesdeD(ctx, cx, gyBase, s, dDer, dIzq, bounce, jersey, extra
 
   const hipHW = s * 0.26, shHW = hipHW * 1.275;
   if (detalle) { // v93: luz desde arriba a la izquierda sobre la remera
-    const g = ctx.createLinearGradient(cx - shHW, shY, cx + shHW, hipY);
-    g.addColorStop(0, shadeHex(jersey, 1.25)); g.addColorStop(1, shadeHex(jersey, 0.8));
+    const sl = LUZ.sx >= 0 ? 1 : -1; // v150: la luz viene del lado del sol
+    const g = ctx.createLinearGradient(cx + sl * shHW, shY, cx - sl * shHW, hipY);
+    g.addColorStop(0, shadeHex(jersey, 1.28)); g.addColorStop(0.55, jersey); g.addColorStop(1, shadeHex(jersey, 0.74));
     ctx.fillStyle = g;
   } else ctx.fillStyle = jersey;
   ctx.beginPath();
