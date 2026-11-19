@@ -241,12 +241,41 @@
   .toast.show{opacity:1;}
 
   .file-drop{border:1.5px dashed var(--borde); border-radius:12px; padding:22px 14px; text-align:center; color:var(--muted); font-size:13px;}
+  /*NAVB-INI*/
+  /* Barra de navegación de abajo — MISMO bloque en Correr, Bici y Kayak: si se cambia acá, copiarlo idéntico a las otras dos. */
+  :root{--navbH:62px;}
+  #navB{position:fixed;left:0;right:0;bottom:0;z-index:9000;display:flex;background:var(--navbBg,#141922);border-top:1px solid rgba(255,255,255,.12);padding-bottom:env(safe-area-inset-bottom);box-shadow:0 -4px 14px rgba(0,0,0,.35);}
+  #navB button{all:unset;box-sizing:border-box;flex:1 1 0;min-width:0;min-height:var(--navbH);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:#9aa4b2;font:600 11px/1.1 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;cursor:pointer;border-top:3px solid transparent;-webkit-tap-highlight-color:transparent;text-align:center;}
+  #navB button .i{font-size:22px;line-height:1;filter:grayscale(.55);opacity:.85;}
+  #navB button .t{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;padding:0 2px;}
+  #navB button.sel{color:#fff;border-top-color:var(--navbAcc,#4cc2ff);background:rgba(255,255,255,.04);}
+  #navB button.sel .i{filter:none;opacity:1;}
+  #navB button:active{background:rgba(255,255,255,.08);}
+  body.navb-on{padding-bottom:calc(var(--navbH) + env(safe-area-inset-bottom) + 10px) !important;}
+  body.navb-on.navb-oculta{padding-bottom:0 !important;}
+  body.navb-oculta #navB,body.navb-oculta #navbMas,body.navb-oculta #navbFondo{display:none !important;}
+  #navbFondo{position:fixed;inset:0;z-index:8998;background:rgba(0,0,0,.45);display:none;}
+  #navbMas{position:fixed;left:0;right:0;bottom:calc(var(--navbH) + env(safe-area-inset-bottom));z-index:8999;background:var(--navbBg,#141922);border-top:1px solid rgba(255,255,255,.14);border-radius:16px 16px 0 0;padding:10px 12px 12px;display:none;max-height:70vh;overflow-y:auto;}
+  #navbMas.abierto,#navbFondo.abierto{display:block;}
+  #navbMas .navb-tit{color:#9aa4b2;font:600 12px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;margin:2px 4px 8px;}
+  #navbMas button{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:12px;width:100%;min-height:52px;padding:10px 12px;margin:0 0 6px;border-radius:12px;background:rgba(255,255,255,.05);color:#e6edf3;font:600 16px system-ui,sans-serif;cursor:pointer;}
+  #navbMas button .i{font-size:22px;width:28px;text-align:center;}
+  #navbMas button:active{background:rgba(255,255,255,.12);}
+  #navbAviso{position:fixed;left:12px;right:12px;bottom:calc(var(--navbH) + env(safe-area-inset-bottom) + 10px);z-index:9001;background:#5a1d1d;color:#fff;border-radius:10px;padding:10px 12px;font:14px system-ui,sans-serif;display:none;}
+  /*NAVB-FIN*/
+  /* v151: con la barra de abajo visible, la barra de Iniciar/Pausar/Finalizar, los avisos y las pantallas superpuestas van por encima */
+  body.navb-on:not(.navb-oculta) #barraSesion{bottom:calc(var(--navbH) + env(safe-area-inset-bottom));}
+  body.con-barra.navb-on:not(.navb-oculta) main{padding-bottom:calc(170px + var(--navbH));}
+  body.navb-on:not(.navb-oculta) .toast{bottom:calc(90px + var(--navbH));}
+  body.con-barra.navb-on:not(.navb-oculta) .toast{bottom:calc(180px + var(--navbH));}
+  body.navb-on:not(.navb-oculta) .overlay{padding-bottom:calc(var(--navbH) + 24px);}
+  body.navb-on #cardMasAccesos{display:none;}
 </style>
 </head>
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v150</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v151</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -706,7 +735,7 @@
       <textarea id="notasSesion" placeholder="Sensaciones, cinta usada, etc."></textarea>
     </div>
 
-    <div class="card">
+    <div class="card" id="cardMasAccesos">
       <h2>Más</h2>
       <button class="btn" onclick="cambiarTab('historial')">📈 Historial de sesiones</button>
       <button class="btn" onclick="cambiarTab('zonas')" style="margin-top:8px;">🎯 Zonas y VMA</button>
@@ -3551,7 +3580,11 @@
        pantalla pasa a 5:05 en 2 s (antes 6:43, 6:11, 5:50…). GPS con
        maximumAge 0 (antes podía dar una posición de hasta 1 s). Con
        pasadas, arranque y recuadro se revisan al llegar cada dato GPS.
-   ============================================================ */
+   ============================================================    v151: 🧭 MISMA NAVEGACIÓN EN CORRER, BICI Y KAYAK (Hugo, 19-nov: "quiero unificar la forma de navegar por menúes y accesos en las apps de correr, bici y kayak"; eligió barra fija abajo que se esconde con la sesión en marcha). Barra fija abajo (bloque NAVB, idéntico en las
+       tres): Sesión · Entrenos (lleva al Plan de carrera de la pantalla de sesión) · Historial · Carrera · Más (Zonas y VMA,
+       Importar, Editor). Se esconde corriendo y en el "¿Cómo te sentiste?" del final; vuelve en pausa. La tarjeta "Más" de
+       la pantalla de sesión queda escondida; la barra de Iniciar/Pausar/Finalizar y los avisos suben por encima.
+*/
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
 const LS_PREFIX = 'correr_';
@@ -12219,6 +12252,112 @@ if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch((e) => logBLE('Service Worker no se pudo registrar: ' + e.message, '#d29922'));
   });
 }
+/*NAVB-INI*/
+/* ============================================================
+   Barra de navegación de abajo — MISMO bloque en Correr, Bici y Kayak (pedido de Hugo, 19-nov:
+   "unificar la forma de navegar por menúes y accesos"). Si se cambia acá, copiarlo idéntico a las
+   otras dos apps. Cada app solo llama a navbArmar() con SUS pantallas:
+     navbArmar({
+       acento: '#color',
+       items: [{id, ico, txt, ir}],      // los 4 de siempre: sesion, entrenos, historial, carrera
+       mas:   [{id, ico, txt, ir}],      // lo propio de cada app, en la hoja "Más"
+       actual: () => id | null,          // qué pantalla está a la vista (para marcar el botón)
+       enSesion: () => bool              // true = esconder la barra (sesión en marcha)
+     })
+   La barra no reemplaza las pantallas de cada app: llama a las funciones que ya abrían cada una.
+   ============================================================ */
+const NAVB = { cfg: null, sel: null, oculta: false, timer: null };
+function navbAviso(msg) {
+  let a = document.getElementById('navbAviso');
+  if (!a) { a = document.createElement('div'); a.id = 'navbAviso'; document.body.appendChild(a); }
+  a.textContent = msg; a.style.display = 'block';
+  clearTimeout(a._t); a._t = setTimeout(() => { a.style.display = 'none'; }, 5000);
+}
+function navbIr(it) {
+  try { it.ir(); } catch (e) { console.error(e); navbAviso('No pude abrir ' + it.txt + ': ' + (e && e.message || e)); return; }
+  try { window.scrollTo(0, 0); } catch (e) { /* sin scroll no pasa nada */ }
+}
+function navbMarcar(id) {
+  NAVB.sel = id;
+  document.querySelectorAll('#navB button').forEach(b => b.classList.toggle('sel', b.dataset.id === id));
+}
+function navbMasAbrir() {
+  const m = document.getElementById('navbMas'), f = document.getElementById('navbFondo');
+  const abrir = !m.classList.contains('abierto');
+  m.classList.toggle('abierto', abrir); f.classList.toggle('abierto', abrir);
+}
+function navbMasCerrar() {
+  const m = document.getElementById('navbMas'), f = document.getElementById('navbFondo');
+  if (m) m.classList.remove('abierto'); if (f) f.classList.remove('abierto');
+}
+function navbChequear() {
+  const c = NAVB.cfg; if (!c) return;
+  let en = false; try { en = !!(c.enSesion && c.enSesion()); } catch (e) { console.error(e); }
+  if (en !== NAVB.oculta) { NAVB.oculta = en; document.body.classList.toggle('navb-oculta', en); if (en) navbMasCerrar(); }
+  let id = null; try { id = c.actual ? c.actual() : null; } catch (e) { console.error(e); }
+  if (id && id !== NAVB.sel) navbMarcar(id);
+}
+function navbArmar(cfg) {
+  NAVB.cfg = cfg;
+  let nav = document.getElementById('navB');
+  if (!nav) { nav = document.createElement('nav'); nav.id = 'navB'; nav.setAttribute('aria-label', 'Menú'); document.body.appendChild(nav); }
+  if (cfg.acento) document.documentElement.style.setProperty('--navbAcc', cfg.acento);
+  nav.innerHTML = '';
+  const boton = (it, padre) => {
+    const b = document.createElement('button'); b.type = 'button'; b.dataset.id = it.id;
+    b.innerHTML = '<span class="i">' + it.ico + '</span><span class="t">' + it.txt + '</span>';
+    padre.appendChild(b); return b;
+  };
+  cfg.items.forEach(it => { boton(it, nav).onclick = () => { navbMasCerrar(); navbIr(it); navbMarcar(it.id); }; });
+  boton({ id: 'mas', ico: '☰', txt: 'Más' }, nav).onclick = navbMasAbrir;
+  let fondo = document.getElementById('navbFondo');
+  if (!fondo) { fondo = document.createElement('div'); fondo.id = 'navbFondo'; document.body.appendChild(fondo); fondo.onclick = navbMasCerrar; }
+  let mas = document.getElementById('navbMas');
+  if (!mas) { mas = document.createElement('div'); mas.id = 'navbMas'; document.body.appendChild(mas); }
+  mas.innerHTML = '<div class="navb-tit">Más</div>';
+  (cfg.mas || []).forEach(it => { boton(it, mas).onclick = () => { navbMasCerrar(); navbIr(it); navbMarcar('mas'); }; });
+  document.body.classList.add('navb-on');
+  clearInterval(NAVB.timer); NAVB.timer = setInterval(navbChequear, 500);
+  navbChequear();
+}
+/*NAVB-FIN*/
+
+// v151: la barra común. Historial, Zonas e Importar son pantallas (cambiarTab); Carrera y Editor, pantallas superpuestas.
+// Al ir a otra pantalla se cierran las superpuestas que estén abiertas, cada una con su propia función de cerrar.
+function correrCerrarSuperpuestas() {
+  const ab = id => { const e = document.getElementById(id); return !!e && e.classList.contains('activa'); };
+  if (ab('overlayReplay')) cerrarReplay();
+  if (ab('overlayEditor')) cerrarEditor();
+  if (ab('overlayEscenas')) cerrarEditorEscenas();
+  if (ab('overlayDetalle')) cerrarDetalle();
+}
+function correrIr(vista) { correrCerrarSuperpuestas(); cambiarTab(vista); }
+navbArmar({
+  acento: (getComputedStyle(document.documentElement).getPropertyValue('--ritmo') || '').trim() || '#4cc2ff',
+  items: [
+    { id: 'sesion', ico: '🏃', txt: 'Sesión', ir: () => correrIr('vivo') },
+    // Correr no tiene una pantalla de entrenos aparte: el plan de carrera y las pasadas están en la pantalla de la sesión
+    { id: 'entrenos', ico: '📋', txt: 'Entrenos', ir: () => { correrIr('vivo'); setTimeout(() => {
+        const c = document.getElementById('cardPlanCarrera'); if (c && c.offsetParent) c.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 60); } },
+    { id: 'historial', ico: '📈', txt: 'Historial', ir: () => correrIr('historial') },
+    { id: 'carrera', ico: '🏁', txt: 'Carrera', ir: () => { correrCerrarSuperpuestas(); abrirReplay(); } },
+  ],
+  mas: [
+    { id: 'zonas', ico: '🎯', txt: 'Zonas y VMA', ir: () => correrIr('zonas') },
+    { id: 'importar', ico: '⬇️', txt: 'Importar actividad (TCX o GPX)', ir: () => correrIr('importar') },
+    { id: 'editor', ico: '🛠️', txt: 'Editor de animación', ir: () => { correrCerrarSuperpuestas(); abrirEditor(); } },
+  ],
+  actual: () => {
+    const ab = id => { const e = document.getElementById(id); return !!e && e.classList.contains('activa'); };
+    if (ab('overlayReplay')) return 'carrera';
+    if (ab('overlayEditor') || ab('overlayEscenas')) return 'mas';
+    const v = document.querySelector('.view.activa'), n = v ? v.id.replace('view-', '') : null;
+    if (n === 'vivo') return NAVB.sel === 'entrenos' ? 'entrenos' : 'sesion';
+    return n === 'historial' ? 'historial' : n ? 'mas' : null;
+  },
+  // escondida corriendo; vuelve en pausa y al terminar (y no tapa el "¿Cómo te sentiste?" del final)
+  enSesion: () => (sesionActiva && !sesionPausada) || !!(document.getElementById('overlayResumenPost') || {}).classList?.contains('activa'),
+});
 </script>
 </body>
 </html>
