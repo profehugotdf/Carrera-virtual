@@ -275,7 +275,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v151</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v152</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3584,6 +3584,13 @@
        tres): Sesión · Entrenos (lleva al Plan de carrera de la pantalla de sesión) · Historial · Carrera · Más (Zonas y VMA,
        Importar, Editor). Se esconde corriendo y en el "¿Cómo te sentiste?" del final; vuelve en pausa. La tarjeta "Más" de
        la pantalla de sesión queda escondida; la barra de Iniciar/Pausar/Finalizar y los avisos suben por encima.
+   v152: 🏃‍♂️ TANDAS EN LA CINTA (Hugo, 20-nov: "¿cuál es la forma más rápida de que el ESP32 suba la
+       cinta de 6 a 15 km/h y, después de una condición, la baje a 6?"; probó toques de 300 ms desde el
+       ESP32 y fueron precisos). Firmware v7 (firmware/correr_cinta_ble_v7.ino): el ESP32 sabe la
+       velocidad ("S60") y recibe el destino ("V150"); da él los toques, uno cada 300 ms, y avisa cada
+       uno ("C123"). 6 → 15 pasa de 36 s (cola de 400 ms por Bluetooth) a 27 s, sin toques perdidos.
+       Correr pregunta "?" al conectar: con "v7" usa tandas (moverCintaA, el toque manual y
+       segundosRampaCinta); con el firmware viejo, todo sigue igual que antes.
 */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -5897,6 +5904,26 @@ setInterval(() => { if (!sesionActiva) autoconectarBanda('reintento'); }, 30000)
 const CINTA_SERVICIO_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const CINTA_CARACTERISTICA_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
 let cintaCaracteristica = null; // referencia GATT para escribir comandos, null = sin conectar
+/* v152: TANDAS (firmware v7, firmware/correr_cinta_ble_v7.ino). Hugo (20-nov) quería llevar la cinta
+   de 6 a 15 km/h lo más rápido posible: eran 90 toques mandados de a uno cada 400 ms (36 s). Con v7 el
+   ESP32 sabe a cuánto está la cinta ("S60" = referencia 6,0) y Correr le manda solo el destino
+   ("V150"): los toques los da él, uno cada 300 ms (probado por Hugo: preciso) → 27 s, y avisa por
+   notificación ("C123") la velocidad después de cada toque, que la app usa para ritmo y distancia.
+   Al conectar, Correr pregunta "?"; si el ESP32 responde "v7", usa tandas; si no (firmware viejo, sin
+   característica TX), sigue con la cola de toques sueltos de siempre. */
+const CINTA_TX_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+const INTERVALO_TANDA_MS = 300;
+let cintaTanda = false;
+function cintaEscribir(txt) {
+  if (!cintaCaracteristica) return;
+  cintaCaracteristica.writeValue(new TextEncoder().encode(txt)).catch((e) => logBLE('No se pudo mandar "' + txt + '" a la cinta: ' + e.message, '#f85149'));
+}
+function cintaNotificacion(ev) {
+  const t = new TextDecoder().decode(ev.target.value).trim();
+  if (/^v\d+/.test(t)) { cintaTanda = parseInt(t.slice(1), 10) >= 7; logBLE('Firmware de la cinta: ' + t + (cintaTanda ? ' (tandas: un toque cada 300 ms)' : ''), '#3fb950'); return; }
+  if (t[0] === 'C') { const d = parseInt(t.slice(1), 10); if (d >= 0) aplicarVelocidadCinta(d / 10); return; }
+  if (t === 'E') { logBLE('La cinta no tiene velocidad de referencia: no se movió', '#d29922'); toast('Cargá la velocidad que marca la cinta para que el ESP32 la pueda mover'); }
+}
 
 async function conectarCintaBLE() {
   if (!navigator.bluetooth) { toast('Este navegador no soporta Web Bluetooth'); return; }
@@ -5911,6 +5938,7 @@ async function conectarCintaBLE() {
     logBLE('Dispositivo elegido: ' + (device.name || '(sin nombre)'));
     device.addEventListener('gattserverdisconnected', () => {
       cintaCaracteristica = null;
+      cintaTanda = false;
       vaciarColaCinta();
       velCintaEstimadaKmh = null; // al reconectar hay que volver a cargar la velocidad de referencia
       estadoEl.textContent = 'Desconectado.';
@@ -5926,6 +5954,15 @@ async function conectarCintaBLE() {
     const servicio = await server.getPrimaryService(CINTA_SERVICIO_UUID);
     cintaCaracteristica = await servicio.getCharacteristic(CINTA_CARACTERISTICA_UUID);
     logBLE('Servicio de la cinta + característica OK', '#3fb950');
+    // v152: ¿el firmware sabe hacer tandas? (v7 tiene la característica de avisos y responde "v7")
+    cintaTanda = false;
+    try {
+      const txc = await servicio.getCharacteristic(CINTA_TX_UUID);
+      txc.addEventListener('characteristicvaluechanged', cintaNotificacion);
+      await txc.startNotifications();
+      cintaEscribir('?');
+      await new Promise((r) => setTimeout(r, 1500));
+    } catch (e) { logBLE('Firmware sin avisos (anterior a v7): toques de a uno cada ' + INTERVALO_COLA_CINTA_MS + ' ms', '#d29922'); }
     estadoEl.textContent = 'Cinta conectada (' + (device.name || 'ESP32') + ') — los botones +/- ya le aprietan el botón real.';
     estadoEl.className = 'estado-conexion ok';
   } catch (e) {
@@ -5992,6 +6029,7 @@ function procesarColaCinta() {
   colaCintaTimer = setTimeout(procesarColaCinta, INTERVALO_COLA_CINTA_MS);
 }
 function vaciarColaCinta() {
+  if (cintaTanda && cintaCaracteristica) cintaEscribir('X');   // v152: frena la tanda en el ESP32
   colaCinta = [];
   if (colaCintaTimer) { clearTimeout(colaCintaTimer); colaCintaTimer = null; }
 }
@@ -6005,6 +6043,12 @@ function moverCintaA(objetivoKmh) {
   if (!cintaCaracteristica || velCintaEstimadaKmh == null || objetivoKmh == null) return false;
   const pasos = Math.round((objetivoKmh - velCintaEstimadaKmh) / PASO_CINTA_KMH);
   if (pasos === 0) return false;
+  if (cintaTanda) {   // v152: el ESP32 da los toques solo y avisa la velocidad de cada uno
+    velCintaEstimadaKmh = Math.round(objetivoKmh * 10) / 10;
+    cintaEscribir('V' + Math.round(velCintaEstimadaKmh * 10));
+    logBLE('Cinta: tanda de ' + Math.abs(pasos) + ' toque(s) de ' + (pasos > 0 ? '+' : '−') + ' → ' + velCintaEstimadaKmh.toFixed(1) + ' km/h (' + Math.round(Math.abs(pasos) * INTERVALO_TANDA_MS / 100) / 10 + ' s)', '#4FD8C4');
+    return true;
+  }
   const paso = pasos > 0 ? PASO_CINTA_KMH : -PASO_CINTA_KMH, velTras = [];
   for (let i = 1; i <= Math.abs(pasos); i++) velTras.push(Math.round((velCintaEstimadaKmh + paso * i) * 10) / 10);
   encolarComandoCinta(pasos > 0 ? 1 : 2, Math.abs(pasos), velTras);
@@ -6036,7 +6080,7 @@ function llevarCintaA(kmh, txt) {
 // segundos que tarda la cinta en llegar a kmh tocando de a 0,1 (cola de 400 ms por toque)
 function segundosRampaCinta(kmh) {
   if (!(cintaCaracteristica && velCintaEstimadaKmh != null)) return 0;
-  return Math.abs(kmh - velCintaEstimadaKmh) / PASO_CINTA_KMH * INTERVALO_COLA_CINTA_MS / 1000;
+  return Math.abs(kmh - velCintaEstimadaKmh) / PASO_CINTA_KMH * (cintaTanda ? INTERVALO_TANDA_MS : INTERVALO_COLA_CINTA_MS) / 1000;
 }
 
 function handleHR(event) {
@@ -6826,6 +6870,8 @@ function ajustarVelocidadManual(delta) {
   document.getElementById('hudKmh').textContent = v > 0.1 ? velocidadManualKmh.toFixed(1) + ' km/h' : '-- km/h';
   // Vel+/Vel- a la cinta (no hace nada sin cinta BLE). Va al final: si la cola está vacía se
   // manda en el acto y su velTras deja la velocidad igual a la de la cinta.
+  // v152: con tandas, el toque manual es un destino más (si había una tanda en curso, la corrige)
+  if (cintaTanda && velTrasToque) { cintaEscribir('V' + Math.round(velTrasToque[0] * 10)); return; }
   encolarComandoCinta(delta > 0 ? 1 : 2, 1, velTrasToque);
 }
 function actualizarManual() {
@@ -9126,6 +9172,7 @@ function iniciarSesion() {
     const v = resp == null ? NaN : parseFloat(String(resp).replace(',', '.'));
     if (v > 0) {
       velCintaEstimadaKmh = Math.round(v * 10) / 10;
+      if (cintaTanda) cintaEscribir('S' + Math.round(velCintaEstimadaKmh * 10));   // v152: el ESP32 cuenta desde acá
       logBLE('Cinta: velocidad de referencia ' + velCintaEstimadaKmh.toFixed(1) + ' km/h', '#4FD8C4');
     } else {
       velCintaEstimadaKmh = null;
