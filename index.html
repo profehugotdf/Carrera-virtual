@@ -275,7 +275,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v152</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v153</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3591,6 +3591,11 @@
        uno ("C123"). 6 → 15 pasa de 36 s (cola de 400 ms por Bluetooth) a 27 s, sin toques perdidos.
        Correr pregunta "?" al conectar: con "v7" usa tandas (moverCintaA, el toque manual y
        segundosRampaCinta); con el firmware viejo, todo sigue igual que antes.
+   v153: ⏱️ ESCALONES DE MENOS DE 1 s en el plan por bloques (Hugo, 21-nov, con captura: "¿cómo hago para que
+       el incremento sea menor a un segundo, a la cantidad de milisegundos del intervalo mínimo entre cada
+       pulso?"). "Escalón (seg)" acepta décimas (antes Math.round a segundos), mínimo 0,3 s = un toque del
+       ESP32 en tandas (INTERVALO_TANDA_MS). Aviso en el bloque si es < 1 s (hace falta firmware v7; con el
+       viejo, de 0,4 s, la cinta se queda atrás). Sin cartel "Cinta → X" en cada segundo con escalones cortos.
 */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6530,12 +6535,12 @@ function descripcionBloque(b, plan) {
   if (b.tipo === 'constante') return 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h · ' + dur;
   if (b.tipo === 'incremental') {
     if (b.finPor === 'zona') return 'Incremental desde ' + b.velInicialKmh.toFixed(1) + ' km/h (+' + b.incrementoKmh +
-      ' cada ' + b.duracionEscalonSeg + 's) hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · duración variable';
+      ' cada ' + fmtSegEscalon(b.duracionEscalonSeg) + ') hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · duración variable';
     // el signo que se muestra es el real (según Desde/Hasta), no el que haya tipeado el
     // usuario en el campo Incremento — ver incrementoDireccional() (v72).
     const dirTxt = (b.velFinalKmh >= b.velInicialKmh ? '+' : '−') + Math.abs(b.incrementoKmh);
     return 'Incremental ' + b.velInicialKmh.toFixed(1) + '→' + b.velFinalKmh.toFixed(1) +
-      ' km/h (' + dirTxt + ' cada ' + b.duracionEscalonSeg + 's) · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
+      ' km/h (' + dirTxt + ' cada ' + fmtSegEscalon(b.duracionEscalonSeg) + ') · ' + escalonesDeBloque(b) + ' escalones · ' + dur;
   }
   return 'Libre' + (b.resto ? ' (hasta completar el total)' : '') + ' · ' + dur;
 }
@@ -6639,10 +6644,31 @@ function moverBloque(i, delta) {
   planEnEdicion.bloques[j] = tmp;
   renderConstructorPlan();
 }
+/* v153: ESCALONES DE MENOS DE 1 s (Hugo, 21-nov, con captura de un incremental desde 4 km/h, +0,1 cada 1 s
+   hasta Z4: "¿cómo hago para que el incremento sea menor a un segundo, a la cantidad de milisegundos del
+   intervalo mínimo entre cada pulso?"). Antes el escalón se redondeaba a segundos enteros. Ahora acepta
+   décimas, con mínimo INTERVALO_TANDA_MS (0,3 s = un toque del ESP32 en tandas, firmware v7): más corto la
+   cinta no llega a seguirlo. El plan calcula el objetivo una vez por segundo; con +0,1 cada 0,3 s el
+   objetivo sube ~0,3 km/h por segundo y el ESP32 reparte esos toques cada 300 ms, así que la cinta sube
+   pareja. Con escalones < 1 s no se muestra el cartel "Cinta → X km/h" en cada cambio (sería uno por
+   segundo). Con el firmware viejo (cola de 400 ms) se avisa que la cinta se va a quedar atrás. */
+const ESCALON_MIN_SEG = INTERVALO_TANDA_MS / 1000;
+function fmtSegEscalon(x) { return String(Math.round(x * 10) / 10).replace('.', ',') + ' s'; }
+function avisoEscalonCorto(b) {
+  if (!(b.duracionEscalonSeg < 1)) return '';
+  return '<div class="estado-conexion" style="margin-top:6px;">Escalón de ' + fmtSegEscalon(b.duracionEscalonSeg) +
+    ': la cinta tiene que seguirlo sola. Hace falta el ESP32 conectado con el firmware v7 (un toque cada 0,3 s)' +
+    (b.duracionEscalonSeg < INTERVALO_COLA_CINTA_MS / 1000 ? '; con el firmware viejo (un toque cada 0,4 s) se va a quedar atrás.' : '.') + '</div>';
+}
 function editarCampoBloque(i, campo, valor) {
   const v = parseFloat(valor);
   if (!(v >= 0)) return;
-  planEnEdicion.bloques[i][campo] = (campo === 'duracionSeg' || campo === 'duracionEscalonSeg') ? Math.round(v) : v;
+  // v153: el escalón acepta décimas de segundo, con mínimo ESCALON_MIN_SEG (un toque del ESP32 en tandas)
+  if (campo === 'duracionEscalonSeg') {
+    const e = Math.max(ESCALON_MIN_SEG, Math.round(v * 10) / 10);
+    if (e !== v) toast('Escalón mínimo: ' + fmtSegEscalon(ESCALON_MIN_SEG) + ' (un toque del ESP32)');
+    planEnEdicion.bloques[i][campo] = e;
+  } else planEnEdicion.bloques[i][campo] = (campo === 'duracionSeg') ? Math.round(v) : v;
   renderConstructorPlan();
 }
 function renderConstructorPlan() {
@@ -6671,7 +6697,8 @@ function renderConstructorPlan() {
           '</div>' +
           '<div class="fila" style="margin-top:6px;">' +
           '<div><label>Incremento</label><input type="number" step="0.1" value="' + b.incrementoKmh + '" onchange="editarCampoBloque(' + i + ',\'incrementoKmh\',this.value)"></div>' +
-          '<div><label>Escalón (seg)</label><input type="number" step="10" value="' + b.duracionEscalonSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionEscalonSeg\',this.value)"></div></div>';
+          '<div><label>Escalón (seg)</label><input type="number" step="0.1" min="0.3" inputmode="decimal" value="' + b.duracionEscalonSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionEscalonSeg\',this.value)"></div></div>' +
+          avisoEscalonCorto(b); // v153
       } else if (b.tipo === 'constante') {
         html += '<div class="fila" style="margin-top:6px;">' +
           '<div><label>Velocidad (km/h)</label><input type="number" step="0.1" value="' + b.velocidadKmh + '" onchange="editarCampoBloque(' + i + ',\'velocidadKmh\',this.value)"></div>' +
@@ -6767,7 +6794,8 @@ function actualizarPlan(tSeg, zonaActual) {
     // v93: en ese caso la velocidad de la app sube toque a toque junto con la cinta (ver cola).
     const movio = moverCintaA(est.velocidadObjetivo);
     if (!movio) aplicarVelocidadCinta(est.velocidadObjetivo);
-    toast((movio ? 'Cinta → ' : 'Poné la cinta a ') + est.velocidadObjetivo.toFixed(1) + ' km/h');
+    const bAct = planActivo.bloques[progresoPlan.bloqueIndex]; // v153: con escalones < 1 s, sin cartel en cada cambio
+    if (!(bAct && bAct.tipo === 'incremental' && bAct.duracionEscalonSeg < 1)) toast((movio ? 'Cinta → ' : 'Poné la cinta a ') + est.velocidadObjetivo.toFixed(1) + ' km/h');
     logBLE('Plan — ' + est.etiqueta + ' · ' + est.velocidadObjetivo.toFixed(1) + ' km/h', '#4FD8C4');
   } else if (est.velocidadObjetivo == null && planUltimoObjetivo !== null) {
     // entró a un bloque libre: NO se toca la velocidad, la manejás vos con los botones
