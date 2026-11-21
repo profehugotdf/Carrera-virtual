@@ -275,7 +275,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v154</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v155</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3602,6 +3602,11 @@
        (el ESP32 obedece: va al destino que le manda la app). Ahora el campo "Tope (km/h)" (velFinalKmh, que ya
        estaba guardado en esos bloques aunque no se veía) limita la velocidad: llega y se queda hasta que se
        sostiene la zona. Sin tope válido, la descripción del bloque lo avisa con ⚠️.
+   v155: ⏳ AL REPETIR, LA CINTA VUELVE A LA VELOCIDAD INICIAL (Hugo, 21-nov: "si pongo repetir N veces, ¿baja a la
+       velocidad inicial?"). No bajaba: con escalones de 0,3 s el bloque nuevo ya subía mientras la cinta bajaba desde
+       el tope, y se cruzaban (simulado: de 15 bajaba solo a 9,3 en vez de 4). Ahora, al empezar un incremental con
+       la cinta movida por el ESP32 a más de 0,3 km/h de la inicial, el reloj del bloque espera (y el pulso no cuenta
+       para la zona) hasta que la cinta llega. Pasa también con el primer bloque y entre bloques distintos.
 */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6745,6 +6750,7 @@ function renderConstructorPlan() {
 // Corre en cada tick(): cambia de bloque/escalón, impone la velocidad salvo en los bloques libres,
 // avisa antes de cada cambio y actualiza el tile guía.
 let progresoPlan = null, planUltimoObjetivo = null, avisoPlanHasta = 0, planSinBandaAvisado = false;
+let planClaveBloque = null, planEsperaCinta = null; // v155
 function mostrarAvisoGrande(texto, color) {
   const el = document.getElementById('avisoGrande');
   el.textContent = texto;
@@ -6803,8 +6809,25 @@ function actualizarPlan(tSeg, zonaActual) {
     return;
   }
 
+  /* v155: ESPERAR A LA CINTA al empezar un incremental (Hugo, 21-nov: "si pongo repetir N veces, ¿baja a la velocidad
+     inicial?"). No: con escalones cortos, al repetir la cinta arrancaba a bajar desde el tope (un toque cada 0,3 s)
+     mientras el bloque nuevo ya subía desde la inicial, y se cruzaban a mitad de camino (simulado: de 15 bajaba solo
+     a 9,3 en vez de 4). Ahora, si la cinta la mueve el ESP32 y está a más de 0,3 km/h de la velocidad inicial del
+     bloque, el reloj del bloque queda en 0 (y el pulso no cuenta para la zona) hasta que la cinta llega. */
+  const claveBloque = progresoPlan.repeticion + '-' + progresoPlan.bloqueIndex;
+  if (claveBloque !== planClaveBloque) {
+    planClaveBloque = claveBloque;
+    const bN = planActivo.bloques[progresoPlan.bloqueIndex];
+    planEsperaCinta = (bN && bN.tipo === 'incremental' && cintaCaracteristica && velCintaEstimadaKmh != null &&
+      Math.abs(velocidadManualKmh - bN.velInicialKmh) > 0.3) ? r1Plan(bN.velInicialKmh) : null;
+    if (planEsperaCinta != null) logBLE('Plan — esperando que la cinta llegue a ' + planEsperaCinta.toFixed(1) + ' km/h para empezar el bloque', '#4FD8C4');
+  }
+  if (planEsperaCinta != null) {
+    if (Math.abs(velocidadManualKmh - planEsperaCinta) <= 0.05) { planEsperaCinta = null; progresoPlan = { ...progresoPlan, inicioBloqueSeg: tSeg, inicioZonaSeg: null }; logBLE('Plan — la cinta llegó: arranca el bloque', '#3fb950'); }
+    else progresoPlan = { ...progresoPlan, inicioBloqueSeg: tSeg, inicioZonaSeg: null };
+  }
   // estado ya del bloque en curso (si el bucle avanzó, hay que releerlo para mostrar lo correcto)
-  est = pasoPlan(progresoPlan, planActivo, tSeg, zonaActual);
+  est = pasoPlan(progresoPlan, planActivo, tSeg, planEsperaCinta != null ? null : zonaActual);
   if (est.velocidadObjetivo != null && est.velocidadObjetivo !== planUltimoObjetivo) {
     planUltimoObjetivo = est.velocidadObjetivo;
     // v92: con la cinta conectada por BLE y la velocidad de referencia cargada, la mueve sola.
@@ -6836,6 +6859,7 @@ function actualizarPlan(tSeg, zonaActual) {
   else if (bAct && bAct.finPor === 'zona') {
     det += (est.sostenidoSeg > 0) ? (' · sosteniendo ' + Math.floor(est.sostenidoSeg) + '/' + SEG_SOSTENER_ZONA + 's') : ' · hasta llegar a la zona';
   }
+  if (planEsperaCinta != null) det = 'Esperando que la cinta llegue a ' + planEsperaCinta.toFixed(1) + ' km/h (va por ' + velocidadManualKmh.toFixed(1) + ')' + serieTxt; // v155
   document.getElementById('planDetalle').textContent = det;
 }
 function toggleTestVma() {
@@ -9278,7 +9302,7 @@ function iniciarSesion() {
   document.getElementById('tileTestUmbral').style.display = 'none';
   energiaEstJ = 0;
   pasosAcumulados = 0;
-  planActivo = null; progresoPlan = null; planUltimoObjetivo = null; planSinBandaAvisado = false; avisoPlanHasta = 0;
+  planActivo = null; progresoPlan = null; planUltimoObjetivo = null; planSinBandaAvisado = false; avisoPlanHasta = 0; planClaveBloque = null; planEsperaCinta = null; // v155
   document.getElementById('tilePlan').style.display = 'none';
   document.getElementById('avisoGrande').style.display = 'none';
   if (usaPlan) {
