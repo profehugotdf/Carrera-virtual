@@ -275,7 +275,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v153</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v154</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3596,6 +3596,12 @@
        pulso?"). "Escalón (seg)" acepta décimas (antes Math.round a segundos), mínimo 0,3 s = un toque del
        ESP32 en tandas (INTERVALO_TANDA_MS). Aviso en el bloque si es < 1 s (hace falta firmware v7; con el
        viejo, de 0,4 s, la cinta se queda atrás). Sin cartel "Cinta → X" en cada segundo con escalones cortos.
+   v154: 🛑 TOPE en el incremental "hasta una zona de pulso" (Hugo, 21-nov: "con ese intervalo de 300 ms se pasa de
+       la velocidad tope que puse, 15 km/h"). En ese modo la velocidad subía SIN LÍMITE hasta sostener la zona 15 s;
+       con escalones de 0,3 s y el pulso que tarda en subir, la simulación le pedía 24 km/h a la cinta en un minuto
+       (el ESP32 obedece: va al destino que le manda la app). Ahora el campo "Tope (km/h)" (velFinalKmh, que ya
+       estaba guardado en esos bloques aunque no se veía) limita la velocidad: llega y se queda hasta que se
+       sostiene la zona. Sin tope válido, la descripción del bloque lo avisa con ⚠️.
 */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6419,6 +6425,10 @@ function escalonesDeBloque(b) {
 // Incremento con signo según la dirección real del tramo (Desde->Hasta), ignorando el signo
 // que haya tipeado el usuario en el campo "Incremento" — así no hace falta acordarse de poner
 // el número en negativo para un tramo que baja, alcanza con poner Hasta < Desde (v72).
+// v154: velocidad máxima de un incremental que termina por zona = su "Hasta (km/h)" (velFinalKmh), que en
+// ese modo se muestra como "Tope (km/h)". Bloques viejos: ya tenían velFinalKmh guardado (10 por defecto o
+// lo último que se cargó en "Hasta"), ahora se ve en pantalla. Sin tope válido (≤ Desde) → null.
+function topeIncremental(b) { return b.velFinalKmh > b.velInicialKmh ? b.velFinalKmh : null; }
 function incrementoDireccional(b) {
   const inc = Math.abs(b.incrementoKmh);
   return b.velFinalKmh >= b.velInicialKmh ? inc : -inc;
@@ -6492,13 +6502,17 @@ function pasoPlan(prog, plan, t, zonaActual) {
   if (b.tipo === 'incremental') {
     const esc = Math.floor(tEnBloque / b.duracionEscalonSeg);
     if (b.finPor === 'zona') {
-      velocidadObjetivo = r1Plan(b.velInicialKmh + esc * b.incrementoKmh);
+      // v154: TOPE. Antes subía sin límite hasta sostener la zona; con escalones cortos (0,3 s) y el pulso que
+      // tarda en subir, llegaba a pedirle 24 km/h a la cinta (Hugo, 21-nov: "se pasa de la velocidad tope").
+      // Ahora no pasa de topeIncremental(b) y se queda ahí hasta que se sostiene la zona.
+      const tope = topeIncremental(b), bruto = b.velInicialKmh + esc * Math.abs(b.incrementoKmh);
+      velocidadObjetivo = r1Plan(tope != null ? Math.min(tope, bruto) : bruto);
       if (zonaActual != null && zonaActual >= b.zonaObjetivo) {
         if (inicioZonaSeg == null) inicioZonaSeg = t;
         sostenidoSeg = t - inicioZonaSeg;
         if (sostenidoSeg >= SEG_SOSTENER_ZONA) { debeTerminar = true; cumplioObjetivo = true; }
       } else { inicioZonaSeg = null; sostenidoSeg = 0; }
-      etiqueta = 'Incremental hasta Z' + b.zonaObjetivo + ' · escalón ' + (esc + 1);
+      etiqueta = 'Incremental hasta Z' + b.zonaObjetivo + (tope != null && bruto >= tope ? ' · en el tope (' + tope.toFixed(1) + ' km/h)' : ' · escalón ' + (esc + 1));
     } else {
       const nEsc = escalonesDeBloque(b);
       const bruto = b.velInicialKmh + esc * incrementoDireccional(b);
@@ -6535,7 +6549,8 @@ function descripcionBloque(b, plan) {
   if (b.tipo === 'constante') return 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h · ' + dur;
   if (b.tipo === 'incremental') {
     if (b.finPor === 'zona') return 'Incremental desde ' + b.velInicialKmh.toFixed(1) + ' km/h (+' + b.incrementoKmh +
-      ' cada ' + fmtSegEscalon(b.duracionEscalonSeg) + ') hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · duración variable';
+      ' cada ' + fmtSegEscalon(b.duracionEscalonSeg) + ') hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · ' +
+      (topeIncremental(b) != null ? 'tope ' + topeIncremental(b).toFixed(1) + ' km/h' : '⚠️ sin tope') + ' · duración variable';
     // el signo que se muestra es el real (según Desde/Hasta), no el que haya tipeado el
     // usuario en el campo Incremento — ver incrementoDireccional() (v72).
     const dirTxt = (b.velFinalKmh >= b.velInicialKmh ? '+' : '−') + Math.abs(b.incrementoKmh);
@@ -6698,6 +6713,8 @@ function renderConstructorPlan() {
           '<div class="fila" style="margin-top:6px;">' +
           '<div><label>Incremento</label><input type="number" step="0.1" value="' + b.incrementoKmh + '" onchange="editarCampoBloque(' + i + ',\'incrementoKmh\',this.value)"></div>' +
           '<div><label>Escalón (seg)</label><input type="number" step="0.1" min="0.3" inputmode="decimal" value="' + b.duracionEscalonSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionEscalonSeg\',this.value)"></div></div>' +
+          (b.finPor === 'zona' ? '<div class="fila" style="margin-top:6px;"><div><label>Tope (km/h)</label><input type="number" step="0.1" inputmode="decimal" value="' + b.velFinalKmh + '" onchange="editarCampoBloque(' + i + ',\'velFinalKmh\',this.value)"></div>' + // v154
+            '<div class="estado-conexion" style="align-self:end;">' + (topeIncremental(b) != null ? 'No pasa de acá: se queda en el tope hasta que sostenés la zona.' : '⚠️ Sin tope: poné uno mayor que "Desde".') + '</div></div>' : '') +
           avisoEscalonCorto(b); // v153
       } else if (b.tipo === 'constante') {
         html += '<div class="fila" style="margin-top:6px;">' +
