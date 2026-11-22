@@ -275,7 +275,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v155</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v156</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3607,6 +3607,10 @@
        el tope, y se cruzaban (simulado: de 15 bajaba solo a 9,3 en vez de 4). Ahora, al empezar un incremental con
        la cinta movida por el ESP32 a más de 0,3 km/h de la inicial, el reloj del bloque espera (y el pulso no cuenta
        para la zona) hasta que la cinta llega. Pasa también con el primer bloque y entre bloques distintos.
+   v156: ⏱️ SEGUNDOS EN ZONA POR BLOQUE (Hugo, 21-nov: "¿podría ser variable el rango de segundos en zona objetivo?
+       Haciendo pasadas a máxima velocidad de la cinta es duro sostener 15 segundos"). El incremental "hasta una
+       zona" tiene el campo "Sostener (seg)" (b.sostenerSeg, de 0 a 120; 0 = termina apenas toca la zona). Los
+       bloques guardados antes no lo tienen y siguen con 15 s (segSostenerZona).
 */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6480,6 +6484,8 @@ function distanciaTotalPlan(plan) {
   return plan.bloques.reduce((a, b) => a + distanciaBloque(b), 0);
 }
 const SEG_SOSTENER_ZONA = 15; // hay que sostener la zona objetivo 15s para dar el bloque por cumplido (decisión de Hugo, v65)
+// v156: cada bloque puede tener su propio tiempo (b.sostenerSeg); sin el campo (planes viejos), 15 s
+function segSostenerZona(b) { return (b && Number.isFinite(b.sostenerSeg) && b.sostenerSeg >= 0) ? b.sostenerSeg : SEG_SOSTENER_ZONA; }
 function r1Plan(v) { return Math.round(v * 10) / 10; }
 function progresoInicial() {
   return { bloqueIndex: 0, repeticion: 1, inicioBloqueSeg: 0, inicioZonaSeg: null, terminado: false };
@@ -6515,7 +6521,7 @@ function pasoPlan(prog, plan, t, zonaActual) {
       if (zonaActual != null && zonaActual >= b.zonaObjetivo) {
         if (inicioZonaSeg == null) inicioZonaSeg = t;
         sostenidoSeg = t - inicioZonaSeg;
-        if (sostenidoSeg >= SEG_SOSTENER_ZONA) { debeTerminar = true; cumplioObjetivo = true; }
+        if (sostenidoSeg >= segSostenerZona(b)) { debeTerminar = true; cumplioObjetivo = true; }
       } else { inicioZonaSeg = null; sostenidoSeg = 0; }
       etiqueta = 'Incremental hasta Z' + b.zonaObjetivo + (tope != null && bruto >= tope ? ' · en el tope (' + tope.toFixed(1) + ' km/h)' : ' · escalón ' + (esc + 1));
     } else {
@@ -6554,7 +6560,7 @@ function descripcionBloque(b, plan) {
   if (b.tipo === 'constante') return 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h · ' + dur;
   if (b.tipo === 'incremental') {
     if (b.finPor === 'zona') return 'Incremental desde ' + b.velInicialKmh.toFixed(1) + ' km/h (+' + b.incrementoKmh +
-      ' cada ' + fmtSegEscalon(b.duracionEscalonSeg) + ') hasta sostener Z' + b.zonaObjetivo + ' ' + SEG_SOSTENER_ZONA + 's · ' +
+      ' cada ' + fmtSegEscalon(b.duracionEscalonSeg) + ')' + (segSostenerZona(b) > 0 ? ' hasta sostener Z' + b.zonaObjetivo + ' ' + segSostenerZona(b) + 's · ' : ' hasta tocar Z' + b.zonaObjetivo + ' · ') +
       (topeIncremental(b) != null ? 'tope ' + topeIncremental(b).toFixed(1) + ' km/h' : '⚠️ sin tope') + ' · duración variable';
     // el signo que se muestra es el real (según Desde/Hasta), no el que haya tipeado el
     // usuario en el campo Incremento — ver incrementoDireccional() (v72).
@@ -6688,6 +6694,10 @@ function editarCampoBloque(i, campo, valor) {
     const e = Math.max(ESCALON_MIN_SEG, Math.round(v * 10) / 10);
     if (e !== v) toast('Escalón mínimo: ' + fmtSegEscalon(ESCALON_MIN_SEG) + ' (un toque del ESP32)');
     planEnEdicion.bloques[i][campo] = e;
+  } else if (campo === 'sostenerSeg') { // v156
+    const e = Math.min(120, Math.round(v));
+    if (e !== v) toast('Sostener: segundos enteros, hasta 120');
+    planEnEdicion.bloques[i][campo] = e;
   } else planEnEdicion.bloques[i][campo] = (campo === 'duracionSeg') ? Math.round(v) : v;
   renderConstructorPlan();
 }
@@ -6719,7 +6729,9 @@ function renderConstructorPlan() {
           '<div><label>Incremento</label><input type="number" step="0.1" value="' + b.incrementoKmh + '" onchange="editarCampoBloque(' + i + ',\'incrementoKmh\',this.value)"></div>' +
           '<div><label>Escalón (seg)</label><input type="number" step="0.1" min="0.3" inputmode="decimal" value="' + b.duracionEscalonSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionEscalonSeg\',this.value)"></div></div>' +
           (b.finPor === 'zona' ? '<div class="fila" style="margin-top:6px;"><div><label>Tope (km/h)</label><input type="number" step="0.1" inputmode="decimal" value="' + b.velFinalKmh + '" onchange="editarCampoBloque(' + i + ',\'velFinalKmh\',this.value)"></div>' + // v154
-            '<div class="estado-conexion" style="align-self:end;">' + (topeIncremental(b) != null ? 'No pasa de acá: se queda en el tope hasta que sostenés la zona.' : '⚠️ Sin tope: poné uno mayor que "Desde".') + '</div></div>' : '') +
+            '<div class="estado-conexion" style="align-self:end;">' + (topeIncremental(b) != null ? 'No pasa de acá: se queda en el tope hasta que sostenés la zona.' : '⚠️ Sin tope: poné uno mayor que "Desde".') + '</div></div>' +
+            '<div class="fila" style="margin-top:6px;"><div><label>Sostener (seg)</label><input type="number" step="1" min="0" max="120" inputmode="numeric" value="' + segSostenerZona(b) + '" onchange="editarCampoBloque(' + i + ',\'sostenerSeg\',this.value)"></div>' + // v156
+            '<div class="estado-conexion" style="align-self:end;">' + (segSostenerZona(b) > 0 ? 'Segundos seguidos en la zona (o más alta) para dar la serie por cumplida.' : 'Con 0 termina apenas toca la zona.') + '</div></div>' : '') +
           avisoEscalonCorto(b); // v153
       } else if (b.tipo === 'constante') {
         html += '<div class="fila" style="margin-top:6px;">' +
@@ -6857,7 +6869,7 @@ function actualizarPlan(tSeg, zonaActual) {
   let det = est.etiqueta + serieTxt;
   if (est.segundosRestantes != null) det += ' · faltan ' + segAMMSS(Math.max(0, est.segundosRestantes));
   else if (bAct && bAct.finPor === 'zona') {
-    det += (est.sostenidoSeg > 0) ? (' · sosteniendo ' + Math.floor(est.sostenidoSeg) + '/' + SEG_SOSTENER_ZONA + 's') : ' · hasta llegar a la zona';
+    det += (est.sostenidoSeg > 0) ? (' · sosteniendo ' + Math.floor(est.sostenidoSeg) + '/' + segSostenerZona(bAct) + 's') : ' · hasta llegar a la zona';
   }
   if (planEsperaCinta != null) det = 'Esperando que la cinta llegue a ' + planEsperaCinta.toFixed(1) + ' km/h (va por ' + velocidadManualKmh.toFixed(1) + ')' + serieTxt; // v155
   document.getElementById('planDetalle').textContent = det;
