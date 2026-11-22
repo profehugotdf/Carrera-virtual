@@ -275,7 +275,7 @@
 <body>
 
 <header>
-  <div class="titulowrap"><h1>Correr</h1><span class="ver">v156</span></div>
+  <div class="titulowrap"><h1>Correr</h1><span class="ver">v157</span></div>
   <span id="hdrFecha" style="font-size:11px;color:var(--muted);font-family:var(--mono);"></span>
 </header>
 
@@ -3611,6 +3611,12 @@
        Haciendo pasadas a máxima velocidad de la cinta es duro sostener 15 segundos"). El incremental "hasta una
        zona" tiene el campo "Sostener (seg)" (b.sostenerSeg, de 0 a 120; 0 = termina apenas toca la zona). Los
        bloques guardados antes no lo tienen y siguen con 15 s (segSostenerZona).
+   v157: 🔁 REPETIR CADA BLOQUE (Hugo, 22-nov, con captura de un plan de dos bloques: "como quiero que cada una de las
+       secciones se pueda repetir N veces"). El "Repetir el plan" repetía todo junto. Ahora cada bloque incremental o
+       constante tiene "Repetir (veces)" (b.repetir, 1 a 50) y, si es más de 1, una recuperación opcional entre
+       repeticiones: "Recuperación (seg)" a "(km/h)" (b.recupSeg, b.recupKmh; 0 s = sin recuperación). El progreso
+       lleva repBloque y recup; al empezar cada repetición de un incremental se vuelve a esperar a la cinta (v155).
+       La duración y la distancia estimadas cuentan las repeticiones. Planes viejos: sin el campo, 1 vez.
 */
 
 /* ---------------- CLAVES DE ALMACENAMIENTO ---------------- */
@@ -6442,7 +6448,15 @@ function incrementoDireccional(b) {
   const inc = Math.abs(b.incrementoKmh);
   return b.velFinalKmh >= b.velInicialKmh ? inc : -inc;
 }
+// v157: cada bloque se puede repetir (b.repetir) con una recuperación entre medio (b.recupSeg a b.recupKmh)
+function repeticionesBloque(b) { return (b && b.tipo !== 'libre' && Number.isFinite(b.repetir) && b.repetir > 1) ? Math.floor(b.repetir) : 1; }
+function recupSegBloque(b) { return (repeticionesBloque(b) > 1 && b.recupSeg > 0) ? b.recupSeg : 0; }
+function recupKmhBloque(b) { return Number.isFinite(b.recupKmh) && b.recupKmh >= 0 ? b.recupKmh : 6; }
 function duracionBloque(b, plan) {
+  const n = repeticionesBloque(b);
+  return duracionUnaVez(b, plan) * n + recupSegBloque(b) * (n - 1);
+}
+function duracionUnaVez(b, plan) {
   if (b.tipo === 'constante') return b.duracionSeg;
   if (b.tipo === 'incremental') {
     // los que terminan por zona no tienen duración conocida: para el resumen del constructor se
@@ -6481,22 +6495,29 @@ function distanciaBloque(b) {
   return 0; // 'libre': velocidad manual, no hay dato para estimar
 }
 function distanciaTotalPlan(plan) {
-  return plan.bloques.reduce((a, b) => a + distanciaBloque(b), 0);
+  return plan.bloques.reduce((a, b) => { const n = repeticionesBloque(b); // v157
+    return a + distanciaBloque(b) * n + (recupKmhBloque(b) / 3.6) * recupSegBloque(b) * (n - 1); }, 0);
 }
 const SEG_SOSTENER_ZONA = 15; // hay que sostener la zona objetivo 15s para dar el bloque por cumplido (decisión de Hugo, v65)
 // v156: cada bloque puede tener su propio tiempo (b.sostenerSeg); sin el campo (planes viejos), 15 s
 function segSostenerZona(b) { return (b && Number.isFinite(b.sostenerSeg) && b.sostenerSeg >= 0) ? b.sostenerSeg : SEG_SOSTENER_ZONA; }
 function r1Plan(v) { return Math.round(v * 10) / 10; }
 function progresoInicial() {
-  return { bloqueIndex: 0, repeticion: 1, inicioBloqueSeg: 0, inicioZonaSeg: null, terminado: false };
+  return { bloqueIndex: 0, repeticion: 1, repBloque: 1, recup: false, inicioBloqueSeg: 0, inicioZonaSeg: null, terminado: false };
 }
 function siguienteBloque(prog, plan, t) {
+  // v157: primero las repeticiones del bloque (con su recuperación entre medio), después el bloque siguiente
+  const bAct = plan.bloques[prog.bloqueIndex], repB = prog.repBloque || 1;
+  if (bAct && repB < repeticionesBloque(bAct)) {
+    if (!prog.recup && recupSegBloque(bAct) > 0) return { ...prog, recup: true, inicioBloqueSeg: t, inicioZonaSeg: null };
+    return { ...prog, repBloque: repB + 1, recup: false, inicioBloqueSeg: t, inicioZonaSeg: null };
+  }
   let idx = prog.bloqueIndex + 1, rep = prog.repeticion;
   if (idx >= plan.bloques.length) {
     if (rep < (plan.repeticiones || 1)) { rep++; idx = 0; }
     else return { ...prog, terminado: true };
   }
-  return { bloqueIndex: idx, repeticion: rep, inicioBloqueSeg: t, inicioZonaSeg: null, terminado: false };
+  return { bloqueIndex: idx, repeticion: rep, repBloque: 1, recup: false, inicioBloqueSeg: t, inicioZonaSeg: null, terminado: false };
 }
 // Paso del motor. Los bloques que terminan por zona de pulso tienen duración DESCONOCIDA de
 // antemano, así que el plan dejó de ser una función pura del tiempo (v64) y pasó a ser una máquina
@@ -6510,7 +6531,13 @@ function pasoPlan(prog, plan, t, zonaActual) {
   let debeTerminar = false, cumplioObjetivo = false;
   let inicioZonaSeg = prog.inicioZonaSeg, sostenidoSeg = 0;
 
-  if (b.tipo === 'incremental') {
+  if (prog.recup) { // v157: recuperación entre repeticiones del bloque
+    const dur = recupSegBloque(b);
+    velocidadObjetivo = r1Plan(recupKmhBloque(b));
+    segundosRestantes = dur - tEnBloque;
+    if (tEnBloque >= dur) debeTerminar = true;
+    etiqueta = 'Recuperación ' + velocidadObjetivo.toFixed(1) + ' km/h';
+  } else if (b.tipo === 'incremental') {
     const esc = Math.floor(tEnBloque / b.duracionEscalonSeg);
     if (b.finPor === 'zona') {
       // v154: TOPE. Antes subía sin límite hasta sostener la zona; con escalones cortos (0,3 s) y el pulso que
@@ -6554,8 +6581,16 @@ function pasoPlan(prog, plan, t, zonaActual) {
   }
   return { prog: { ...prog, inicioZonaSeg }, velocidadObjetivo, etiqueta, segundosRestantes, evento: null, sostenidoSeg };
 }
-function descripcionBloque(b, plan) {
-  const min = (duracionBloque(b, plan) / 60);
+function descripcionBloque(b, plan) { // v157: con sus repeticiones
+  const n = repeticionesBloque(b), base = descripcionUnaVez(b, plan);
+  if (n <= 1) return base;
+  const rs = recupSegBloque(b);
+  const zona = b.tipo === 'incremental' && b.finPor === 'zona';
+  return base + ' · ×' + n + (rs > 0 ? ' con ' + segAMMSS(rs) + ' a ' + recupKmhBloque(b).toFixed(1) + ' km/h entre medio' : ' sin recuperación') +
+    (zona ? '' : ' = ' + (Math.round(duracionBloque(b, plan) / 6) / 10) + ' min');
+}
+function descripcionUnaVez(b, plan) {
+  const min = (duracionUnaVez(b, plan) / 60);
   const dur = (Math.round(min * 10) / 10) + ' min';
   if (b.tipo === 'constante') return 'Constante ' + b.velocidadKmh.toFixed(1) + ' km/h · ' + dur;
   if (b.tipo === 'incremental') {
@@ -6698,7 +6733,9 @@ function editarCampoBloque(i, campo, valor) {
     const e = Math.min(120, Math.round(v));
     if (e !== v) toast('Sostener: segundos enteros, hasta 120');
     planEnEdicion.bloques[i][campo] = e;
-  } else planEnEdicion.bloques[i][campo] = (campo === 'duracionSeg') ? Math.round(v) : v;
+  } else if (campo === 'repetir') { // v157
+    planEnEdicion.bloques[i][campo] = Math.min(50, Math.max(1, Math.round(v)));
+  } else planEnEdicion.bloques[i][campo] = (campo === 'duracionSeg' || campo === 'recupSeg') ? Math.round(v) : v;
   renderConstructorPlan();
 }
 function renderConstructorPlan() {
@@ -6737,6 +6774,15 @@ function renderConstructorPlan() {
         html += '<div class="fila" style="margin-top:6px;">' +
           '<div><label>Velocidad (km/h)</label><input type="number" step="0.1" value="' + b.velocidadKmh + '" onchange="editarCampoBloque(' + i + ',\'velocidadKmh\',this.value)"></div>' +
           '<div><label>Duración (seg)</label><input type="number" step="30" value="' + b.duracionSeg + '" onchange="editarCampoBloque(' + i + ',\'duracionSeg\',this.value)"></div></div>';
+      }
+      if (b.tipo !== 'libre') { // v157: repetir este bloque
+        const n = repeticionesBloque(b);
+        html += '<div class="fila" style="margin-top:6px;"><div><label>Repetir (veces)</label><input type="number" step="1" min="1" max="50" inputmode="numeric" value="' + n + '" onchange="editarCampoBloque(' + i + ',\'repetir\',this.value)"></div>' +
+          (n > 1 ? '<div><label>Recuperación (seg)</label><input type="number" step="10" min="0" inputmode="numeric" value="' + (b.recupSeg || 0) + '" onchange="editarCampoBloque(' + i + ',\'recupSeg\',this.value)"></div></div>' +
+            (b.recupSeg > 0 ? '<div class="fila" style="margin-top:6px;"><div><label>Recuperación a (km/h)</label><input type="number" step="0.1" min="0" inputmode="decimal" value="' + recupKmhBloque(b) + '" onchange="editarCampoBloque(' + i + ',\'recupKmh\',this.value)"></div>' +
+              '<div class="estado-conexion" style="align-self:end;">Entre una repetición y la otra (no después de la última).</div></div>'
+            : '<div class="estado-conexion" style="margin-top:4px;">Sin recuperación: la repetición siguiente arranca apenas termina la anterior.</div>')
+          : '<div class="estado-conexion" style="align-self:end;">Este bloque solo, N veces seguidas, antes de pasar al siguiente.</div></div>');
       }
       html += '<div class="fila" style="margin-top:6px;">' +
         '<button class="btn chico" onclick="moverBloque(' + i + ',-1)">↑</button>' +
@@ -6798,18 +6844,20 @@ function actualizarPlan(tSeg, zonaActual) {
   // por si un plan mal armado encadenara bloques de duración cero.
   let est = null, vueltas = 0;
   while (vueltas++ < 20) {
-    const repAntes = progresoPlan.repeticion;
+    const repAntes = progresoPlan.repeticion, repBAntes = progresoPlan.repBloque || 1, bAntes = planActivo.bloques[progresoPlan.bloqueIndex];
     const r = pasoPlan(progresoPlan, planActivo, tSeg, zonaActual);
     if (r.evento === 'objetivoCumplido') {
       const totalReps = planActivo.repeticiones || 1;
-      mostrarAvisoGrande('✅ OBJETIVO CUMPLIDO — BAJÁ LA VELOCIDAD' + (totalReps > 1 ? ('  (serie ' + repAntes + '/' + totalReps + ')') : ''), '#3fb950');
+      const nB = bAntes ? repeticionesBloque(bAntes) : 1; // v157
+      mostrarAvisoGrande('✅ OBJETIVO CUMPLIDO — BAJÁ LA VELOCIDAD' + (nB > 1 ? ('  (rep ' + repBAntes + '/' + nB + ')') : '') + (totalReps > 1 ? ('  (serie ' + repAntes + '/' + totalReps + ')') : ''), '#3fb950');
       toast('Objetivo cumplido: bajá la cinta');
       logBLE('Plan — objetivo cumplido (serie ' + repAntes + ')', '#3fb950');
     } else if (r.evento === 'planCompleto') {
       mostrarAvisoGrande('🏁 PLAN COMPLETO', '#4FD8C4');
       logBLE('Plan de sesión completo', '#3fb950');
     }
-    const avanzo = r.prog !== progresoPlan && (r.prog.bloqueIndex !== progresoPlan.bloqueIndex || r.prog.repeticion !== progresoPlan.repeticion || r.prog.terminado);
+    const avanzo = r.prog !== progresoPlan && (r.prog.bloqueIndex !== progresoPlan.bloqueIndex || r.prog.repeticion !== progresoPlan.repeticion || r.prog.terminado ||
+      (r.prog.repBloque || 1) !== (progresoPlan.repBloque || 1) || !!r.prog.recup !== !!progresoPlan.recup); // v157
     progresoPlan = r.prog;
     est = r;
     if (!avanzo || progresoPlan.terminado) break;
@@ -6826,11 +6874,11 @@ function actualizarPlan(tSeg, zonaActual) {
      mientras el bloque nuevo ya subía desde la inicial, y se cruzaban a mitad de camino (simulado: de 15 bajaba solo
      a 9,3 en vez de 4). Ahora, si la cinta la mueve el ESP32 y está a más de 0,3 km/h de la velocidad inicial del
      bloque, el reloj del bloque queda en 0 (y el pulso no cuenta para la zona) hasta que la cinta llega. */
-  const claveBloque = progresoPlan.repeticion + '-' + progresoPlan.bloqueIndex;
+  const claveBloque = progresoPlan.repeticion + '-' + progresoPlan.bloqueIndex + '-' + (progresoPlan.repBloque || 1) + (progresoPlan.recup ? 'r' : ''); // v157
   if (claveBloque !== planClaveBloque) {
     planClaveBloque = claveBloque;
     const bN = planActivo.bloques[progresoPlan.bloqueIndex];
-    planEsperaCinta = (bN && bN.tipo === 'incremental' && cintaCaracteristica && velCintaEstimadaKmh != null &&
+    planEsperaCinta = (bN && !progresoPlan.recup && bN.tipo === 'incremental' && cintaCaracteristica && velCintaEstimadaKmh != null &&
       Math.abs(velocidadManualKmh - bN.velInicialKmh) > 0.3) ? r1Plan(bN.velInicialKmh) : null;
     if (planEsperaCinta != null) logBLE('Plan — esperando que la cinta llegue a ' + planEsperaCinta.toFixed(1) + ' km/h para empezar el bloque', '#4FD8C4');
   }
@@ -6864,11 +6912,13 @@ function actualizarPlan(tSeg, zonaActual) {
   }
 
   const totalReps = planActivo.repeticiones || 1;
-  const serieTxt = totalReps > 1 ? (' · serie ' + progresoPlan.repeticion + '/' + totalReps) : '';
+  const nRepB = bAct ? repeticionesBloque(bAct) : 1; // v157
+  const serieTxt = (nRepB > 1 ? (' · rep ' + (progresoPlan.repBloque || 1) + '/' + nRepB + (progresoPlan.recup ? ' (después viene la ' + ((progresoPlan.repBloque || 1) + 1) + ')' : '')) : '') +
+    (totalReps > 1 ? (' · serie ' + progresoPlan.repeticion + '/' + totalReps) : '');
   document.getElementById('planObjetivo').textContent = est.velocidadObjetivo != null ? (est.velocidadObjetivo.toFixed(1) + ' km/h') : 'Libre';
   let det = est.etiqueta + serieTxt;
   if (est.segundosRestantes != null) det += ' · faltan ' + segAMMSS(Math.max(0, est.segundosRestantes));
-  else if (bAct && bAct.finPor === 'zona') {
+  else if (bAct && bAct.finPor === 'zona' && !progresoPlan.recup) {
     det += (est.sostenidoSeg > 0) ? (' · sosteniendo ' + Math.floor(est.sostenidoSeg) + '/' + segSostenerZona(bAct) + 's') : ' · hasta llegar a la zona';
   }
   if (planEsperaCinta != null) det = 'Esperando que la cinta llegue a ' + planEsperaCinta.toFixed(1) + ' km/h (va por ' + velocidadManualKmh.toFixed(1) + ')' + serieTxt; // v155
